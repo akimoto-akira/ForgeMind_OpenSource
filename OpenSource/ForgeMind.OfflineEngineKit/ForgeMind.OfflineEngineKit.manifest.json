@@ -1,0 +1,11 @@
+{
+  "moduleId": "ForgeMind.OfflineEngineKit",
+  "publisherId": "ForgeMind",
+  "version": "1.0.0",
+  "minCoreVersion": "",
+  "maxCoreVersion": "",
+  "capabilities": ["offline-engine-kit", "project", "engine", "build", "editor", "launch", "switch_version"],
+  "payloadHash": "",
+  "signature": "",
+  "serviceOverrides": []
+}

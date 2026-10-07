@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ForgeMind.PublicTests</AssemblyName>
+    <RootNamespace>ForgeMind.PublicTests</RootNamespace>
+    <Company>Hoshino Kennji</Company>
+    <Version>1.0.0.0</Version>
+    <Description>ForgeMind public tests — open-source component tests (Scan, Speedy), no UE/commercial dependencies (refactor plan §20)</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Only open-source components — no ForgeMindServer, no UE, no commercial. -->
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan.Abstractions\ForgeMind.Scan.Abstractions.csproj" />
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan\ForgeMind.Scan.csproj" />
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Speedy\ForgeMind.Speedy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Embedded SPK for FromEmbeddedResource test (refactor plan §6). -->
+    <EmbeddedResource Include="test-bundle.spk" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ForgeMindServerTest</AssemblyName>
+    <RootNamespace>ForgeMindServer.Test</RootNamespace>
+    <Company>Hoshino Kennji</Company>
+    <Version>1.0.0.0</Version>
+    <Description>ForgeMindServer test runner — ITestCase harness + Task cases, extracted from ForgeMindServer/Test</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\OpenSource\ForgeMindServer\ForgeMindServer.csproj" />
+  </ItemGroup>
+
+</Project>
+

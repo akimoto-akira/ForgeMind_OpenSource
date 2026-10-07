@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ForgeMind.Speedy</AssemblyName>
+    <RootNamespace>ForgeMind.Speedy</RootNamespace>
+    <Version>0.3.0.0</Version>
+    <Authors>HoshinoKennji</Authors>
+    <Company>HoshinoKennji</Company>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
+    <FileVersion>0.3.0.0</FileVersion>
+    <Description>ForgeMind .spk data pack read/write library (ported from SiliconLife.Speedy)</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 唯一的外部依赖：MessagePack 3.1.7（与 SiliconLife.Speedy 一致） -->
+    <PackageReference Include="MessagePack" Version="3.1.7" />
+  </ItemGroup>
+
+</Project>

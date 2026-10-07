@@ -1,0 +1,1865 @@
+﻿// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) 2026 Hoshino Kennji
+
+// Blueprint domain IR handler.
+//
+// Covers assetType "blueprint" plus the two user-defined types the
+// blueprint translator also owns ("user_defined_struct",
+// "user_defined_enum"). The heavy lifting delegates to the proven
+// per-command implementations on the bridge client
+// (create_blueprint, add_blueprint_variable, add_blueprint_component,
+// create_function_graph, add_blueprint_node, connect_blueprint_pins,
+// compile_blueprint, ...) so IR application and the MCP actions share
+// exactly one code path.
+
+#include "ForgeMindIRHandler.h"
+
+#include "ForgeMindBlueprintUtils.h"
+#include "ForgeMindBridgeClient.h"
+
+#include "Engine/Blueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Kismet2/StructureEditorUtils.h"
+#include "UserDefinedStructure/UserDefinedStructEditorData.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
+#include "Engine/UserDefinedEnum.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/StructureEditorUtils.h"
+#include "Engine/UserDefinedStruct.h"
+#include "UObject/UnrealType.h"
+#include "EdGraph/EdGraph.h"
+#include "EdGraph/EdGraphNode.h"
+#include "EdGraph/EdGraphPin.h"
+#include "EdGraphSchema_K2.h"
+#include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
+#include "K2Node_Tunnel.h"
+
+namespace
+{
+	FForgeMindBridgeClient* Bridge()
+	{
+		return FForgeMindBridgeClient::ActiveInstance();
+	}
+
+	bool BridgeBool(const TSharedPtr<FJsonObject>& Result, const TCHAR* Key)
+	{
+		bool bValue = false;
+		return Result.IsValid() && Result->TryGetBoolField(Key, bValue) && bValue;
+	}
+
+	FString BridgeReason(const TSharedPtr<FJsonObject>& Result)
+	{
+		FString Reason;
+		if (Result.IsValid())
+		{
+			Result->TryGetStringField(TEXT("reason"), Reason);
+		}
+		return Reason;
+	}
+
+	TSharedPtr<FJsonObject> MakePayload(const FString& Path)
+	{
+		TSharedRef<FJsonObject> Payload = MakeShared<FJsonObject>();
+		Payload->SetStringField(TEXT("path"), Path);
+		return Payload;
+	}
+
+	UBlueprint* AsBlueprint(UObject* Asset)
+	{
+		return Cast<UBlueprint>(Asset);
+	}
+
+	// ---------------------------------------------------------------------------
+	// IR grading helper functions (IR grading rules.md)
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * When LoadAsset returns a UBlueprintGeneratedClass or UPackage instead of
+	 * the UBlueprint source object, resolve the actual UBlueprint via the
+	 * "<PackagePath>.<AssetName>" convention.
+	 */
+	UBlueprint* ResolveBlueprintFromPath(const FString& Path)
+	{
+		const FString Normalized = ForgeMindIR::NormalizePath(Path);
+		const FString AssetName = ForgeMindIR::AssetNameOf(Normalized);
+		// Try "<Path>.<AssetName>" form first (the canonical UBlueprint object path).
+		const FString ObjectForm = Normalized + TEXT(".") + AssetName;
+		if (UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *ObjectForm))
+		{
+			return BP;
+		}
+		// Fallback: maybe the path already includes the object suffix.
+		if (UBlueprint* BP = LoadObject<UBlueprint>(nullptr, *Normalized))
+		{
+			return BP;
+		}
+		return nullptr;
+	}
+
+	/** Serializes one pin's type+name+direction for function signatures (summary level). */
+	TSharedRef<FJsonObject> PinToSummary(const UEdGraphPin* Pin)
+	{
+		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("name"), Pin->PinName.ToString());
+		Entry->SetStringField(TEXT("type"), ForgeMindBlueprintUtils::PinTypeToText(Pin->PinType));
+		Entry->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
+		return Entry;
+	}
+
+	/** Extracts function inputs/outputs from the entry node's pins (summary level). */
+	void ExtractFunctionSignature(UEdGraph* Graph, TArray<TSharedPtr<FJsonValue>>& OutInputs, TArray<TSharedPtr<FJsonValue>>& OutOutputs)
+	{
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (Node == nullptr) { continue; }
+			if (UK2Node_FunctionEntry* Entry = Cast<UK2Node_FunctionEntry>(Node))
+			{
+				for (UEdGraphPin* Pin : Entry->Pins)
+				{
+					if (Pin == nullptr || Pin->bHidden) { continue; }
+					if (Pin->Direction == EGPD_Output && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+					{
+						OutInputs.Add(MakeShared<FJsonValueObject>(PinToSummary(Pin)));
+					}
+				}
+			}
+			else if (UK2Node_FunctionResult* Result = Cast<UK2Node_FunctionResult>(Node))
+			{
+				for (UEdGraphPin* Pin : Result->Pins)
+				{
+					if (Pin == nullptr || Pin->bHidden) { continue; }
+					if (Pin->Direction == EGPD_Input && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+					{
+						OutOutputs.Add(MakeShared<FJsonValueObject>(PinToSummary(Pin)));
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Function local variables (stored in UK2Node_FunctionEntry::LocalVariables, not in pins).
+	 * Same shape as apply-side functions[].locals: {name, type, defaultValue?}.
+	 * VarGuid not exported -- changes every time asset is rebuilt, including it in
+	 * snapshots would cause cross-run false positives.
+	 */
+	void ExtractFunctionLocals(UEdGraph* Graph, TArray<TSharedPtr<FJsonValue>>& OutLocals)
+	{
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			UK2Node_FunctionEntry* Entry = Cast<UK2Node_FunctionEntry>(Node);
+			if (Entry == nullptr) { continue; }
+			for (const FBPVariableDescription& Local : Entry->LocalVariables)
+			{
+				TSharedRef<FJsonObject> Entry2 = MakeShared<FJsonObject>();
+				Entry2->SetStringField(TEXT("name"), Local.VarName.ToString());
+				Entry2->SetStringField(TEXT("type"), ForgeMindBlueprintUtils::PinTypeToText(Local.VarType));
+				if (!Local.DefaultValue.IsEmpty())
+				{
+					Entry2->SetStringField(TEXT("defaultValue"), Local.DefaultValue);
+				}
+				OutLocals.Add(MakeShared<FJsonValueObject>(Entry2));
+			}
+		}
+	}
+
+	/**
+	 * Macro graph signature: entry tunnel (bCanHaveOutputs) output pins = macro inputs,
+	 * exit tunnel (bCanHaveInputs) input pins = macro outputs. exec pins not counted
+	 * (consistent with ExtractFunctionSignature filtering exec).
+	 */
+	void ExtractMacroSignature(UEdGraph* Graph, TArray<TSharedPtr<FJsonValue>>& OutInputs, TArray<TSharedPtr<FJsonValue>>& OutOutputs)
+	{
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			UK2Node_Tunnel* Tunnel = Cast<UK2Node_Tunnel>(Node);
+			if (Tunnel == nullptr || Tunnel->GetClass() != UK2Node_Tunnel::StaticClass()) { continue; }
+			for (UEdGraphPin* Pin : Tunnel->Pins)
+			{
+				if (Pin == nullptr || Pin->bHidden) { continue; }
+				if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec) { continue; }
+				if (Tunnel->bCanHaveOutputs && Pin->Direction == EGPD_Output)
+				{
+					OutInputs.Add(MakeShared<FJsonValueObject>(PinToSummary(Pin)));
+				}
+				else if (!Tunnel->bCanHaveOutputs && Pin->Direction == EGPD_Input)
+				{
+					OutOutputs.Add(MakeShared<FJsonValueObject>(PinToSummary(Pin)));
+				}
+			}
+		}
+	}
+
+	/** Serializes a single node for graph/full level (node id, class, pins, optional coords). */
+	TSharedRef<FJsonObject> NodeToJson(const UEdGraphNode* Node, bool bIncludeCoords)
+	{
+		TSharedRef<FJsonObject> NodeEntry = MakeShared<FJsonObject>();
+		NodeEntry->SetStringField(TEXT("id"), Node->NodeGuid.ToString());
+		NodeEntry->SetStringField(TEXT("type"), Node->GetClass()->GetName());
+		NodeEntry->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+		if (bIncludeCoords)
+		{
+			NodeEntry->SetNumberField(TEXT("posX"), Node->NodePosX);
+			NodeEntry->SetNumberField(TEXT("posY"), Node->NodePosY);
+		}
+		TArray<TSharedPtr<FJsonValue>> PinEntries;
+		for (const UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin == nullptr || Pin->bHidden) { continue; }
+			TSharedRef<FJsonObject> PinEntry = MakeShared<FJsonObject>();
+			PinEntry->SetStringField(TEXT("name"), Pin->PinName.ToString());
+			PinEntry->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
+			PinEntry->SetStringField(TEXT("type"), ForgeMindBlueprintUtils::PinTypeToText(Pin->PinType));
+			if (bIncludeCoords && !Pin->DefaultValue.IsEmpty())
+			{
+				PinEntry->SetStringField(TEXT("defaultValue"), Pin->DefaultValue);
+			}
+			PinEntries.Add(MakeShared<FJsonValueObject>(PinEntry));
+		}
+		NodeEntry->SetArrayField(TEXT("pins"), PinEntries);
+		return NodeEntry;
+	}
+
+	/** Serializes a graph (nodes + connections) for graph/full level. */
+	TSharedRef<FJsonObject> GraphToIR(const UEdGraph* Graph, const FString& GraphName, const FString& Kind, const FString& Level)
+	{
+		TSharedRef<FJsonObject> GraphEntry = MakeShared<FJsonObject>();
+		GraphEntry->SetStringField(TEXT("name"), GraphName);
+		GraphEntry->SetStringField(TEXT("kind"), Kind);
+
+		const bool bIncludeCoords = (Level == TEXT("full"));
+		TArray<TSharedPtr<FJsonValue>> NodeEntries;
+		TArray<TSharedPtr<FJsonValue>> Connections;
+		for (const UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (Node == nullptr) { continue; }
+			NodeEntries.Add(MakeShared<FJsonValueObject>(NodeToJson(Node, bIncludeCoords)));
+			for (const UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin == nullptr || Pin->bHidden) { continue; }
+				if (Pin->Direction == EGPD_Output)
+				{
+					for (const UEdGraphPin* Linked : Pin->LinkedTo)
+					{
+						if (Linked == nullptr || Linked->GetOwningNodeUnchecked() == nullptr) { continue; }
+						TSharedRef<FJsonObject> Wire = MakeShared<FJsonObject>();
+						Wire->SetStringField(TEXT("fromNode"), Node->NodeGuid.ToString());
+						Wire->SetStringField(TEXT("fromPin"), Pin->PinName.ToString());
+						Wire->SetStringField(TEXT("toNode"), Linked->GetOwningNodeUnchecked()->NodeGuid.ToString());
+						Wire->SetStringField(TEXT("toPin"), Linked->PinName.ToString());
+						Connections.Add(MakeShared<FJsonValueObject>(Wire));
+					}
+				}
+			}
+		}
+		GraphEntry->SetArrayField(TEXT("nodes"), NodeEntries);
+		GraphEntry->SetArrayField(TEXT("connections"), Connections);
+		return GraphEntry;
+	}
+
+	// Existence follows the engine's own rule (a name visible anywhere in the
+	// class chain counts, FBlueprintEditorUtils::GetClassVariableList) instead
+	// of only this blueprint's own NewVariables: AddMemberVariable rejects
+	// inherited names and HandleUpdateBlueprintVariable knows how to override
+	// an inherited default, so inferring "replace" for them is what actually
+	// reaches the intended result.
+	bool FindVariable(UBlueprint* Blueprint, const FString& Name)
+	{
+		return ForgeMindBlueprintUtils::LookupBlueprintVariable(Blueprint, Name).bNameTaken;
+	}
+
+	bool FindComponent(UBlueprint* Blueprint, const FString& Name)
+	{
+		if (Blueprint == nullptr || Blueprint->SimpleConstructionScript == nullptr)
+		{
+			return false;
+		}
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node != nullptr && Node->GetVariableName().ToString().Equals(Name, ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool FindFunctionGraph(UBlueprint* Blueprint, const FString& Name)
+	{
+		if (Blueprint == nullptr)
+		{
+			return false;
+		}
+		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+		{
+			if (Graph != nullptr && Graph->GetName().Equals(Name, ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	UEdGraph* FindFunctionGraphPtr(UBlueprint* Blueprint, const FString& Name)
+	{
+		if (Blueprint == nullptr)
+		{
+			return nullptr;
+		}
+		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+		{
+			if (Graph != nullptr && Graph->GetName().Equals(Name, ESearchCase::IgnoreCase))
+			{
+				return Graph;
+			}
+		}
+		return nullptr;
+	}
+
+	UEdGraph* FindMacroGraphPtr(UBlueprint* Blueprint, const FString& Name)
+	{
+		if (Blueprint == nullptr)
+		{
+			return nullptr;
+		}
+		for (UEdGraph* Graph : Blueprint->MacroGraphs)
+		{
+			if (Graph != nullptr && Graph->GetName().Equals(Name, ESearchCase::IgnoreCase))
+			{
+				return Graph;
+			}
+		}
+		return nullptr;
+	}
+
+/** IR node type → add_blueprint_node "kind". */
+FString NodeKindFromType(const FString& NodeType, const FString& NodeClass)
+{
+if (NodeType == TEXT("VariableGet")) return TEXT("getter");
+if (NodeType == TEXT("VariableSet")) return TEXT("setter");
+// Event graph local variable step-by-step node pair: TemporaryVariable (read, out pin Variable) +
+// AssignmentStatement (write, in pin Variable/Value). Falling into default "function" would
+// look up the same-named UFunction by name, definitely not found (same failure as loop macros).
+if (NodeType == TEXT("TemporaryVariable")) return TEXT("temporaryVariable");
+if (NodeType == TEXT("AssignmentStatement")) return TEXT("assignment");
+// ForLoop / ForEachLoop / WhileLoop / ForLoopWithBreak / ForEachLoopWithBreak are
+// macro instances in StandardMacros (neither K2Node class nor UFunction), must be
+// created with kind=macro; falling into default "function" would look up the same-named
+// UFunction by name, definitely not found and the entire loop node is lost (no macro pins,
+// every connection to it reports BP_PIN_TYPE_MISMATCH; visually the blueprint shows "function error").
+if (NodeType == TEXT("MacroInstance") || NodeType == TEXT("ForLoop")
+	|| NodeType == TEXT("ForLoopWithBreak") || NodeType == TEXT("ForEachLoop")
+	|| NodeType == TEXT("ForEachLoopWithBreak") || NodeType == TEXT("WhileLoop"))
+	return TEXT("macro");
+if (NodeType == TEXT("Self")) return TEXT("self");
+// Call parent function implementation in subclass (DSL `base.X()`): must be built as callParentFunction
+// UK2Node_CallParentFunction. Previously missing this branch -> falls into default "function", creates
+// a plain K2Node_CallFunction (also with class="base.X()"), neither has exec pins of parent impl
+// nor can resolve the function: all connections BP_PIN_TYPE_MISMATCH, execution chain bypasses it
+// entirely -- visually "parent call not created" (Parent_Begin_B / Parent_Tick_B).
+// Also: base.Greet() "seems to work" because child class has same-named Greet itself; degrades to
+// resolving its **own** function (semantically becomes self-call, not parent call).
+if (NodeType == TEXT("CallParentFunction")) return TEXT("callParentFunction");
+if (NodeType == TEXT("CallDelegate")) return TEXT("callDelegate");
+if (NodeType == TEXT("AddDelegate")) return TEXT("addDelegate");
+if (NodeType == TEXT("RemoveDelegate")) return TEXT("removeDelegate");
+// Level blueprint (level_blueprint) references existing Actor in level: DSL layer produces
+// type="LevelLiteral" (UK2Node_Literal, sole data output pin "Value"),
+// bridge's add_blueprint_node creates by kind=levelliteral -- previously missing this
+// branch would fall into default "function", looking up node name as UFunction would fail.
+if (NodeType == TEXT("LevelLiteral")) return TEXT("levelliteral");
+		if (NodeType == TEXT("Event")) return TEXT("event");
+		if (NodeType == TEXT("InputAction")) return TEXT("inputAction");
+		if (NodeType == TEXT("InputAxis")) return TEXT("inputAxis");
+		if (NodeType == TEXT("CustomEvent")) return TEXT("customevent");
+		if (NodeClass == TEXT("BeginPlay") || NodeClass == TEXT("Tick")
+			|| NodeClass == TEXT("ActorBeginOverlap") || NodeClass == TEXT("ActorHit"))
+		{
+			return TEXT("event");
+		}
+		return TEXT("function");
+	}
+
+	/**
+	 * Pin default values rejected at node creation (wildcard pins: type propagates only after
+	 * driving connections are made, e.g. KismetArrayLibrary::Array_Add's NewItem depends on TargetArray).
+	 * Collected and replayed once connections complete (ApplyDeferredPinDefaults).
+	 */
+	struct FDeferredPinDefault
+	{
+		FString Path;
+		FString NodeId;
+		FString Pin;
+		FString Value;
+	};
+
+	/** Adds one graph node and records its real UE node guid. */
+	bool AddGraphNode(const FString& Path, const FString& GraphName, const TSharedPtr<FJsonObject>& Node,
+		TMap<FString, FString>& DslIdToNodeId, TArray<FIRWarning>& Warnings, int32& OutNodeCount,
+		TArray<FDeferredPinDefault>& OutDeferredDefaults,
+		TMap<FString, TMap<FString, FString>>* DslPinRemap = nullptr)
+	{
+		FString NodeId, NodeType, NodeName, NodeClass;
+		Node->TryGetStringField(TEXT("id"), NodeId);
+		Node->TryGetStringField(TEXT("type"), NodeType);
+		Node->TryGetStringField(TEXT("name"), NodeName);
+		Node->TryGetStringField(TEXT("class"), NodeClass);
+
+		if (NodeId.IsEmpty() || NodeType.IsEmpty())
+		{
+			Warnings.Add({ TEXT("BP_NODE_NOT_FOUND"), TEXT("graph node missing id or type") });
+			return false;
+		}
+		if (NodeType == TEXT("FunctionEntry") || NodeType == TEXT("FunctionResult"))
+		{
+			// The function/macro shell already owns these nodes — do not
+			// create a second one. But DSL connections reference them
+			// (entry.then → first statement, data → result inputs), so map
+			// the DSL id onto the real node guid; otherwise every connection
+			// anchored on the entry is dropped as "unresolved node".
+			if (UBlueprint* Blueprint = ForgeMindBlueprintUtils::ResolveBlueprint(Path))
+			{
+				const bool bEntry = (NodeType == TEXT("FunctionEntry"));
+				// Function graphs own UK2Node_FunctionEntry/Result.
+				if (UEdGraph* Graph = FindFunctionGraphPtr(Blueprint, GraphName))
+				{
+					for (UEdGraphNode* GraphNode : Graph->Nodes)
+					{
+						if (GraphNode == nullptr) { continue; }
+						const bool bMatch = bEntry
+							? GraphNode->IsA<UK2Node_FunctionEntry>()
+							: GraphNode->IsA<UK2Node_FunctionResult>();
+						if (bMatch)
+						{
+							DslIdToNodeId.Add(NodeId, GraphNode->NodeGuid.ToString());
+							break;
+						}
+					}
+				}
+				// Macro graphs own UK2Node_Tunnel (entry has bCanHaveOutputs,
+				// exit has bCanHaveInputs). The DSL emits FunctionEntry/
+				// FunctionResult for [Macro] methods, so map them onto the
+				// tunnel nodes. Pin names differ: DSL uses then/execute
+				// (function convention), tunnels use execute/then (macro
+				// convention after the pin-direction fix). Record a remap
+				// so ConnectGraph translates pin names on the fly.
+				else if (UEdGraph* MacroGraph = FindMacroGraphPtr(Blueprint, GraphName))
+				{
+					for (UEdGraphNode* GraphNode : MacroGraph->Nodes)
+					{
+						UK2Node_Tunnel* Tunnel = Cast<UK2Node_Tunnel>(GraphNode);
+						if (Tunnel == nullptr || Tunnel->GetClass() != UK2Node_Tunnel::StaticClass())
+						{
+							continue;
+						}
+						const bool bMatch = bEntry
+							? Tunnel->bCanHaveOutputs
+							: Tunnel->bCanHaveInputs;
+						if (bMatch)
+						{
+							DslIdToNodeId.Add(NodeId, GraphNode->NodeGuid.ToString());
+							if (DslPinRemap != nullptr)
+							{
+								TMap<FString, FString>& Remap = (*DslPinRemap).FindOrAdd(NodeId);
+								if (bEntry)
+								{
+									// DSL entry exec-out is "then"; tunnel's is "execute".
+									Remap.Add(UEdGraphSchema_K2::PN_Then.ToString(), UEdGraphSchema_K2::PN_Execute.ToString());
+								}
+								else
+								{
+									// DSL result exec-in is "execute"; tunnel's is "then".
+									Remap.Add(UEdGraphSchema_K2::PN_Execute.ToString(), UEdGraphSchema_K2::PN_Then.ToString());
+								}
+							}
+							break;
+						}
+					}
+				}
+			}
+			return false;
+		}
+
+		FForgeMindBridgeClient* Client = Bridge();
+		if (Client == nullptr)
+		{
+			return false;
+		}
+
+		TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+		Payload->SetStringField(TEXT("kind"), NodeKindFromType(NodeType, NodeClass));
+		Payload->SetStringField(TEXT("graphName"), GraphName);
+		Payload->SetStringField(TEXT("name"), NodeName.IsEmpty() ? NodeClass : NodeName);
+		// Parent call node carries no class: parent impl resolved by bridge from blueprint ParentClass
+		// (same shape as A-side MCP stepping); attaching nodeClass (e.g. "base.BeginPlay()") would make
+		// bridge look up same-named UClass and fail.
+		const bool bParentCall = NodeType == TEXT("CallParentFunction");
+		if (!NodeClass.IsEmpty() && !bParentCall)
+		{
+			Payload->SetStringField(TEXT("class"), NodeClass);
+		}
+		// Cast node: targetClass drives ConfigureNativeFlowNode to set TargetType before
+		// AllocateDefaultPins; only then does the node have a typed
+		// Cast result output pin (missing = "bad type cast node"; Object input
+		// stays wildcard, all connections fail).
+		FString TargetClassName;
+		if (Node->TryGetStringField(TEXT("targetClass"), TargetClassName) && !TargetClassName.IsEmpty())
+		{
+			Payload->SetStringField(TEXT("targetClass"), TargetClassName);
+		}
+		// Pure Cast (DSL's `x as T`): does not occupy execution flow, no exec pins, failure just
+		// outputs null. Distinguished from execution Cast for `if (x is T v)` (then / CastFailed branching).
+		bool bPureCast = false;
+		if (Node->TryGetBoolField(TEXT("pureCast"), bPureCast) && bPureCast)
+		{
+			Payload->SetBoolField(TEXT("pureCast"), true);
+		}
+		// CustomEvent node: params ([{name, type}, ...]) drives event
+		// parameter output pins (user-defined pins). Missing it, the event function has no parameters;
+		// cross-blueprint call nodes also lack parameter pins; entry->downstream data lines all disconnected.
+		const TArray<TSharedPtr<FJsonValue>>* NodeParams = nullptr;
+		if (Node->TryGetArrayField(TEXT("params"), NodeParams) && NodeParams->Num() > 0)
+		{
+			Payload->SetArrayField(TEXT("params"), *NodeParams);
+		}
+		const TSharedPtr<FJsonObject>* Props = nullptr;
+		if (Node->TryGetObjectField(TEXT("properties"), Props) && Props->IsValid())
+		{
+			Payload->SetObjectField(TEXT("properties"), *Props);
+		}
+		// CreateDelegate: binds target event function name -- ConfigureNativeFlowNode uses it to
+		// SetFunction; missing it, the node has no delegate signature, output pin cannot connect to Delegate pin.
+		FString FunctionName;
+		if (Node->TryGetStringField(TEXT("function"), FunctionName) && !FunctionName.IsEmpty())
+		{
+			Payload->SetStringField(TEXT("function"), FunctionName);
+		}
+		// AddDelegate / RemoveDelegate (DSL form 2): 'targetType' is the receiver
+		// variable's declared type -- when delegate property is declared on component class
+		// (e.g. UPrimitiveComponent), must resolve via that class chain; not on blueprint Actor class chain.
+		FString TargetTypeName;
+		if (Node->TryGetStringField(TEXT("targetType"), TargetTypeName) && !TargetTypeName.IsEmpty())
+		{
+			Payload->SetStringField(TEXT("targetType"), TargetTypeName);
+		}
+		// Switch node family (SwitchOnInt / SwitchOnString): 'cases' array drives
+		// ConfigureNativeFlowNode to generate case output pins (int case pin name = case value,
+		// string case pin name = literal string); missing it, node only has Default output pin.
+		const TArray<TSharedPtr<FJsonValue>>* NodeCases = nullptr;
+		if (Node->TryGetArrayField(TEXT("cases"), NodeCases) && NodeCases->Num() > 0)
+		{
+			Payload->SetArrayField(TEXT("cases"), *NodeCases);
+		}
+		// SwitchOnEnum: 'enum' specifies enumeration (/Game/... asset path or short name),
+		// missing it, enum output pins won't be generated; Selection cannot connect.
+		FString EnumFieldName;
+		if (Node->TryGetStringField(TEXT("enum"), EnumFieldName) && !EnumFieldName.IsEmpty())
+		{
+			Payload->SetStringField(TEXT("enum"), EnumFieldName);
+		}
+
+		TSharedPtr<FJsonObject> Result = Client->HandleAddBlueprintNode(Payload);
+		FString RealNodeId;
+		if (Result.IsValid())
+		{
+			Result->TryGetStringField(TEXT("nodeId"), RealNodeId);
+		}
+		if (!BridgeBool(Result, TEXT("added")) || RealNodeId.IsEmpty())
+		{
+			Warnings.Add({ TEXT("BP_NODE_NOT_FOUND"),
+				FString::Printf(TEXT("failed to add node '%s' (type=%s): %s"), *NodeId, *NodeType, *BridgeReason(Result)) });
+			return false;
+		}
+
+		DslIdToNodeId.Add(NodeId, RealNodeId);
+		++OutNodeCount;
+
+		if (Props != nullptr && Props->IsValid())
+		{
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& PinProp : (*Props)->Values)
+			{
+				FString PinValue;
+				switch (PinProp.Value->Type)
+				{
+				case EJson::String:  PinValue = PinProp.Value->AsString(); break;
+				case EJson::Number:
+				{
+					// JSON numbers with an integral value (e.g. ForLoop macro
+					// "LastIndex": 9) must keep an integral literal ("9").
+					// SanitizeFloat would emit "9.0", which the int pin
+					// validator rejects, and TrySetDefaultValue drops the
+					// value without surfacing any error (void + silent).
+					const double NumValue = PinProp.Value->AsNumber();
+					const int64 IntValue = static_cast<int64>(NumValue);
+					if (static_cast<double>(IntValue) == NumValue)
+					{
+						PinValue = FString::Printf(TEXT("%lld"), IntValue);
+					}
+					else
+					{
+						PinValue = FString::SanitizeFloat(NumValue);
+					}
+				}
+				break;
+				case EJson::Boolean: PinValue = PinProp.Value->AsBool() ? TEXT("true") : TEXT("false"); break;
+				default: continue;
+				}
+				if (PinValue.IsEmpty())
+				{
+					continue;
+				}
+				TSharedPtr<FJsonObject> PinPayload = MakePayload(Path);
+				PinPayload->SetStringField(TEXT("node"), RealNodeId);
+				PinPayload->SetStringField(TEXT("pin"), PinProp.Key);
+				PinPayload->SetStringField(TEXT("value"), PinValue);
+				// Check if set_pin_default_value actually took effect: previously result was silently
+				// discarded; when property application fails (e.g. macro instance pin not yet in place,
+				// ref pins, etc.) it only manifests as "default value not filled in" with no warning,
+				// extremely hard to diagnose. Explicitly warn on failure.
+				TSharedPtr<FJsonObject> SetPinResult = Client->HandleSetPinDefaultValue(PinPayload);
+				if (!BridgeBool(SetPinResult, TEXT("set")))
+				{
+				// Wildcard pins (e.g. KismetArrayLibrary::Array_Add's NewItem: element type propagates
+				// in via TargetArray connection) reject literal defaults before connections -- same as
+				// editor's "connect first, then fill defaults" ordering. Don't immediately warn here;
+				// defer to replay after connections (see ApplyDeferredPinDefaults); warn if replay also fails.
+					OutDeferredDefaults.Add({ Path, RealNodeId, PinProp.Key, PinValue });
+				}
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Replay pin defaults rejected during AddGraphNode phase: at this point connections are complete,
+	 * wildcard pins (Array_Add's NewItem, etc.) have had concrete types propagated by driving
+	 * connections, and literal defaults can be written normally.
+	 * Consistent with editor's "connect first, then fill defaults" ordering; warn if replay still fails.
+	 */
+	void ApplyDeferredPinDefaults(const TArray<FDeferredPinDefault>& Deferred, TArray<FIRWarning>& Warnings)
+	{
+		if (Deferred.Num() == 0)
+		{
+			return;
+		}
+
+		FForgeMindBridgeClient* Client = Bridge();
+		if (Client == nullptr)
+		{
+			return;
+		}
+
+		for (const FDeferredPinDefault& Entry : Deferred)
+		{
+			TSharedPtr<FJsonObject> PinPayload = MakePayload(Entry.Path);
+			PinPayload->SetStringField(TEXT("node"), Entry.NodeId);
+			PinPayload->SetStringField(TEXT("pin"), Entry.Pin);
+			PinPayload->SetStringField(TEXT("value"), Entry.Value);
+
+			TSharedPtr<FJsonObject> SetPinResult = Client->HandleSetPinDefaultValue(PinPayload);
+			if (!BridgeBool(SetPinResult, TEXT("set")))
+			{
+				Warnings.Add({ TEXT("BP_PIN_DEFAULT"),
+					FString::Printf(TEXT("property pin '%s' = '%s' on node '%s' was not applied (%s)"),
+						*Entry.Pin, *Entry.Value, *Entry.NodeId, *BridgeReason(SetPinResult)) });
+			}
+		}
+	}
+
+	void ConnectGraph(const FString& Path, const TSharedPtr<FJsonObject>& GraphDef,
+		const TMap<FString, FString>& DslIdToNodeId, TArray<FIRWarning>& Warnings, int32& OutConnCount,
+		const TMap<FString, TMap<FString, FString>>* DslPinRemap = nullptr)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Connections = nullptr;
+		if (!GraphDef->TryGetArrayField(TEXT("connections"), Connections))
+		{
+			return;
+		}
+		FForgeMindBridgeClient* Client = Bridge();
+		if (Client == nullptr)
+		{
+			return;
+		}
+
+		for (const TSharedPtr<FJsonValue>& ConnectionValue : *Connections)
+		{
+			const TSharedPtr<FJsonObject> Connection = ConnectionValue->AsObject();
+			if (!Connection.IsValid())
+			{
+				continue;
+			}
+			FString FromNode, FromPin, ToNode, ToPin;
+			Connection->TryGetStringField(TEXT("sourceNodeId"), FromNode);
+			Connection->TryGetStringField(TEXT("sourcePinId"), FromPin);
+			Connection->TryGetStringField(TEXT("targetNodeId"), ToNode);
+			Connection->TryGetStringField(TEXT("targetPinId"), ToPin);
+
+			const FString* FromReal = DslIdToNodeId.Find(FromNode);
+			const FString* ToReal = DslIdToNodeId.Find(ToNode);
+			if (FromReal == nullptr || ToReal == nullptr)
+			{
+				Warnings.Add({ TEXT("BP_NODE_NOT_FOUND"),
+					FString::Printf(TEXT("connection references an unresolved node (%s → %s)"), *FromNode, *ToNode) });
+				continue;
+			}
+
+			// Translate DSL pin names to real pin names for macro tunnel
+			// nodes (DSL uses function convention then/execute; tunnels use
+			// execute/then after the pin-direction fix).
+			if (DslPinRemap != nullptr)
+			{
+				if (const TMap<FString, FString>* FromRemap = DslPinRemap->Find(FromNode))
+				{
+					if (const FString* Mapped = FromRemap->Find(FromPin))
+					{
+						FromPin = *Mapped;
+					}
+				}
+				if (const TMap<FString, FString>* ToRemap = DslPinRemap->Find(ToNode))
+				{
+					if (const FString* Mapped = ToRemap->Find(ToPin))
+					{
+						ToPin = *Mapped;
+					}
+				}
+			}
+
+			TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+			Payload->SetStringField(TEXT("fromNode"), *FromReal);
+			Payload->SetStringField(TEXT("fromPin"), FromPin);
+			Payload->SetStringField(TEXT("toNode"), *ToReal);
+			Payload->SetStringField(TEXT("toPin"), ToPin);
+			// Resolve call result before branching: the failure branch appends the bridge-side
+			// real rejection reason (BridgeReason) into message, so Result must be a named variable
+			// (inlining it directly into BridgeBool earlier left Result undeclared → C2065, plugin build failure).
+			TSharedPtr<FJsonObject> Result = Client->HandleConnectBlueprintPins(Payload);
+			if (BridgeBool(Result, TEXT("connected")))
+			{
+				++OutConnCount;
+			}
+			else
+			{
+				// Diagnostic enhancement: connection failures are uniformly tagged BP_PIN_TYPE_MISMATCH,
+				// but the bridge-side real rejection reason (pin missing / type mismatch / graph rejection)
+				// is appended to message; otherwise failures like LevelLiteral→external member call are untraceable.
+				Warnings.Add({ TEXT("BP_PIN_TYPE_MISMATCH"),
+					FString::Printf(TEXT("failed to connect %s.%s → %s.%s (%s)"), *FromNode, *FromPin, *ToNode, *ToPin, *BridgeReason(Result)) });
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
+
+class FBlueprintIRHandler : public IIRHandler
+{
+public:
+void GetAssetTypes(TArray<FString>& OutAssetTypes) const override
+	{
+		OutAssetTypes = { TEXT("blueprint"), TEXT("user_defined_struct"), TEXT("user_defined_enum"), TEXT("level_blueprint"), TEXT("blueprint_function_library"), TEXT("blueprint_macro_library") };
+	}
+
+	UObject* Create(FIRApplyContext& Ctx) override;
+	bool Update(UObject* Asset, FIRApplyContext& Ctx) override;
+	bool DeleteAsset(FIRApplyContext& Ctx) override;
+	TSharedPtr<FJsonObject> Read(UObject* Asset, FIRApplyContext& Ctx) override;
+	bool CompileAsset(UObject* Asset, FIRApplyContext& Ctx) override;
+
+private:
+	UObject* CreateBlueprintAsset(FIRApplyContext& Ctx);
+	UObject* CreateStructAsset(FIRApplyContext& Ctx);
+	UObject* CreateEnumAsset(FIRApplyContext& Ctx);
+	void ApplyBlueprintDefinition(UBlueprint* Blueprint, FIRApplyContext& Ctx);
+};
+
+UObject* FBlueprintIRHandler::Create(FIRApplyContext& Ctx)
+{
+	if (Ctx.AssetType == TEXT("user_defined_struct"))
+	{
+		return CreateStructAsset(Ctx);
+	}
+	if (Ctx.AssetType == TEXT("user_defined_enum"))
+	{
+		return CreateEnumAsset(Ctx);
+	}
+	return CreateBlueprintAsset(Ctx);
+}
+
+UObject* FBlueprintIRHandler::CreateBlueprintAsset(FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr)
+	{
+		Ctx.Fail(TEXT("BP_CLASS_NOT_FOUND"), TEXT("bridge client is not available"));
+		return nullptr;
+	}
+
+	// Level blueprints are embedded in the level asset (.umap): there is no
+	// standalone .uasset to create. create_level (decision 3=B) has already
+	// opened the target level, so reuse its level blueprint and apply the
+	// definition in place (mirrors the legacy AssetIR branch).
+	if (Ctx.AssetType == TEXT("level_blueprint"))
+	{
+		UBlueprint* LevelBP = ForgeMindBlueprintUtils::ResolveBlueprint(Ctx.Path);
+		if (LevelBP == nullptr)
+		{
+			Ctx.Fail(TEXT("LEVEL_BP_NOT_FOUND"),
+				TEXT("level blueprint requires an open level; call create_level (or open the level) first"));
+			return nullptr;
+		}
+		ApplyBlueprintDefinition(LevelBP, Ctx);
+		return LevelBP;
+	}
+
+	FString ParentClass = ForgeMindIR::FirstString(Ctx.Definition, { TEXT("extends"), TEXT("parentClass"), TEXT("parent") });
+	if (ParentClass.IsEmpty())
+	{
+		ParentClass = TEXT("Actor");
+	}
+
+	TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+	Payload->SetStringField(TEXT("parentClass"), ParentClass);
+
+	TSharedPtr<FJsonObject> Result = Client->HandleCreateBlueprint(Payload);
+	if (!BridgeBool(Result, TEXT("created")))
+	{
+		Ctx.Fail(TEXT("BP_CLASS_NOT_FOUND"), FString::Printf(TEXT("failed to create blueprint: %s"), *BridgeReason(Result)));
+		return nullptr;
+	}
+
+	UBlueprint* Blueprint = ForgeMindBlueprintUtils::ResolveBlueprint(Ctx.Path);
+	if (Blueprint == nullptr)
+	{
+		Ctx.Fail(TEXT("BP_CLASS_NOT_FOUND"), FString::Printf(TEXT("blueprint created but not loadable at %s"), *Ctx.Path));
+		return nullptr;
+	}
+
+	ApplyBlueprintDefinition(Blueprint, Ctx);
+	return Blueprint;
+}
+
+void FBlueprintIRHandler::ApplyBlueprintDefinition(UBlueprint* Blueprint, FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr || !Ctx.Definition.IsValid())
+	{
+		return;
+	}
+	const FString& Path = Ctx.Path;
+
+	int32 VariableCount = 0;
+	int32 ComponentCount = 0;
+	int32 FunctionCount = 0;
+	int32 NodeCount = 0;
+	int32 ConnectionCount = 0;
+
+	// --- members (variables) ---
+	const TArray<TSharedPtr<FJsonValue>>* Members = nullptr;
+	if (Ctx.Definition->TryGetArrayField(TEXT("members"), Members))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Members)
+		{
+			const TSharedPtr<FJsonObject> Member = Value->AsObject();
+			if (!Member.IsValid())
+			{
+				continue;
+			}
+			FString Name, Type;
+			Member->TryGetStringField(TEXT("name"), Name);
+			Member->TryGetStringField(TEXT("type"), Type);
+			if (Name.IsEmpty() || Type.IsEmpty())
+			{
+				Ctx.Warn(TEXT("INVALID_VALUE"), TEXT("skipped member without name or type"));
+				continue;
+			}
+			TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+			Payload->SetStringField(TEXT("name"), Name);
+			Payload->SetStringField(TEXT("type"), Type);
+			FString Category;
+			if (Member->TryGetStringField(TEXT("category"), Category))
+			{
+				Payload->SetStringField(TEXT("category"), Category);
+			}
+			bool bFlag = false;
+			if (Member->TryGetBoolField(TEXT("editAnywhere"), bFlag))
+			{
+				Payload->SetBoolField(TEXT("instanceEditable"), bFlag);
+			}
+			if (Member->TryGetBoolField(TEXT("replicated"), bFlag) && bFlag)
+			{
+				Payload->SetStringField(TEXT("replication"), TEXT("replicated"));
+			}
+			if (Member->HasField(TEXT("defaultValue")))
+			{
+				Payload->SetField(TEXT("default"), Member->TryGetField(TEXT("defaultValue")));
+			}
+			const TSharedPtr<FJsonObject> AddResult = Client->HandleAddBlueprintVariable(Payload);
+			if (BridgeBool(AddResult, TEXT("added")))
+			{
+				++VariableCount;
+			}
+			else
+			{
+				// The bridge tells the two failures apart: the name is taken, or
+				// a setting belongs to the class that declares an inherited
+				// variable. Carry both its code and its reason so the caller can
+				// tell them apart without guessing from the message.
+				FString ErrorCode = TEXT("MEMBER_ALREADY_EXISTS");
+				FString Reason;
+				if (AddResult.IsValid())
+				{
+					AddResult->TryGetStringField(TEXT("errorCode"), ErrorCode);
+					Reason = BridgeReason(AddResult);
+				}
+				Ctx.Warn(ErrorCode, Reason.IsEmpty()
+					? FString::Printf(TEXT("variable '%s' was not added"), *Name)
+					: FString::Printf(TEXT("variable '%s' was not added: %s"), *Name, *Reason));
+			}
+		}
+	}
+
+	// --- components ---
+	const TArray<TSharedPtr<FJsonValue>>* Components = nullptr;
+	if (Ctx.Definition->TryGetArrayField(TEXT("components"), Components))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Components)
+		{
+			const TSharedPtr<FJsonObject> Component = Value->AsObject();
+			if (!Component.IsValid())
+			{
+				continue;
+			}
+			FString Name, Type;
+			Component->TryGetStringField(TEXT("name"), Name);
+			Component->TryGetStringField(TEXT("type"), Type);
+			if (Name.IsEmpty() || Type.IsEmpty())
+			{
+				Ctx.Warn(TEXT("INVALID_VALUE"), TEXT("skipped component without name or type"));
+				continue;
+			}
+			TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+			Payload->SetStringField(TEXT("name"), Name);
+			Payload->SetStringField(TEXT("class"), Type);
+			FString Parent;
+			if (Component->TryGetStringField(TEXT("parent"), Parent) && !Parent.IsEmpty())
+			{
+				Payload->SetStringField(TEXT("parent"), Parent);
+			}
+			const TSharedPtr<FJsonObject>* Props = nullptr;
+			if (Component->TryGetObjectField(TEXT("properties"), Props) && Props->IsValid())
+			{
+				Payload->SetObjectField(TEXT("properties"), *Props);
+			}
+			if (BridgeBool(Client->HandleAddBlueprintComponent(Payload), TEXT("added")))
+			{
+				++ComponentCount;
+			}
+			else
+			{
+				Ctx.Warn(TEXT("BP_COMPONENT_CONFLICT"), FString::Printf(TEXT("component '%s' was not added"), *Name));
+			}
+		}
+	}
+
+	// --- dispatchers ---
+	const TArray<TSharedPtr<FJsonValue>>* Dispatchers = nullptr;
+	if (Ctx.Definition->TryGetArrayField(TEXT("dispatchers"), Dispatchers) && Dispatchers != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Dispatchers)
+		{
+			const TSharedPtr<FJsonObject> Dispatcher = Value->AsObject();
+			if (!Dispatcher.IsValid())
+			{
+				continue;
+			}
+			FString DispName;
+			if (!Dispatcher->TryGetStringField(TEXT("name"), DispName) || DispName.IsEmpty())
+			{
+				Ctx.Warn(TEXT("INVALID_VALUE"), TEXT("skipped dispatcher without name"));
+				continue;
+			}
+
+			TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+			Payload->SetStringField(TEXT("name"), DispName);
+
+			// Optional signature: 'params' array of [{name, type}, ...]
+			const TArray<TSharedPtr<FJsonValue>>* DispParams = nullptr;
+			if (Dispatcher->TryGetArrayField(TEXT("inputs"), DispParams))
+			{
+				TArray<TSharedPtr<FJsonValue>> ParamsJson;
+				for (const TSharedPtr<FJsonValue>& ParamValue : *DispParams)
+				{
+					const TSharedPtr<FJsonObject>* ParamObjPtr = nullptr;
+					if (ParamValue.IsValid() && ParamValue->TryGetObject(ParamObjPtr) && ParamObjPtr->IsValid())
+					{
+						ParamsJson.Add(MakeShared<FJsonValueObject>(*ParamObjPtr));
+					}
+				}
+				if (ParamsJson.Num() > 0)
+				{
+					Payload->SetArrayField(TEXT("params"), ParamsJson);
+				}
+			}
+
+			if (BridgeBool(Client->HandleAddEventDispatcher(Payload), TEXT("added")))
+			{
+				++VariableCount;
+			}
+			else
+			{
+				Ctx.Warn(TEXT("BP_DISPATCHER_CONFLICT"),
+					FString::Printf(TEXT("dispatcher '%s' was not added"), *DispName));
+			}
+		}
+	}
+
+	// --- function shells ---
+	const TArray<TSharedPtr<FJsonValue>>* Functions = nullptr;
+	const bool bHasFunctions = Ctx.Definition->TryGetArrayField(TEXT("functions"), Functions);
+	if (bHasFunctions && Functions != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Functions)
+		{
+			const TSharedPtr<FJsonObject> Function = Value->AsObject();
+			if (!Function.IsValid())
+			{
+				continue;
+			}
+			FString Name;
+			Function->TryGetStringField(TEXT("name"), Name);
+			if (Name.IsEmpty())
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+			Payload->SetStringField(TEXT("name"), Name);
+			bool bPure = false;
+			if (Function->TryGetBoolField(TEXT("pure"), bPure))
+			{
+				Payload->SetBoolField(TEXT("pure"), bPure);
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
+			if (Function->TryGetArrayField(TEXT("inputs"), Inputs))
+			{
+				Payload->SetArrayField(TEXT("params"), *Inputs);
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Outputs = nullptr;
+			if (Function->TryGetArrayField(TEXT("outputs"), Outputs))
+			{
+				Payload->SetArrayField(TEXT("outputs"), *Outputs);
+			}
+			const TArray<TSharedPtr<FJsonValue>>* Locals = nullptr;
+			if (Function->TryGetArrayField(TEXT("locals"), Locals))
+			{
+				Payload->SetArrayField(TEXT("locals"), *Locals);
+			}
+			if (BridgeBool(Client->HandleCreateFunctionGraph(Payload), TEXT("created")))
+			{
+				++FunctionCount;
+			}
+		}
+
+		// Compile once so signatures are visible to the node factory.
+		Client->HandleCompileBlueprint(MakePayload(Path));
+	}
+
+	// --- macro shells ---
+	// Macro graphs are defined inline in the graphs array with type=="macro".
+	// Create them up front (like function shells) so macro instance nodes in
+	// other graphs can reference them. The DSL emits FunctionEntry/
+	// FunctionResult nodes for the macro body; AddGraphNode maps those onto
+	// the tunnel nodes that HandleCreateMacroGraph creates.
+	const TArray<TSharedPtr<FJsonValue>>* Graphs = nullptr;
+	bool bHasMacros = false;
+	if (Ctx.Definition->TryGetArrayField(TEXT("graphs"), Graphs))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Graphs)
+		{
+			const TSharedPtr<FJsonObject> Graph = Value->AsObject();
+			if (!Graph.IsValid())
+			{
+				continue;
+			}
+			FString GraphType;
+			Graph->TryGetStringField(TEXT("type"), GraphType);
+			if (GraphType != TEXT("macro"))
+			{
+				continue;
+			}
+			FString MacroName;
+			Graph->TryGetStringField(TEXT("name"), MacroName);
+			if (MacroName.IsEmpty())
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Payload = MakePayload(Path);
+			Payload->SetStringField(TEXT("name"), MacroName);
+			// Extract data pin specs from the DSL's FunctionEntry node so the
+			// macro tunnel gets typed data pins matching the signature. The exec
+			// pair is created by HandleCreateMacroGraph unless the entry says
+			// "exec": false (pure-data-flow macro).
+			const TArray<TSharedPtr<FJsonValue>>* MacroNodes = nullptr;
+			if (Graph->TryGetArrayField(TEXT("nodes"), MacroNodes))
+			{
+				for (const TSharedPtr<FJsonValue>& NodeVal : *MacroNodes)
+				{
+					const TSharedPtr<FJsonObject> NodeObj = NodeVal->AsObject();
+					if (!NodeObj.IsValid())
+					{
+						continue;
+					}
+					FString NodeType;
+					NodeObj->TryGetStringField(TEXT("type"), NodeType);
+					if (NodeType != TEXT("FunctionEntry"))
+					{
+						continue;
+					}
+					const TArray<TSharedPtr<FJsonValue>>* PinSpecs = nullptr;
+					if (NodeObj->TryGetArrayField(TEXT("pins"), PinSpecs))
+					{
+						TArray<TSharedPtr<FJsonValue>> Params;
+						TArray<TSharedPtr<FJsonValue>> Outputs;
+						for (const TSharedPtr<FJsonValue>& PinVal : *PinSpecs)
+						{
+							const TSharedPtr<FJsonObject> PinObj = PinVal->AsObject();
+							if (!PinObj.IsValid())
+							{
+								continue;
+							}
+							FString Dir;
+							PinObj->TryGetStringField(TEXT("direction"), Dir);
+							FString PinName;
+							PinObj->TryGetStringField(TEXT("id"), PinName);
+							FString PinType;
+							PinObj->TryGetStringField(TEXT("type"), PinType);
+							TSharedPtr<FJsonObject> Spec = MakeShared<FJsonObject>();
+							Spec->SetStringField(TEXT("name"), PinName);
+							Spec->SetStringField(TEXT("type"), PinType);
+							if (Dir == TEXT("input"))
+							{
+								Params.Add(MakeShared<FJsonValueObject>(Spec));
+							}
+							else if (Dir == TEXT("output"))
+							{
+								Outputs.Add(MakeShared<FJsonValueObject>(Spec));
+							}
+						}
+						if (Params.Num() > 0)
+						{
+							Payload->SetArrayField(TEXT("params"), Params);
+						}
+						if (Outputs.Num() > 0)
+						{
+							Payload->SetArrayField(TEXT("outputs"), Outputs);
+						}
+					}
+					break; // only one FunctionEntry per graph
+				}
+			}
+		// When the macro body has only data flow, DSL FunctionEntry sets "exec": false — do not build
+		// that pair of execute/then pins (create_macro_graph adds them by default; strategy favors omitting them).
+			if (MacroNodes != nullptr)
+			{
+				bool bMacroHasExec = true;
+				for (const TSharedPtr<FJsonValue>& NodeVal : *MacroNodes)
+				{
+					const TSharedPtr<FJsonObject> NodeObj = NodeVal->AsObject();
+					FString NodeType;
+					if (NodeObj.IsValid() && NodeObj->TryGetStringField(TEXT("type"), NodeType)
+						&& NodeType == TEXT("FunctionEntry"))
+					{
+						NodeObj->TryGetBoolField(TEXT("exec"), bMacroHasExec);
+						break;
+					}
+				}
+				if (!bMacroHasExec)
+				{
+					Payload->SetBoolField(TEXT("exec"), false);
+				}
+			}
+			if (BridgeBool(Client->HandleCreateMacroGraph(Payload), TEXT("created")))
+			{
+				bHasMacros = true;
+				++FunctionCount;
+			}
+		}
+
+		if (bHasMacros)
+		{
+			// Compile so macro signatures are visible to the node factory.
+			Client->HandleCompileBlueprint(MakePayload(Path));
+		}
+	}
+
+	// --- graphs (event graph + pre-built function/macro shells) ---
+	if (Graphs != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Graphs)
+		{
+			const TSharedPtr<FJsonObject> Graph = Value->AsObject();
+			if (!Graph.IsValid())
+			{
+				continue;
+			}
+			FString GraphName = TEXT("EventGraph");
+			Graph->TryGetStringField(TEXT("name"), GraphName);
+			FString GraphType = TEXT("event");
+			Graph->TryGetStringField(TEXT("type"), GraphType);
+
+		TMap<FString, FString> DslIdToNodeId;
+		// Macro tunnel pin remap: DSL node id → (DSL pin → real pin).
+		// Populated by AddGraphNode when mapping FunctionEntry/FunctionResult
+		// onto macro tunnel nodes; consumed by ConnectGraph.
+		TMap<FString, TMap<FString, FString>> DslPinRemap;
+		// Pin defaults rejected during node creation, replayed after connections (scope must cover ConnectGraph)
+		TArray<FDeferredPinDefault> DeferredDefaults;
+		const TArray<TSharedPtr<FJsonValue>>* Nodes = nullptr;
+		if (Graph->TryGetArrayField(TEXT("nodes"), Nodes))
+		{
+			// Two-pass creation: CustomEvent / Event nodes first, then the
+			// rest.  Custom events compile into UFunctions, so they must
+			// exist (and the blueprint must be compiled) before any
+			// K2Node_CallFunction that references them is created —
+			// otherwise the CallFunction node has no pins and every
+			// connection attempt fails with BP_PIN_TYPE_MISMATCH.
+			auto IsCustomEventNode = [](const TSharedPtr<FJsonObject>& Node)
+			{
+				FString Kind, NodeType;
+				Node->TryGetStringField(TEXT("kind"), Kind);
+				Node->TryGetStringField(TEXT("type"), NodeType);
+				return Kind == TEXT("customevent")
+					|| NodeType == TEXT("CustomEvent")
+					|| NodeType == TEXT("InputAction")
+					|| NodeType == TEXT("InputAxis");
+			};
+
+			for (const TSharedPtr<FJsonValue>& NodeValue : *Nodes)
+			{
+				const TSharedPtr<FJsonObject> Node = NodeValue->AsObject();
+				if (Node.IsValid() && IsCustomEventNode(Node))
+				{
+					AddGraphNode(Path, GraphName, Node, DslIdToNodeId, Ctx.Warnings, NodeCount, DeferredDefaults, &DslPinRemap);
+				}
+			}
+
+			// Compile so the custom event UFunctions are visible.
+			Client->HandleCompileBlueprint(MakePayload(Path));
+
+			// Second pass: all remaining nodes (branches, calls, etc.)
+			for (const TSharedPtr<FJsonValue>& NodeValue : *Nodes)
+			{
+				const TSharedPtr<FJsonObject> Node = NodeValue->AsObject();
+				if (Node.IsValid() && !IsCustomEventNode(Node))
+				{
+					AddGraphNode(Path, GraphName, Node, DslIdToNodeId, Ctx.Warnings, NodeCount, DeferredDefaults, &DslPinRemap);
+				}
+			}
+		}
+		ConnectGraph(Path, Graph, DslIdToNodeId, Ctx.Warnings, ConnectionCount, &DslPinRemap);
+		ApplyDeferredPinDefaults(DeferredDefaults, Ctx.Warnings);
+	}
+	}
+
+	// --- function bodies ---
+	if (bHasFunctions && Functions != nullptr)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Functions)
+		{
+			const TSharedPtr<FJsonObject> Function = Value->AsObject();
+			if (!Function.IsValid())
+			{
+				continue;
+			}
+			FString Name;
+			Function->TryGetStringField(TEXT("name"), Name);
+			if (Name.IsEmpty() || !FindFunctionGraph(Blueprint, Name))
+			{
+				continue;
+			}
+			TMap<FString, FString> DslIdToNodeId;
+			TMap<FString, TMap<FString, FString>> DslPinRemap;
+			TArray<FDeferredPinDefault> DeferredDefaults;
+			const TArray<TSharedPtr<FJsonValue>>* Nodes = nullptr;
+			if (Function->TryGetArrayField(TEXT("nodes"), Nodes))
+			{
+				for (const TSharedPtr<FJsonValue>& NodeValue : *Nodes)
+				{
+					const TSharedPtr<FJsonObject> Node = NodeValue->AsObject();
+					if (Node.IsValid())
+					{
+						AddGraphNode(Path, Name, Node, DslIdToNodeId, Ctx.Warnings, NodeCount, DeferredDefaults, &DslPinRemap);
+					}
+				}
+			}
+			ConnectGraph(Path, Function, DslIdToNodeId, Ctx.Warnings, ConnectionCount, &DslPinRemap);
+			ApplyDeferredPinDefaults(DeferredDefaults, Ctx.Warnings);
+		}
+	}
+
+	Ctx.Extra->SetNumberField(TEXT("variableCount"), VariableCount);
+	Ctx.Extra->SetNumberField(TEXT("componentCount"), ComponentCount);
+	Ctx.Extra->SetNumberField(TEXT("functionCount"), FunctionCount);
+	Ctx.Extra->SetNumberField(TEXT("graphNodeCount"), NodeCount);
+	Ctx.Extra->SetNumberField(TEXT("graphConnectionCount"), ConnectionCount);
+}
+
+UObject* FBlueprintIRHandler::CreateStructAsset(FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr)
+	{
+		Ctx.Fail(TEXT("ASSET_TYPE_MISMATCH"), TEXT("bridge client is not available"));
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Result = Client->HandleCreateBlueprintStruct(MakePayload(Ctx.Path));
+	if (!BridgeBool(Result, TEXT("created")))
+	{
+		Ctx.Fail(TEXT("CREATE_FAILED"), FString::Printf(TEXT("failed to create struct: %s"), *BridgeReason(Result)));
+		return nullptr;
+	}
+
+	int32 MemberCount = 0;
+	const TArray<TSharedPtr<FJsonValue>>* Members = nullptr;
+	if (Ctx.Definition.IsValid() && Ctx.Definition->TryGetArrayField(TEXT("members"), Members))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Members)
+		{
+			const TSharedPtr<FJsonObject> Member = Value->AsObject();
+			if (!Member.IsValid())
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Member->Values)
+			{
+				Payload->SetField(Pair.Key, Pair.Value);
+			}
+			if (BridgeBool(Client->HandleAddStructMember(Payload), TEXT("added")))
+			{
+				++MemberCount;
+			}
+		}
+	}
+	Ctx.Extra->SetNumberField(TEXT("memberCount"), MemberCount);
+	return ForgeMindIR::LoadAsset(Ctx.Path);
+}
+
+UObject* FBlueprintIRHandler::CreateEnumAsset(FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr)
+	{
+		Ctx.Fail(TEXT("ASSET_TYPE_MISMATCH"), TEXT("bridge client is not available"));
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Result = Client->HandleCreateBlueprintEnum(MakePayload(Ctx.Path));
+	if (!BridgeBool(Result, TEXT("created")))
+	{
+		Ctx.Fail(TEXT("CREATE_FAILED"), FString::Printf(TEXT("failed to create enum: %s"), *BridgeReason(Result)));
+		return nullptr;
+	}
+
+	int32 EntryCount = 0;
+	const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+	if (Ctx.Definition.IsValid() && Ctx.Definition->TryGetArrayField(TEXT("values"), Values))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Values)
+		{
+			const TSharedPtr<FJsonObject> Entry = Value->AsObject();
+			if (!Entry.IsValid())
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Entry->Values)
+			{
+				Payload->SetField(Pair.Key, Pair.Value);
+			}
+			if (BridgeBool(Client->HandleAddEnumEntry(Payload), TEXT("added")))
+			{
+				++EntryCount;
+			}
+		}
+	}
+	Ctx.Extra->SetNumberField(TEXT("entryCount"), EntryCount);
+
+	// A DSL enum's C# declaration name (definition.name, e.g. EState) may differ from the asset
+	// leaf name (e.g. EState_B). Register a session-level alias "declaration name → asset path" so
+	// that when blueprint DSL references parameter/variable types by declaration name (e.g. `EState s`),
+	// PinTypeTextToPinType resolves it as a fallback; otherwise function/event nodes fail to create
+	// entirely because parameter types cannot be resolved.
+	FString DeclaredEnumName;
+	if (Ctx.Definition.IsValid()
+		&& Ctx.Definition->TryGetStringField(TEXT("name"), DeclaredEnumName)
+		&& !DeclaredEnumName.IsEmpty())
+	{
+		ForgeMindBlueprintUtils::RegisterUserTypeEnumAlias(DeclaredEnumName, Ctx.Path);
+	}
+
+	return ForgeMindIR::LoadAsset(Ctx.Path);
+}
+
+bool FBlueprintIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr)
+	{
+		Ctx.Fail(TEXT("UPDATE_FAILED"), TEXT("bridge client is not available"));
+		return false;
+	}
+
+	UBlueprint* Blueprint = AsBlueprint(Asset);
+
+	for (const TSharedPtr<FJsonValue>& PatchValue : Ctx.Patches)
+	{
+		const TSharedPtr<FJsonObject> Patch = PatchValue->AsObject();
+		if (!Patch.IsValid())
+		{
+			continue;
+		}
+
+		FString Type, Name;
+		Patch->TryGetStringField(TEXT("type"), Type);
+		Patch->TryGetStringField(TEXT("name"), Name);
+		const bool bDelete = ForgeMindIR::IsDeletePatch(Patch);
+
+		// IR_rules.md §4.3 — the Companion infers the actual op from
+		// existence + the delete flag.
+		bool bExists = false;
+		if (Blueprint != nullptr)
+		{
+			if (Type == TEXT("variable"))       bExists = FindVariable(Blueprint, Name);
+			else if (Type == TEXT("component")) bExists = FindComponent(Blueprint, Name);
+			else if (Type == TEXT("function"))  bExists = FindFunctionGraph(Blueprint, Name);
+		}
+
+		FString ActualOp;
+		if (bDelete) ActualOp = bExists ? TEXT("delete") : TEXT("failed");
+		else         ActualOp = bExists ? TEXT("replace") : TEXT("add");
+
+		bool bOk = false;
+
+		if ((Type == TEXT("variable") || Type == TEXT("member")) && Blueprint != nullptr)
+		{
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			Payload->SetStringField(TEXT("name"), Name);
+			if (bDelete)
+			{
+				bOk = bExists && BridgeBool(Client->HandleRemoveBlueprintVariable(Payload), TEXT("removed"));
+			}
+			else
+			{
+				FString VarType;
+				Patch->TryGetStringField(TEXT("varType"), VarType);
+				if (VarType.IsEmpty())
+				{
+					Patch->TryGetStringField(TEXT("type"), VarType);
+				}
+				if (!VarType.IsEmpty())
+				{
+					Payload->SetStringField(TEXT("type"), VarType);
+				}
+				FString Category;
+				if (Patch->TryGetStringField(TEXT("category"), Category))
+				{
+					Payload->SetStringField(TEXT("category"), Category);
+				}
+				if (Patch->HasField(TEXT("defaultValue")))
+				{
+					Payload->SetField(TEXT("default"), Patch->TryGetField(TEXT("defaultValue")));
+				}
+				if (bExists)
+				{
+					bOk = BridgeBool(Client->HandleUpdateBlueprintVariable(Payload), TEXT("updated"));
+				}
+				else
+				{
+					bOk = BridgeBool(Client->HandleAddBlueprintVariable(Payload), TEXT("added"));
+				}
+			}
+		}
+		else if (Type == TEXT("component") && Blueprint != nullptr)
+		{
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			Payload->SetStringField(TEXT("name"), Name);
+			if (bDelete)
+			{
+				bOk = bExists && BridgeBool(Client->HandleRemoveBlueprintComponent(Payload), TEXT("removed"));
+			}
+			else if (bExists)
+			{
+				bOk = true; // property level refresh below
+			}
+			else
+			{
+				FString ComponentType;
+				Patch->TryGetStringField(TEXT("componentType"), ComponentType);
+				if (ComponentType.IsEmpty())
+				{
+					Patch->TryGetStringField(TEXT("type"), ComponentType);
+				}
+				Payload->SetStringField(TEXT("class"), ComponentType);
+				bOk = BridgeBool(Client->HandleAddBlueprintComponent(Payload), TEXT("added"));
+			}
+
+			const TSharedPtr<FJsonObject>* Props = nullptr;
+			if (bOk && !bDelete && Patch->TryGetObjectField(TEXT("properties"), Props) && Props->IsValid())
+			{
+				for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Props)->Values)
+				{
+					TSharedPtr<FJsonObject> PropPayload = MakePayload(Ctx.Path);
+					PropPayload->SetStringField(TEXT("component"), Name);
+					PropPayload->SetStringField(TEXT("property"), Pair.Key);
+					PropPayload->SetField(TEXT("value"), Pair.Value);
+					Client->HandleSetComponentProperty(PropPayload);
+				}
+			}
+		}
+		else if (Type == TEXT("function") && Blueprint != nullptr)
+		{
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			Payload->SetStringField(TEXT("name"), Name);
+			if (bDelete)
+			{
+				bOk = bExists && BridgeBool(Client->HandleRemoveFunctionGraph(Payload), TEXT("removed"));
+			}
+			else if (!bExists)
+			{
+				bool bPure = false;
+				if (Patch->TryGetBoolField(TEXT("pure"), bPure))
+				{
+					Payload->SetBoolField(TEXT("pure"), bPure);
+				}
+				const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
+				if (Patch->TryGetArrayField(TEXT("inputs"), Inputs))
+				{
+					Payload->SetArrayField(TEXT("params"), *Inputs);
+				}
+				const TArray<TSharedPtr<FJsonValue>>* Outputs = nullptr;
+				if (Patch->TryGetArrayField(TEXT("outputs"), Outputs))
+				{
+					Payload->SetArrayField(TEXT("outputs"), *Outputs);
+				}
+				bOk = BridgeBool(Client->HandleCreateFunctionGraph(Payload), TEXT("created"));
+			}
+			else
+			{
+				Ctx.Warn(TEXT("MEMBER_ALREADY_EXISTS"),
+					FString::Printf(TEXT("function '%s' already exists - replace its body via graphNode patches"), *Name));
+				bOk = true;
+			}
+		}
+		else if (Type == TEXT("graph.nodes") || Type == TEXT("graph.connections"))
+		{
+			FString GraphName;
+			Patch->TryGetStringField(TEXT("graphName"), GraphName);
+			TMap<FString, FString> Unused;
+			int32 Count = 0;
+			// Patch path has no subsequent connection phase; attempt deferred defaults once on-site (only warn on failure)
+			TArray<FDeferredPinDefault> DeferredDefaults;
+			if (Type == TEXT("graph.nodes"))
+			{
+				bOk = AddGraphNode(Ctx.Path, GraphName, Patch, Unused, Ctx.Warnings, Count, DeferredDefaults);
+				ApplyDeferredPinDefaults(DeferredDefaults, Ctx.Warnings);
+			}
+			else
+			{
+				ConnectGraph(Ctx.Path, Patch, Unused, Ctx.Warnings, Count);
+				bOk = Count > 0;
+			}
+			ActualOp = TEXT("add");
+		}
+		else if (Type == TEXT("member"))
+		{
+			// user_defined_struct members
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Patch->Values)
+			{
+				Payload->SetField(Pair.Key, Pair.Value);
+			}
+			if (bDelete)
+			{
+				bOk = BridgeBool(Client->HandleRemoveStructMember(Payload), TEXT("removed"));
+			}
+			else
+			{
+				bOk = BridgeBool(Client->HandleAddStructMember(Payload), TEXT("added"));
+				if (!bOk)
+				{
+					bOk = BridgeBool(Client->HandleUpdateStructMember(Payload), TEXT("updated"));
+					ActualOp = TEXT("replace");
+				}
+			}
+		}
+		else if (Type == TEXT("value"))
+		{
+			// user_defined_enum entries
+			TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Patch->Values)
+			{
+				Payload->SetField(Pair.Key, Pair.Value);
+			}
+			if (bDelete)
+			{
+				bOk = BridgeBool(Client->HandleRemoveEnumEntry(Payload), TEXT("removed"));
+			}
+			else
+			{
+				bOk = BridgeBool(Client->HandleAddEnumEntry(Payload), TEXT("added"));
+				if (!bOk)
+				{
+					bOk = BridgeBool(Client->HandleUpdateEnumEntry(Payload), TEXT("updated"));
+					ActualOp = TEXT("replace");
+				}
+			}
+		}
+		else
+		{
+			Ctx.Warn(TEXT("UNSUPPORTED_PATCH_TYPE"),
+				FString::Printf(TEXT("patch type '%s' is not handled by the blueprint domain"), *Type));
+			continue;
+		}
+
+		if (!bOk)
+		{
+			ActualOp = TEXT("failed");
+		}
+		Ctx.AddPatchResult(ActualOp, Type, Name, bOk,
+			bOk ? FString() : FString::Printf(TEXT("member '%s' could not be %s"), *Name,
+				bDelete ? TEXT("deleted") : (bExists ? TEXT("replaced") : TEXT("added"))));
+	}
+
+	return true;
+}
+
+bool FBlueprintIRHandler::DeleteAsset(FIRApplyContext& Ctx)
+{
+	FString Error;
+	if (!ForgeMindIR::DeleteAssetObject(Ctx.Path, Error))
+	{
+		Ctx.Fail(TEXT("DELETE_FAILED"), Error);
+		return false;
+	}
+	return true;
+}
+
+bool FBlueprintIRHandler::CompileAsset(UObject* Asset, FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr || AsBlueprint(Asset) == nullptr)
+	{
+		return IIRHandler::CompileAsset(Asset, Ctx);
+	}
+
+	TSharedPtr<FJsonObject> Result = Client->HandleCompileBlueprint(MakePayload(Ctx.Path));
+	const bool bCompiled = BridgeBool(Result, TEXT("compiled"));
+	if (!bCompiled)
+	{
+		Ctx.Warn(TEXT("COMPILATION_FAILED"), BridgeReason(Result));
+	}
+	return bCompiled;
+}
+
+TSharedPtr<FJsonObject> FBlueprintIRHandler::Read(UObject* Asset, FIRApplyContext& Ctx)
+{
+	TSharedRef<FJsonObject> Definition = MakeShared<FJsonObject>();
+
+	UBlueprint* Blueprint = AsBlueprint(Asset);
+	if (Blueprint == nullptr)
+	{
+		// LoadAsset may have returned a UBlueprintGeneratedClass or UPackage
+		// instead of the UBlueprint source object. Resolve via the path.
+		Blueprint = ResolveBlueprintFromPath(Ctx.Path);
+	}
+	if (Blueprint == nullptr)
+	{
+		// Level blueprint (level_blueprint): the level-embedded UBlueprint does **not** follow
+		// the "<Path>.<AssetName>" form; must use ResolveBlueprint's
+		// LevelScriptActor.ClassGeneratedBy fallback (Create/Update branches already use it).
+		// Without this step, get_asset_ir on .umap level assets always returns success=false
+		// → diff-comparison VerifyIrSnapshot cannot be used on level cases.
+		Blueprint = ForgeMindBlueprintUtils::ResolveBlueprint(Ctx.Path);
+	}
+	if (Blueprint == nullptr)
+	{
+		// Not a blueprint — try user_defined_struct / user_defined_enum.
+		if (UUserDefinedStruct* Struct = Cast<UUserDefinedStruct>(Asset))
+		{
+			TArray<TSharedPtr<FJsonValue>> StructMembers;
+			for (const FStructVariableDescription& Desc : FStructureEditorUtils::GetVarDesc(Struct))
+			{
+				TSharedRef<FJsonObject> StructEntry = MakeShared<FJsonObject>();
+				StructEntry->SetStringField(TEXT("name"), Desc.VarName.ToString());
+				if (!Desc.DefaultValue.IsEmpty())
+				{
+					StructEntry->SetStringField(TEXT("defaultValue"), Desc.DefaultValue);
+				}
+				StructMembers.Add(MakeShared<FJsonValueObject>(StructEntry));
+			}
+			Definition->SetArrayField(TEXT("members"), StructMembers);
+			return Definition;
+		}
+		if (UUserDefinedEnum* Enum = Cast<UUserDefinedEnum>(Asset))
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			const int32 EntryCount = Enum->NumEnums();
+			for (int32 i = 0; i < EntryCount; ++i)
+			{
+				const FString EntryName = Enum->GetNameStringByIndex(i);
+				if (EntryName.EndsWith(TEXT("_MAX")))
+				{
+					continue;
+				}
+				TSharedRef<FJsonObject> EnumEntry = MakeShared<FJsonObject>();
+				EnumEntry->SetStringField(TEXT("name"), EntryName);
+				EnumEntry->SetNumberField(TEXT("value"), static_cast<double>(Enum->GetValueByIndex(i)));
+				Values.Add(MakeShared<FJsonValueObject>(EnumEntry));
+			}
+			Definition->SetArrayField(TEXT("values"), Values);
+			return Definition;
+		}
+		Ctx.Warn(TEXT("ASSET_TYPE_MISMATCH"), FString::Printf(TEXT("'%s' is not a blueprint family asset"), *Ctx.Path));
+		return Definition;
+	}
+
+	// ---- summary level: extends, members, components, functions ----
+	if (Blueprint->ParentClass != nullptr)
+	{
+		Definition->SetStringField(TEXT("extends"), Blueprint->ParentClass->GetName());
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Members;
+	for (const FBPVariableDescription& Variable : Blueprint->NewVariables)
+	{
+		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("name"), Variable.VarName.ToString());
+		Entry->SetStringField(TEXT("type"), ForgeMindBlueprintUtils::PinTypeToText(Variable.VarType));
+		if (!Variable.DefaultValue.IsEmpty())
+		{
+			Entry->SetStringField(TEXT("defaultValue"), Variable.DefaultValue);
+		}
+		Members.Add(MakeShared<FJsonValueObject>(Entry));
+	}
+	Definition->SetArrayField(TEXT("members"), Members);
+
+	TArray<TSharedPtr<FJsonValue>> Components;
+	if (Blueprint->SimpleConstructionScript != nullptr)
+	{
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node == nullptr || Node->ComponentTemplate == nullptr)
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("name"), Node->GetVariableName().ToString());
+			Entry->SetStringField(TEXT("type"), Node->ComponentTemplate->GetClass()->GetName());
+			Components.Add(MakeShared<FJsonValueObject>(Entry));
+		}
+	}
+	Definition->SetArrayField(TEXT("components"), Components);
+
+	TArray<TSharedPtr<FJsonValue>> Functions;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph == nullptr)
+		{
+			continue;
+		}
+		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("name"), Graph->GetName());
+		Entry->SetStringField(TEXT("type"), TEXT("function"));
+
+		// summary level: function inputs/outputs (signature)
+		TArray<TSharedPtr<FJsonValue>> Inputs;
+		TArray<TSharedPtr<FJsonValue>> Outputs;
+		ExtractFunctionSignature(Graph, Inputs, Outputs);
+		Entry->SetArrayField(TEXT("inputs"), Inputs);
+		Entry->SetArrayField(TEXT("outputs"), Outputs);
+
+		// Function local variables (same-named field on apply side: functions[].locals). Output only when non-empty —
+		// an empty array would also desync the existing baseline (IR snapshot) entirely.
+		TArray<TSharedPtr<FJsonValue>> Locals;
+		ExtractFunctionLocals(Graph, Locals);
+		if (Locals.Num() > 0)
+		{
+			Entry->SetArrayField(TEXT("locals"), Locals);
+		}
+
+		// graph/full level: nodes + connections
+		if (Ctx.Level == TEXT("graph") || Ctx.Level == TEXT("full"))
+		{
+			Entry->SetObjectField(TEXT("graph"), GraphToIR(Graph, Graph->GetName(), TEXT("function"), Ctx.Level));
+		}
+
+		Functions.Add(MakeShared<FJsonValueObject>(Entry));
+	}
+	Definition->SetArrayField(TEXT("functions"), Functions);
+
+	// graph/full level: event graphs (ubergraph pages)
+	if (Ctx.Level == TEXT("graph") || Ctx.Level == TEXT("full"))
+	{
+		TArray<TSharedPtr<FJsonValue>> EventGraphs;
+		for (UEdGraph* Graph : Blueprint->UbergraphPages)
+		{
+			if (Graph == nullptr)
+			{
+				continue;
+			}
+			EventGraphs.Add(MakeShared<FJsonValueObject>(
+				GraphToIR(Graph, Graph->GetName(), TEXT("eventGraph"), Ctx.Level)));
+		}
+		if (EventGraphs.Num() > 0)
+		{
+			Definition->SetArrayField(TEXT("eventGraphs"), EventGraphs);
+		}
+	}
+
+	// Macro graphs (Blueprint->MacroGraphs): signature from tunnel pins, body exported in the same form as function graphs.
+	// Previously IR contained no macro graphs at all — issues inside macro bodies (execution pins, macro call nodes, loop limit
+	// connections) were invisible to IR snapshots, so diff-comparison could only cover call graphs.
+	// Like eventGraphs, output only when non-empty to avoid disturbing existing baselines of macro-free assets.
+	{
+		TArray<TSharedPtr<FJsonValue>> Macros;
+		for (UEdGraph* Graph : Blueprint->MacroGraphs)
+		{
+			if (Graph == nullptr)
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("name"), Graph->GetName());
+			Entry->SetStringField(TEXT("type"), TEXT("macro"));
+
+			TArray<TSharedPtr<FJsonValue>> Inputs;
+			TArray<TSharedPtr<FJsonValue>> Outputs;
+			ExtractMacroSignature(Graph, Inputs, Outputs);
+			Entry->SetArrayField(TEXT("inputs"), Inputs);
+			Entry->SetArrayField(TEXT("outputs"), Outputs);
+
+			if (Ctx.Level == TEXT("graph") || Ctx.Level == TEXT("full"))
+			{
+				Entry->SetObjectField(TEXT("graph"), GraphToIR(Graph, Graph->GetName(), TEXT("macro"), Ctx.Level));
+			}
+			Macros.Add(MakeShared<FJsonValueObject>(Entry));
+		}
+		if (Macros.Num() > 0)
+		{
+			Definition->SetArrayField(TEXT("macros"), Macros);
+		}
+	}
+
+	return Definition;
+}
+
+
+TSharedRef<IIRHandler> MakeBlueprintIRHandler()
+{
+	return MakeShared<FBlueprintIRHandler>();
+}

@@ -1,0 +1,11 @@
+{
+  "moduleId": "ForgeMind.Knowledge",
+  "publisherId": "ForgeMind",
+  "version": "1.0.0",
+  "minCoreVersion": "",
+  "maxCoreVersion": "",
+  "capabilities": ["knowledge"],
+  "payloadHash": "",
+  "signature": "",
+  "serviceOverrides": []
+}

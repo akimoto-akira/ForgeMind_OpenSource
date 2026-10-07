@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Exe so the scanner also runs standalone (the host need not be running);
+         the assembly is still loadable by the host as a plugin. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ForgeMind.EngineScanner</AssemblyName>
+    <RootNamespace>ForgeMind.EngineScanner</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- This project runs as a standalone exe, so every reference below is copied to its
+         output and registered in deps.json — the run must not depend on anything being
+         deployed next to it. -->
+    <ProjectReference Include="..\ForgeMindServer\ForgeMindServer.csproj" />
+
+    <!-- Asset reading (function A): the asset scanner resolves .uasset through it -->
+    <ProjectReference Include="..\ForgeMind.Assets\ForgeMind.Assets.csproj" />
+
+    <!-- Generic scan contract (refactor plan §11) -->
+    <ProjectReference Include="..\ForgeMind.Scan.Abstractions\ForgeMind.Scan.Abstractions.csproj" />
+
+    <!-- UE scanner provider (refactor plan §12): scan model + scanning logic + IScanner
+         implementation. EngineScanner is now a thin shell that bridges the UE scan model
+         to the generic IScanDataProvider contract. -->
+    <ProjectReference Include="..\ForgeMind.Scan.Unreal\ForgeMind.Scan.Unreal.csproj" />
+
+    <!-- Scan orchestration (refactor plan §15): ScanResultPacker bridges IScanResult →
+         IPackWriter so the scanner can write directly to SPK. -->
+    <ProjectReference Include="..\ForgeMind.Scan\ForgeMind.Scan.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Plugin manifest ships next to the DLL so PluginLoader can discover it -->
+    <None Include="ForgeMind.EngineScanner.manifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

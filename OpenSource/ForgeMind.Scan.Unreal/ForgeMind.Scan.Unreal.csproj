@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ForgeMind.Scan.Unreal</AssemblyName>
+    <RootNamespace>ForgeMind.Scan.Unreal</RootNamespace>
+    <Company>Hoshino Kennji</Company>
+    <Version>1.0.0.0</Version>
+    <Description>ForgeMind Unreal scanner provider — UE-specific scan model, scanning logic, and IScanner implementation (refactor plan §10/§12). Engine-specific types live here, never in the generic contract.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Generic scan contract (refactor plan §11): shared type identity, Private=false -->
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan.Abstractions\ForgeMind.Scan.Abstractions.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+
+    <!-- Open Core surface: UnrealEngineLocator + LogManager. Private=false — supplied by the
+         host at runtime. This is Open→Open (Core is part of Open Edition), not a commercial
+         reverse dependency. Extracting locator/logging into a separate library is deferred;
+         this round does not redesign the scanner. -->
+    <ProjectReference Include="..\ForgeMindServer\ForgeMindServer.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+
+    <!-- Asset reading (function A): the uasset scanner resolves .uasset through it -->
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Assets\ForgeMind.Assets.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Roslyn: UBT Build.cs rules compilation (RulesCompiler) -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
+  </ItemGroup>
+
+</Project>

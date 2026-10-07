@@ -1,0 +1,11 @@
+{
+  "moduleId": "ForgeMind.Assets",
+  "publisherId": "ForgeMind",
+  "version": "1.0.0",
+  "minCoreVersion": "",
+  "maxCoreVersion": "",
+  "capabilities": ["asset"],
+  "payloadHash": "",
+  "signature": "",
+  "serviceOverrides": []
+}

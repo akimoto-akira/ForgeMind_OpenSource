@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ForgeMind.OfflineEngineKit</AssemblyName>
+    <RootNamespace>ForgeMind.OfflineEngineKit</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Host runtime public surface (Compat / Plugins / Bridge / Engine / DocumentEngine):
+         Referenced via ProjectReference; Private=false so it is not copied into plugin output,
+         provided by the host at runtime -->
+    <ProjectReference Include="..\ForgeMindServer\ForgeMindServer.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Plugin manifest ships next to the DLL so PluginLoader can discover it -->
+    <None Include="ForgeMind.OfflineEngineKit.manifest.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
