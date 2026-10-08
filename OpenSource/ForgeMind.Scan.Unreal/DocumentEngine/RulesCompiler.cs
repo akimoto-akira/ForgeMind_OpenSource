@@ -2,35 +2,36 @@
 // Copyright (c) 2026 Hoshino Kennji
 
 using System.Reflection;
+using System.Runtime.Loader;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace ForgeMind.Scan.Unreal;
 
-/// <summary>规则编译结果：全部 Build.cs 一次编译；错误整体回报（测试驱动补存根）。</summary>
+/// <summary>Rule compilation result: all Build.cs compiled at once; errors reported holistically (test-driven stub completion).</summary>
 public sealed class RulesCompileResult
 {
     public bool Success => Errors.Count == 0;
 
-    /// <summary>编译 / 实例化错误（含 Build.cs 相对路径），测试驱动补齐 stub 的依据。</summary>
+    /// <summary>Compilation / instantiation errors (incl. Build.cs relative path); basis for test-driven stub completion.</summary>
     public List<string> Errors { get; } = [];
 
-    /// <summary>编译成功并实例化出的模块：模块名 → 模块信息。</summary>
+    /// <summary>Successfully compiled and instantiated modules: module name → module info.</summary>
     public Dictionary<string, ModuleInfo> Modules { get; } = new(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>
-/// 规则编译器：把收集到的 *.Build.cs 与本程序集（含 UnrealBuildTool 存根）一起
-/// 用 Roslyn 编译为内存程序集，反射实例化 ModuleRules 派生类，产出 ModuleInfo。
-/// 全程内存内完成，不落盘。
+/// Rule compiler: collects *.Build.cs together with this assembly (including UnrealBuildTool stubs) and
+/// compiles them into an in-memory assembly via Roslyn, reflects-instantiates ModuleRules derived classes, producing ModuleInfo.
+/// Entirely in-memory, no disk writes.
 /// </summary>
 public static class RulesCompiler
 {
-    /// <summary>编译一组 Build.cs 并产出模块信息。</summary>
-    /// <param name="rulesFiles">.build.cs 完整路径列表（相对路径 → 模块归属由调用方在 ModuleInfo 上补）。</param>
-    /// <param name="defaultScope">产出的 ModuleInfo 的默认层级（直属模块；插件模块由调用方改写）。</param>
-    /// <param name="engineDir">引擎目录（填入目标规则的 EngineDir / RelativeEnginePath，供 Build.cs 读取）。</param>
+    /// <summary>Compile a set of Build.cs and produce module info.</summary>
+    /// <param name="rulesFiles">.build.cs full path list (relative path → module ownership filled by caller on ModuleInfo).</param>
+    /// <param name="defaultScope">Default scope for produced ModuleInfo (direct modules; plugin modules rewritten by caller).</param>
+    /// <param name="engineDir">Engine directory (populated into target rule's EngineDir / RelativeEnginePath for Build.cs to read).</param>
     public static RulesCompileResult Compile(IEnumerable<string> rulesFiles, ScopeLevel defaultScope, string? engineDir = null)
     {
         var result = new RulesCompileResult();
@@ -38,8 +39,8 @@ public static class RulesCompiler
         if (files.Count == 0)
             return result;
 
-        // 1. 解析为语法树，并把 TargetRules / ReadOnlyTargetRules 类型引用改写为 dynamic
-        //    （数据收集优先：Target.* 的未知成员走运行时动态兜底，不再编译失败）
+        // 1. Parse into syntax trees, and rewrite TargetRules / ReadOnlyTargetRules type references to dynamic
+        //    (data collection priority: unknown members of Target.* fall back to runtime dynamic dispatch, no longer failing compilation)
         var parseOptions = new CSharpParseOptions(languageVersion: LanguageVersion.Latest);
         List<SyntaxTree> trees = [];
         foreach (string file in files)
@@ -51,14 +52,14 @@ public static class RulesCompiler
             }
             catch (Exception ex)
             {
-                result.Errors.Add($"{file}: 读取失败 - {ex.Message}");
+                result.Errors.Add($"{file}: read failed - {ex.Message}");
             }
         }
 
         if (trees.Count == 0)
             return result;
 
-        // 2. 引用：当前运行时全部程序集（含本程序集，即 UnrealBuildTool 存根所在）
+        // 2. References: all assemblies in current runtime (incl. this assembly, where UnrealBuildTool stubs reside)
         var references = new List<MetadataReference>();
         foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
@@ -70,18 +71,18 @@ public static class RulesCompiler
             }
             catch
             {
-                // 个别程序集不可引用（如内存程序集）——跳过
+                // Some assemblies cannot be referenced (e.g. in-memory assemblies) — skip
             }
         }
 
-        // Build.cs 中的 dynamic 运算需要 Microsoft.CSharp（CS0656），显式补上
+        // dynamic operations in Build.cs require Microsoft.CSharp (CS0656); explicitly add it
         string csharpBinderPath = Path.Combine(
             Path.GetDirectoryName(typeof(object).Assembly.Location)!, "Microsoft.CSharp.dll");
         if (File.Exists(csharpBinderPath))
             references.Add(MetadataReference.CreateFromFile(csharpBinderPath));
 
-        // 注意：ForgeMindServer 根命名空间存在同名的 UnrealBuildTool 工具类（MCP build 工具），
-        // 此处必须用 global:: 限定到存根命名空间
+        // Note: ForgeMindServer root namespace has a same-named UnrealBuildTool tool class (MCP build tool);
+        // must use global:: qualifier to target the stub namespace here
         Type moduleRulesType = typeof(global::UnrealBuildTool.ModuleRules);
         var target = new global::UnrealBuildTool.ReadOnlyTargetRules
         {
@@ -89,7 +90,7 @@ public static class RulesCompiler
             RelativeEnginePath = engineDir ?? "",
         };
 
-        // 3a. 整体编译（快路径）：全部 Build.cs 一个程序集
+        // 3a. Overall compilation (fast path): all Build.cs in one assembly
         var options = new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, allowUnsafe: true);
         var overall = CSharpCompilation.Create(
             "ForgeMindRules_" + Guid.NewGuid().ToString("N"), trees, references, options);
@@ -103,7 +104,7 @@ public static class RulesCompiler
             return result;
         }
 
-        // 3b. 逐文件编译（隔离失败面）：单个文件失败只丢该文件，尽可能多地收集模块数据
+        // 3b. Per-file compilation (isolate failure scope): single file failure loses only that file, collect module data as much as possible
         foreach (SyntaxTree tree in trees)
         {
             var single = CSharpCompilation.Create(
@@ -126,21 +127,25 @@ public static class RulesCompiler
         return result;
     }
 
-    /// <summary>加载规则程序集；失败时记录错误并返回 null。</summary>
+    /// <summary>Load rules assembly; on failure record error and return null.</summary>
     private static Assembly? TryLoadRulesAssembly(byte[] image, RulesCompileResult result)
     {
         try
         {
-            return Assembly.Load(image);
+            // Load through the dedicated rules context, not Assembly.Load(byte[]): the default
+            // context cannot resolve the stub assembly (ForgeMind.Scan.Unreal) when it runs as a
+            // plugin (the dll sits in a plugin directory, not beside the host binary), and every
+            // ModuleRules-derived type then fails to load (ReflectionTypeLoadException).
+            return RulesAssemblyContext.Current.LoadFromStream(new MemoryStream(image));
         }
         catch (Exception ex)
         {
-            result.Errors.Add("规则程序集加载失败 - " + ex.Message);
+            result.Errors.Add("rules assembly load failed - " + ex.Message);
             return null;
         }
     }
 
-    /// <summary>反射实例化程序集内的 ModuleRules 派生类，产出 ModuleInfo。</summary>
+    /// <summary>Reflect-instantiate ModuleRules derived types in assembly, producing ModuleInfo.</summary>
     private static void InstantiateModules(
         Assembly assembly,
         Type moduleRulesType,
@@ -149,24 +154,24 @@ public static class RulesCompiler
         ScopeLevel defaultScope,
         RulesCompileResult result)
     {
-        foreach (Type type in assembly.GetTypes())
+        foreach (Type type in EnumerateRuleTypes(assembly, result))
         {
             if (type.IsAbstract || !moduleRulesType.IsAssignableFrom(type))
                 continue;
 
             try
             {
-                // 显式数组：避免 CreateInstance(Type, bool nonPublic) 候选——
-                // DynamicStubObject 有 implicit operator bool，普通形式候选优先于
-                // params 展开形式，会把 target 静默转成 nonPublic=false 导致无参构造失败
+                // Explicit array: avoid CreateInstance(Type, bool nonPublic) candidate —
+                // DynamicStubObject has implicit operator bool; the normal form candidate takes priority
+                // over params expansion, silently converting target to nonPublic=false causing parameterless ctor failure
                 object? instance = Activator.CreateInstance(type, new object?[] { target });
                 if (instance is null)
                 {
-                    result.Errors.Add($"{type.Name}: 实例化返回 null");
+                    result.Errors.Add($"{type.Name}: instantiation returned null");
                     continue;
                 }
 
-                // 规则类名即模块名（UBT 惯例：Foo.Build.cs → class Foo → 模块 Foo）
+                // Rule class name = module name (UBT convention: Foo.Build.cs → class Foo → module Foo)
                 string moduleName = type.Name;
                 string rulesFile = FindRuleFileFor(files, type.Name) ?? "";
 
@@ -186,12 +191,12 @@ public static class RulesCompiler
             {
                 Exception inner = invocationExceptionInner(invocationEx)!;
                 result.Errors.Add(
-                    $"{type.Name}: 实例化失败 - {inner.GetType().FullName}: {inner.Message}\n{StackSummary(inner)}");
+                    $"{type.Name}: instantiation failed - {inner.GetType().FullName}: {inner.Message}\n{StackSummary(inner)}");
             }
             catch (Exception ex)
             {
                 result.Errors.Add(
-                    $"{type.Name}: 实例化失败 - {ex.GetType().FullName}: {ex.Message}\n{StackSummary(ex)}");
+                    $"{type.Name}: instantiation failed - {ex.GetType().FullName}: {ex.Message}\n{StackSummary(ex)}");
             }
 
             static Exception? invocationExceptionInner(TargetInvocationException ex) => ex.InnerException;
@@ -202,9 +207,9 @@ public static class RulesCompiler
     }
 
     /// <summary>
-    /// 把 Build.cs 语法树中对 TargetRules / ReadOnlyTargetRules 的类型引用改写为 dynamic：
-    /// Build.cs 对目标规则对象的一切成员访问走运行时动态绑定（未知成员由
-    /// DynamicStubObject 兜底），编译期不再因目标规则缺成员而失败。
+    /// Rewrite TargetRules / ReadOnlyTargetRules type references in Build.cs syntax tree to dynamic:
+    /// all member accesses on the target rules object go through runtime dynamic binding
+    /// (unknown members fall back to DynamicStubObject), no longer failing compilation due to missing target rule members.
     /// </summary>
     private sealed class TargetRulesToDynamicRewriter : CSharpSyntaxRewriter
     {
@@ -217,7 +222,7 @@ public static class RulesCompiler
         private static bool IsTargetRulesType(string name) =>
             name is "TargetRules" or "ReadOnlyTargetRules";
 
-        /// <summary>当前构造函数中声明为 dynamic 的参数名（base 初始化器实参需要静态化）。</summary>
+        /// <summary>Parameter names declared as dynamic in the current constructor (base initializer arguments need static binding).</summary>
         private readonly HashSet<string> _dynamicParameterNames = new(StringComparer.Ordinal);
 
         public override SyntaxNode? VisitConstructorDeclaration(ConstructorDeclarationSyntax node)
@@ -233,11 +238,11 @@ public static class RulesCompiler
 
         public override SyntaxNode? VisitParameter(ParameterSyntax node)
         {
-            // 扩展方法的 this 参数不能是 dynamic（CS1103），保持原样不改写
+            // Extension method 'this' parameter cannot be dynamic (CS1103); keep it unchanged
             if (node.Modifiers.Any(m => m.IsKind(SyntaxKind.ThisKeyword)))
                 return node;
 
-            // 先让子节点完成改写（ReadOnlyTargetRules → dynamic），再识别 dynamic 参数
+            // Let child nodes finish rewriting first (ReadOnlyTargetRules → dynamic), then identify dynamic params
             SyntaxNode? result = base.VisitParameter(node);
 
             ParameterSyntax visited = result as ParameterSyntax ?? node;
@@ -249,8 +254,8 @@ public static class RulesCompiler
 
         public override SyntaxNode? VisitConstructorInitializer(ConstructorInitializerSyntax node)
         {
-            // base(Target) 中的 dynamic 实参在构造初始化器里禁止动态派发（CS1975）——
-            // 包一层 (object) 强转后即可静态绑定到 ModuleRules(object) 构造器
+            // dynamic arguments in base(Target) are not allowed for dynamic dispatch in constructor initializer (CS1975) —
+            // wrapping with (object) cast enables static binding to ModuleRules(object) ctor
             if (node.IsKind(SyntaxKind.BaseConstructorInitializer) && _dynamicParameterNames.Count > 0)
             {
                 bool changed = false;
@@ -277,8 +282,8 @@ public static class RulesCompiler
 
         public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
         {
-            // 只改写「类型位置」的引用：表达式位（如 TargetRules.TargetType.Server 的
-            // 静态成员访问）保留原名，否则 dynamic 作为表达式标识符会 CS0103
+            // Only rewrite references in "type position": expression position (e.g. static member access of
+            // TargetRules.TargetType.Server) keeps the original name, otherwise dynamic as expression identifier causes CS0103
             return IsTypeContext(node) && IsTargetRulesType(node.Identifier.ValueText)
                 ? SyntaxFactory.ParseTypeName("dynamic").WithTriviaFrom(node)
                 : base.VisitIdentifierName(node);
@@ -296,7 +301,7 @@ public static class RulesCompiler
             return base.VisitQualifiedName(node);
         }
 
-        /// <summary>判断节点是否处于「类型位置」（参数 / 变量 / 强转 / 泛型参数 / 数组元素 / 约束等）。</summary>
+        /// <summary>Determine whether a node is in "type position" (parameter / variable / cast / type argument / array element / constraint etc.).</summary>
         private static bool IsTypeContext(SyntaxNode node) => node.Parent switch
         {
             ParameterSyntax parameter => parameter.Type == node,
@@ -312,7 +317,66 @@ public static class RulesCompiler
         };
     }
 
-    /// <summary>按规则类型名（= 模块名）反查 .build.cs 路径。</summary>
+    /// <summary>
+    /// Isolated load context for the Roslyn-compiled rules assemblies. It resolves every
+    /// dependency from the runtime's already-loaded assemblies: the compile-time references are
+    /// exactly those assemblies (AppDomain.CurrentDomain.GetAssemblies()), so each reference
+    /// resolves back to the very instance the metadata was taken from, keeping type identity
+    /// (the ModuleRules base class and DynamicStubObject binder targets) unified across the
+    /// assembly boundary.
+    /// </summary>
+    private sealed class RulesAssemblyContext : AssemblyLoadContext
+    {
+        public static RulesAssemblyContext Current { get; } = new();
+
+        private RulesAssemblyContext() : base(name: "ForgeMindRules")
+        {
+        }
+
+        protected override Assembly? Load(AssemblyName assemblyName)
+        {
+            string? name = assemblyName.Name;
+            if (name == null)
+                return null;
+
+            foreach (Assembly loaded in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                if (string.Equals(loaded.GetName().Name, name, StringComparison.OrdinalIgnoreCase))
+                    return loaded;
+            }
+
+            return null; // Fall back to default resolution
+        }
+    }
+
+    /// <summary>
+    /// Enumerates the ModuleRules-derived types within a rules assembly. A partial type load
+    /// failure (some dependency not resolvable) is degraded to the successfully loaded types —
+    /// aligned with the plugin loader's discovery mode — instead of propagating the exception
+    /// and killing the whole scan.
+    /// </summary>
+    private static IEnumerable<Type> EnumerateRuleTypes(Assembly assembly, RulesCompileResult result)
+    {
+        Type?[] types;
+        try
+        {
+            types = assembly.GetTypes();
+        }
+        catch (ReflectionTypeLoadException ex)
+        {
+            result.Errors.Add(
+                "rules assembly partial type load failed - " + (ex.LoaderExceptions.FirstOrDefault()?.Message ?? ex.Message));
+            types = ex.Types;
+        }
+
+        foreach (Type? type in types)
+        {
+            if (type is not null)
+                yield return type;
+        }
+    }
+
+    /// <summary>Reverse lookup .build.cs path by rule type name (= module name).</summary>
     private static string? FindRuleFileFor(List<string> files, string moduleName)
     {
         string suffix = ".build.cs";

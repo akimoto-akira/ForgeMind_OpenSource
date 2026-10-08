@@ -18,14 +18,21 @@ using Task = System.Threading.Tasks.Task;
 // - **tooltip not implemented on bridge**: add_blueprint_variable / update_blueprint_variable
 //   both lack this field (engine side is FBPVariableDescription's MD_Tooltip metadata),
 //   doc task 3's Tooltip("name") written directly as "supported", missing part is pending requirement.
-// - DSL side: BlueprintTranslator.ApplyVariableFlags only reads **Variable attribute's own**
-//   named args (Category / Editable|EditAnywhere / BlueprintReadOnly / Replicated),
-//   doc's [Variable, InstanceEditable] / [Variable, ExposeOnSpawn] /
-//   [Variable, Category("Config"), Tooltip("name")] three forms (bare identifier, standalone
-//   attributes) are not currently recognized -- copied from task doc, test is spec.
+// - DSL side: BlueprintTranslator.ApplyVariableFlags recognizes flags from **two** sources:
+//     the [Variable] attribute's own named args / bare identifiers (Category /
+//   Editable|EditAnywhere|InstanceEditable / BlueprintReadOnly / Replicated / ExposeOnSpawn /
+//   Tooltip) **and** standalone attributes listed beside it -- [Variable, InstanceEditable],
+//   [Variable, Category("Config")], [Variable, ExposeOnSpawn], [Variable, Tooltip("name")]
+//   (Edit_Inst_B visual feedback: instance editable was not ticked, ApplyVariableFlags only
+//   ever read the [Variable] attribute itself).
+// - Bridge side (C++, needs a plugin rebuild): add/update_blueprint_variable now accept
+//   'tooltip' (MD_Tooltip metadata) and the IR layer consumes exposeOnSpawn / tooltip on both
+//   the create-mode members loop and the update-mode variable patches (the update path also
+//   silently dropped editAnywhere / replicated before this).
 //
-// Note: per collaboration spec point 9, "diff comparison" (VerifyIrSnapshot) not attached
-// when transwriting task docs.
+// Note: mis-touch comparison (VerifyIrSnapshot) attached by user instruction (collaboration
+//   spec point 9), one per subtask side: Edit_Inst_A / Edit_Inst_B / Edit_Spawn_A /
+//   Edit_Spawn_B / Edit_Cat_A / Edit_Cat_B. First run records the baselines.
 // =========================================================================
 
 public sealed class Blueprint_EditableVar : ITestCase
@@ -70,9 +77,11 @@ public sealed class Blueprint_EditableVar : ITestCase
         BlueprintTestHelper.CreateBlueprintActor(ctx, a1);
         AddVariable(ctx, a1, "Speed", "float", "100.0", instanceEditable: true);
         BlueprintTestHelper.CompileAndSave(ctx, a1);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
 
         // DSL path (copied from task doc; [Variable, InstanceEditable] is DSL pending spec)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Edit_Inst_B");
 
         // -- Subtask 2: ExposeOnSpawn (expose on spawn) --
         // MCP steps: Edit_Spawn_A (Extends Actor) + Count : int (default 0,
@@ -81,9 +90,11 @@ public sealed class Blueprint_EditableVar : ITestCase
         BlueprintTestHelper.CreateBlueprintActor(ctx, a2);
         AddVariable(ctx, a2, "Count", "int", "0", exposeOnSpawn: true);
         BlueprintTestHelper.CompileAndSave(ctx, a2);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
 
         // DSL path (copied from task doc; [Variable, ExposeOnSpawn] is DSL pending spec)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Edit_Spawn_B");
 
         // -- Subtask 3: Category and Tooltip --
         // MCP steps: Edit_Cat_A (Extends Actor) + Label : string,
@@ -93,9 +104,11 @@ public sealed class Blueprint_EditableVar : ITestCase
         BlueprintTestHelper.CreateBlueprintActor(ctx, a3);
         AddVariable(ctx, a3, "Label", "string", "", category: "Config", tooltip: "name");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 
         // DSL path (copied from task doc; Category / Tooltip standalone attribute forms are DSL pending spec)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Edit_Cat_B");
 
         await Task.CompletedTask;
     }

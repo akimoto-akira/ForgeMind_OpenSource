@@ -4,34 +4,34 @@
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// UE 文档引擎抽象层：持有扫描输入（路径全部<b>注入</b>，无硬编码），
-/// 并以模板方法固定 UE 的三段扫描流程——模块 → 头文件 → 资产。
+/// UE document engine abstraction: holds scan inputs (all paths <b>injected</b>, no hard-coding),
+/// and fixes UE's three-stage scan pipeline — modules → headers — assets — via the Template Method pattern.
 /// <para>
-/// 四路独立扫描：<b>引擎代码</b> / <b>引擎资产</b> / <b>项目代码</b> / <b>项目资产</b>
-/// 各自独立产出 <see cref="ScanRoot"/>，先到先入索引——翻译器不用等资产扫完就能查签名。
+/// Four independent scans: <b>engine code</b> / <b>engine assets</b> / <b>project code</b> / <b>project assets</b>;
+/// each independently produces a <see cref="ScanRoot"/> that is admitted to the index on arrival — the translator can query signatures before asset scanning finishes.
 /// </para>
 /// <para>
-/// 版本子类（Ue5_x）规则（测试驱动，不靠版本号推测）：
-/// 扫描器 N 测 N 版源码通过且测 N+1 版也通过 → 共用；
-/// 测 N+1 版报错 → 为 N+1 单开扫描器子类。
-/// <see cref="EngineVersion"/> 仅作数据属性，绝不用作身份标识。
+/// Version subclass (Ue5_x) rule (test-driven, not version-number-guessed):
+/// scanner N passes on N's source and also passes on N+1 → shared;
+/// N+1 fails → open a dedicated scanner subclass for N+1.
+/// <see cref="EngineVersion"/> is a data attribute only, never used as identity.
 /// </para>
 /// </summary>
 public abstract class UeDocumentEngine : DocumentEngine
 {
-    /// <summary>UE 源代码路径（GitHub 源码或本地源码）——由 engine 工具定位结果注入。</summary>
+    /// <summary>UE source code path (GitHub source or local source) — injected by engine tool locate result.</summary>
     public DirectoryInfo SourceCodeDir { get; }
 
-    /// <summary>UE 安装版路径（Engine 安装目录）——由 engine 工具定位结果注入。</summary>
+    /// <summary>UE installed path (Engine install directory) — injected by engine tool locate result.</summary>
     public DirectoryInfo InstallDir { get; }
 
-    /// <summary>引擎版本描述（如 "5.0.3"）——仅作数据属性，绝不用作身份标识。</summary>
+    /// <summary>Engine version description (e.g. "5.0.3") — data attribute only, never used as identity.</summary>
     public string EngineVersion { get; }
 
-    /// <summary>项目路径（可选）——由编辑器启动事件确定；为空时只扫引擎侧。</summary>
+    /// <summary>Project path (optional) — determined by editor startup event; when empty, only engine side is scanned.</summary>
     public DirectoryInfo? ProjectDir { get; init; }
 
-    /// <summary>扫描诊断（规则编译 / 资产解析等失败信息）——不中断扫描，供测试驱动补齐存根。</summary>
+    /// <summary>Scan diagnostics (rules compile / asset parse failures, etc.) — never halts scan; feeds test-driven stub gap-filling.</summary>
     public List<string> ScanDiagnostics { get; } = [];
 
     protected UeDocumentEngine(DirectoryInfo sourceCodeDir, DirectoryInfo installDir, string engineVersion)
@@ -42,8 +42,8 @@ public abstract class UeDocumentEngine : DocumentEngine
     }
 
     /// <summary>
-    /// 模板方法：引擎侧与项目侧同构（同一套模型与扫描逻辑，只是根不同）。
-    /// 项目路径未注入时只产引擎侧根。
+    /// Template method: engine side and project side are isomorphic (same model and scan logic, only differ in root).
+    /// When project path is not injected, only the engine-side root is produced.
     /// </summary>
     public sealed override IReadOnlyList<ScanRoot> Scan()
     {
@@ -55,29 +55,29 @@ public abstract class UeDocumentEngine : DocumentEngine
         return roots;
     }
 
-    // ── 四路独立扫描（各自产出 ScanRoot，先到先入索引）──
+    // ── Four independent scans (each produces a ScanRoot, admitted on arrival) ──
 
     /// <summary>
-    /// 引擎代码扫描：插件发现 + 模块规则编译 + 头文件扫描。
-    /// 不含资产——代码扫完即可投递，翻译器立即能查父类链签名。
+    /// Engine code scan: plugin discovery + module rules compilation + header scanning.
+    /// No assets — code scan completion is immediately dispatchable; translator can query parent-chain signatures at once.
     /// </summary>
     public abstract IReadOnlyList<ScanRoot> ScanEngineCode();
 
     /// <summary>
-    /// 引擎资产扫描：遍历引擎安装目录下的 .uasset。
-    /// 独立于代码扫描，可后行投递；耗时较长但不阻塞签名查询。
+    /// Engine asset scan: walks .uasset under the engine install directory.
+    /// Independent of code scan, dispatched later; long-running but does not block signature queries.
     /// </summary>
     public abstract IReadOnlyList<ScanRoot> ScanEngineAssets();
 
     /// <summary>
-    /// 项目代码扫描：项目直属模块 + 项目插件模块的规则编译 + 头文件扫描。
-    /// 独立于引擎侧，可并行投递。
+    /// Project code scan: project-direct modules + project-plugin modules rules compilation + header scanning.
+    /// Independent of engine side, dispatched in parallel.
     /// </summary>
     public abstract IReadOnlyList<ScanRoot> ScanProjectCode();
 
     /// <summary>
-    /// 项目资产扫描：遍历项目目录下的 .uasset。
-    /// 独立于代码扫描，最后投递。
+    /// Project asset scan: walks .uasset under the project directory.
+    /// Independent of code scan, dispatched last.
     /// </summary>
     public abstract IReadOnlyList<ScanRoot> ScanProjectAssets();
 }

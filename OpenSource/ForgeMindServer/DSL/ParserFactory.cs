@@ -47,6 +47,7 @@ public static class ParserFactory
         ("LevelBlueprint",      "level_blueprint"),
         ("BlueprintFunctionLibrary", "blueprint_function_library"),
         ("MacroLibrary",        "blueprint_macro_library"),
+        ("BlueprintInterface",  "blueprint_interface"),
         ("Blueprint",           "blueprint"),
     ];
 
@@ -120,7 +121,92 @@ public static class ParserFactory
             });
         }
 
-        return blocks;
+        return InjectCrossBlockTypeAliases(blocks);
+    }
+
+    /// <summary>
+    /// Cross-block type-name → Path aliases (Core Syntax.md §11.5 implicit alias):
+    /// a top-level declaration <c>[Domain(Path="/Game/X")] public class/interface X</c>
+    /// establishes <c>"X" → "/Game/X"</c> so later blocks can reference it by bare name —
+    /// e.g. <c>[Implements(typeof(IDamageable))]</c> resolves to the interface asset path
+    /// without requiring an explicit <c>using IDamageable = "/Game/...";</c> alias.
+    /// Type aliases are placed before file/block-level usings so explicit aliases
+    /// (registered later) take precedence (DomainTranslatorBase.RegisterAlias: last wins).
+    /// </summary>
+    private static IReadOnlyList<BlockContext> InjectCrossBlockTypeAliases(List<BlockContext> blocks)
+    {
+        var typeAliases = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var block in blocks)
+        {
+            if (block.Root is BaseTypeDeclarationSyntax typeDecl
+                && ExtractBlockPath(typeDecl) is { } p
+                && !string.IsNullOrEmpty(p)
+                && !string.IsNullOrEmpty(typeDecl.Identifier.ValueText))
+            {
+                typeAliases[typeDecl.Identifier.ValueText] = p;
+            }
+        }
+
+        if (typeAliases.Count == 0)
+            return blocks;
+
+        var enhanced = new List<BlockContext>(blocks.Count);
+        foreach (var block in blocks)
+        {
+            // Type aliases first → explicit file/block usings override (last-registered wins).
+            var usings = new List<UsingAlias>();
+            foreach (var kv in typeAliases)
+                usings.Add(new UsingAlias(kv.Key, kv.Value));
+            usings.AddRange(block.Usings);
+
+            enhanced.Add(new BlockContext
+            {
+                Root = block.Root,
+                BlockText = block.BlockText,
+                AssetType = block.AssetType,
+                Usings = usings,
+                Diagnostics = block.Diagnostics
+            });
+        }
+        return enhanced;
+    }
+
+    /// <summary>
+    /// Extracts the asset Path from a block's domain attribute (named <c>Path = "..."</c>
+    /// or positional string literal). Returns null when the block carries no path.
+    /// </summary>
+    private static string? ExtractBlockPath(BaseTypeDeclarationSyntax typeDecl)
+    {
+        foreach (var attrList in typeDecl.AttributeLists)
+        {
+            foreach (var attr in attrList.Attributes)
+            {
+                if (attr.ArgumentList is null)
+                    continue;
+
+                // Named parameter: Path = "..."
+                foreach (var arg in attr.ArgumentList.Arguments)
+                {
+                    if (arg.NameEquals is { Name: { } name }
+                        && name.ToString() == "Path"
+                        && arg.Expression is LiteralExpressionSyntax pathLit
+                        && pathLit.IsKind(SyntaxKind.StringLiteralExpression))
+                    {
+                        return (string)pathLit.Token.Value!;
+                    }
+                }
+
+                // Positional: [Domain("/Game/...")]
+                var positional = attr.ArgumentList.Arguments
+                    .FirstOrDefault(a => a.NameEquals is null && a.NameColon is null);
+                if (positional?.Expression is LiteralExpressionSyntax lit
+                    && lit.IsKind(SyntaxKind.StringLiteralExpression))
+                {
+                    return (string)lit.Token.Value!;
+                }
+            }
+        }
+        return null;
     }
 
     /// <summary>

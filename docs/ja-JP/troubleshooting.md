@@ -6,7 +6,7 @@
 
 **`ForgeMind.sln` を直接ビルドすると「Commercial\... プロジェクトが見つからない」**
 原因：`ForgeMind.sln` は商業プロジェクト参照エントリ（`Commercial\ForgeMindLicenseGenerator`、`Commercial\ForgeMindLicenseServer`）を含むが、商業ディレクトリはオープンソーススライスに同梱されない。
-解決：各プロジェクトを個別にビルド（`contributing.md` §3）。sln 全体をビルドしない。または公開元のビルドスクリプトを使用。
+解決：各プロジェクトを個別にビルド（`contributing.md` §3）。sln 全体をビルドしない。または公開元のビルドスクリプトを使用してください。
 
 **プラグインをビルドしてもホストにツールが見えない**
 - プラグイン DLL と同名 `.manifest.json` がホスト `plugins\<プラグイン名>\`（または `FORGEMIND_PLUGINS_DIR` 指定ディレクトリ）に配置されているか確認；

@@ -94,8 +94,8 @@ internal static class Program
         }
 
         // Build all targets first (skip missing directories).
-        // 同一版本只留一个目标：Launcher 记录里 UE_5.0 / QuixelBridge_5.0 / FabPlugin_5.x
-        // 指向同一安装目录，版本归一后它们本就落进同一个 {version}/ 目录，重复扫描只是白烧 CPU。
+        // Only keep one target per version: Launcher records UE_5.0 / QuixelBridge_5.0 / FabPlugin_5.x
+        // point to the same install directory; after version normalization they already fall into the same {version}/ directory. Repeated scanning just burns CPU.
         var targets = new List<IScanTarget>(engines.Length);
         var seenVersions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (UnrealEngineInstallInfo engine in engines)
@@ -136,9 +136,9 @@ internal static class Program
             return 0;
         }
 
-        // 覆盖语义：整包重写，不向已有内容追加。扫描前先删掉目标文件，上一次的产物
-        // 不会以任何形式残留——否则包里留着上次的条目、新的写入又只覆盖同名条目，
-        // 内容与清单会各说各话。
+        // Override semantics: full package rewrite, no appending to existing content. Delete the target file before scanning —
+        // the previous output must not remain in any form; otherwise old entries stay, new writes only overwrite matching
+        // entries by name, and content/manifest diverge.
         if (File.Exists(spkPath))
             File.Delete(spkPath);
 
@@ -175,13 +175,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// SPK 第一层目录名的来源，沿用历史 ScanCache 的规则：
-    /// <b>版本仅作数据属性，不作身份标识</b>——安装版用关联版本号（major.minor，如 "5.0"），
-    /// 源码版用 Build.version 全串（如 "5.0.3-20979098+++UE5+Release-5.0-2023.1-Windows"）。
+    /// Source of the SPK first-level directory name, following the historical ScanCache rule:
+    /// <b>Version is a data attribute, not an identity</b> — installed builds use the association version number
+    /// (major.minor, e.g. "5.0"); source builds use the full Build.version string
+    /// (e.g. "5.0.3-20979098+++UE5+Release-5.0-2023.1-Windows").
     /// <para>
-    /// 区分依据是 <see cref="UnrealEngineInstallInfo.NamespaceId"/>："regUe" = 注册表源码构建，
-    /// 其余（"ue"）= Epic Launcher 安装版。历史上安装版取的是 .uproject 的 EngineAssociation
-    /// （"5.0"），这里没有 .uproject 可依，就从 AppVersion 截 major.minor，结果一致。</para>
+    /// The discriminator is <see cref="UnrealEngineInstallInfo.NamespaceId"/>: "regUe" = registry source build;
+    /// others ("ue") = Epic Launcher installed build. Historically, installed builds take the .uproject EngineAssociation
+    /// ("5.0"); here with no .uproject to rely on, major.minor is extracted from AppVersion, yielding the same result.</para>
     /// </summary>
     private static string ResolveVersion(UnrealEngineInstallInfo engine)
     {
@@ -191,7 +192,7 @@ internal static class Program
         if (isSourceBuild)
             return appVersion;
 
-        // 安装版 → major.minor（"5.4.4-35576357+++…" → "5.4"）
+        // Installed build → major.minor ("5.4.4-35576357+++…" → "5.4")
         string[] parts = appVersion.Split('.');
         return parts.Length >= 2
                && int.TryParse(parts[0], out _)

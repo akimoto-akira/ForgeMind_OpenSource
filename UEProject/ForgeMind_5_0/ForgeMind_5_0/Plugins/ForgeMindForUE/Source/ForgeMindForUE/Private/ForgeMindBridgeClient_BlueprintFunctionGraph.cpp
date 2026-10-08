@@ -142,6 +142,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateFunctionGraph(const 
 	bool bPure = false;
 	Payload->TryGetBoolField(TEXT("pure"), bPure);
 
+
 	// Optional signature: 'params' become the function's input parameters
 	// (output pins on the entry node - data flows from the entry into the
 	// body) and 'outputs' become its return values (input pins on the result

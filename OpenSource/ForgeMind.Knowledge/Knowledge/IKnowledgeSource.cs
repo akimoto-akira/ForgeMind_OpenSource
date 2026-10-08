@@ -19,8 +19,8 @@ public interface IKnowledgeSource : IDisposable
 
     /// <summary>
     /// Lists all version buckets present in the backend.
-    /// 桶标记即 <see cref="EngineVersion"/> 的<b>枚举值名</b>（如 "UE_5_4"）；
-    /// 通用桶为 <see cref="EngineVersions.UniversalBucket"/>（"universal"）。
+    /// Bucket tag is the <b>enum value name</b> of <see cref="EngineVersion"/> (e.g. "UE_5_4");
+    /// the universal bucket is <see cref="EngineVersions.UniversalBucket"/> ("universal").
     /// </summary>
     IReadOnlyList<string> ListVersions();
 

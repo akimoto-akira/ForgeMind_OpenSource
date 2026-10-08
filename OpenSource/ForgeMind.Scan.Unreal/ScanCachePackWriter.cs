@@ -6,14 +6,14 @@ using ForgeMind.Speedy;
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// 把扫描算法产出的原始 <see cref="ScanRoot"/> 树写进 SPK，布局与历史 ScanCache 目录一致：
+/// Writes the raw algorithm-produced <see cref="ScanRoot"/> tree into an SPK, with the same layout as the historical ScanCache directory:
 /// <code>
-/// {version}/engine.json     — 引擎侧代码扫描结果
-/// {version}/assets.json     — 引擎侧资产扫描结果
+/// {version}/engine.json     — engine-side code scan result
+/// {version}/assets.json     — engine-side asset scan result
 /// </code>
 /// <para>
-/// 没有 manifest、没有 index/、没有 data/ —— ScanCache 里没有的东西这里也不造。
-/// 每个版本一对文件，版本之间互不干扰。</para>
+/// No manifest, no index/, no data/ — anything absent from ScanCache is not invented here.
+/// One file pair per version; versions do not interfere with each other.</para>
 /// </summary>
 public sealed class ScanCachePackWriter
 {
@@ -26,7 +26,7 @@ public sealed class ScanCachePackWriter
     }
 
     /// <summary>
-    /// 写入一个版本的扫描结果。同名条目整块覆盖（同一版本重扫即刷新该版本）。
+    /// Writes one version's scan results. Same-named entries are overwritten as a whole (rescanning the same version refreshes it).
     /// </summary>
     public void Write(string version, IEnumerable<ScanRoot> codeRoots, IEnumerable<ScanRoot> assetRoots)
     {
@@ -37,7 +37,7 @@ public sealed class ScanCachePackWriter
     }
 
     /// <summary>
-    /// 版本串用作路径段：把路径分隔符与通配符换成下划线，避免写出非法条目路径。
+    /// Version string used as a path segment: replaces path separators and wildcards with underscores to avoid writing illegal entry paths.
     /// </summary>
     private static string SanitizeVersion(string version)
     {

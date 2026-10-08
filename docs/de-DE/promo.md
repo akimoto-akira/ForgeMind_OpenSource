@@ -2,7 +2,7 @@
 
 ## Einleitung in einem Satz
 
-ForgeMind ist eine Game-Engine-Steuerungsplatttform mit MCP als Schnittstelle: Es eröffnet AI-Clients das Projektmanagement, Asset-Lesen, Starten / Builden / Editor-Operationen von Unreal Engine, sodass AI die Engine wie ein Werkzeug bedienen kann.
+ForgeMind ist eine Game-Engine-Steuerungsplattform mit MCP als Schnittstelle: Es bietet AI-Clients Projektmanagement, Asset-Lesen sowie Start-/Build-/Editor-Operationen von Unreal Engine, sodass AI die Engine wie ein Werkzeug bedienen kann.
 
 ## Kern-Highlights
 

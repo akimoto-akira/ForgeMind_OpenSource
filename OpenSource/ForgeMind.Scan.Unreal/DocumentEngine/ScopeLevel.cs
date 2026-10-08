@@ -4,34 +4,34 @@
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// 扫描层级标号：数字越大越基础。
-/// 父类查找规则——以自身标号为起点，只在<b>同级或更大标号</b>的层级中查找；
-/// 依赖方向只能从低标号指向高标号（例如项目插件的类绝不可能继承项目直属模块的类）。
+/// Scan scope label: higher number = more fundamental.
+/// Parent lookup rule — starting from its own label, only look up scopes with <b>same or higher label</b>;
+/// dependency direction always flows from lower label to higher (e.g. a project-plugin class can never inherit from a project-direct-module class).
 /// </summary>
 public enum ScopeLevel
 {
-    /// <summary>项目资产（uasset 扫描来源，标「资产」）。</summary>
+    /// <summary>Project asset (uasset scan source, tagged "asset").</summary>
     ProjectAsset = -2,
 
-    /// <summary>引擎资产（uasset 扫描来源，标「资产」）。</summary>
+    /// <summary>Engine asset (uasset scan source, tagged "asset").</summary>
     EngineAsset = -1,
 
-    /// <summary>项目直属模块。</summary>
+    /// <summary>Project-direct module.</summary>
     Project = 1,
 
-    /// <summary>项目插件内的模块。</summary>
+    /// <summary>Module inside a project plugin.</summary>
     ProjectPlugin = 2,
 
-    /// <summary>引擎插件内的模块。</summary>
+    /// <summary>Module inside an engine plugin.</summary>
     EnginePlugin = 3,
 
-    /// <summary>引擎直属模块（Engine/Source 与 Platforms/*/Source）。</summary>
+    /// <summary>Engine-direct module (Engine/Source and Platforms/*/Source).</summary>
     Engine = 4,
 }
 
 /// <summary>
-/// 「类」的种类——UE 反射类型的统称（中间层），
-/// 一个 UCLASS / USTRUCT / UENUM / UINTERFACE / UDELEGATE 都算一个「类」。
+/// Kind of "Class" — collective term for UE reflection types (middle layer);
+/// one UCLASS / USTRUCT / UENUM / UINTERFACE / UDELEGATE each counts as one "Class".
 /// </summary>
 public enum UeTypeKind
 {

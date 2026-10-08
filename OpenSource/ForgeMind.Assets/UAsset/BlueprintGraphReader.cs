@@ -6,27 +6,27 @@ using System.IO;
 namespace ForgeMind.Assets;
 
 /// <summary>
-/// 离线还原蓝图 IR：直接解析 .uasset 二进制，输出与桥端
-/// ForgeMindIR_Blueprint.cpp::Read 完全一致的 JSON 结构，
-/// 以实现"字节相等"比对。
+/// Offline restore blueprint IR: directly parse .uasset binary, output JSON
+/// structure identical to bridge ForgeMindIR_Blueprint.cpp::Read,
+/// for "byte-equal" comparison.
 ///
-/// 布局依据（UE 5.0.3 源码）：
+/// Layout basis (UE 5.0.3 source):
 /// - EdGraph/EdGraphNode.cpp  UEdGraphNode::Serialize
 ///   → Super::Serialize(tagged properties)
-///     其中 NodeGuid 是 StructProperty(Guid)、NodePosX/NodePosY 是 IntProperty
-///   → CustomVer(FBlueprintsObjectVersion::GUID) >= EdGraphPinOptimized 时
+///     where NodeGuid is StructProperty(Guid), NodePosX/NodePosY are IntProperty
+///   → CustomVer(FBlueprintsObjectVersion::GUID) >= EdGraphPinOptimized when
 ///     UEdGraphPin::SerializeAsOwningNode(Ar, Pins)
 /// - EdGraph/EdGraphPin.cpp   SerializePinArray / SerializePin
 ///
-/// 保存的 .uasset 文件不含 UBlueprint 导出项，只含
-/// BlueprintGeneratedClass + EdGraph + K2Node_* 等。
-/// summary 信息从 BlueprintGeneratedClass 的 tagged properties 提取。
+/// Saved .uasset file contains no UBlueprint exports, only
+/// BlueprintGeneratedClass + EdGraph + K2Node_* etc.
+/// Summary info extracted from BlueprintGeneratedClass tagged properties.
 /// </summary>
 public static class BlueprintGraphReader
 {
     /// <summary>
-    /// 读取蓝图 IR。输出格式与桥端 ForgeMindIR_Blueprint.cpp::Read 完全一致。
-    /// level: "summary" | "graph" | "full"（默认 summary）
+    /// Read blueprint IR. Output format identical to bridge ForgeMindIR_Blueprint.cpp::Read.
+    /// level: "summary" | "graph" | "full" (default summary)
     /// </summary>
     public static object Read(UAssetPackage package, string? graphName, string level = "summary")
     {
@@ -36,15 +36,15 @@ public static class BlueprintGraphReader
         return version switch
         {
             "5.0" => Read50(package, graphName, level),
-            "5.1" => throw new NotSupportedException("UE 5.1 图表解析未实现（空位）"),
-            "5.2" => throw new NotSupportedException("UE 5.2 图表解析未实现（空位）"),
-            "5.3" => throw new NotSupportedException("UE 5.3 图表解析未实现（空位）"),
-            "5.4" => throw new NotSupportedException("UE 5.4 图表解析未实现（空位）"),
-            "5.5" => throw new NotSupportedException("UE 5.5 图表解析未实现（空位）"),
-            "5.6" => throw new NotSupportedException("UE 5.6 图表解析未实现（空位）"),
-            "5.7" => throw new NotSupportedException("UE 5.7 图表解析未实现（空位）"),
-            "5.8" => throw new NotSupportedException("UE 5.8 图表解析未实现（空位）"),
-            _ => throw new NotSupportedException($"不支持的引擎版本 '{version}'（已实现：5.0）"),
+            "5.1" => throw new NotSupportedException("UE 5.1 graph parsing not implemented (placeholder)"),
+            "5.2" => throw new NotSupportedException("UE 5.2 graph parsing not implemented (placeholder)"),
+            "5.3" => throw new NotSupportedException("UE 5.3 graph parsing not implemented (placeholder)"),
+            "5.4" => throw new NotSupportedException("UE 5.4 graph parsing not implemented (placeholder)"),
+            "5.5" => throw new NotSupportedException("UE 5.5 graph parsing not implemented (placeholder)"),
+            "5.6" => throw new NotSupportedException("UE 5.6 graph parsing not implemented (placeholder)"),
+            "5.7" => throw new NotSupportedException("UE 5.7 graph parsing not implemented (placeholder)"),
+            "5.8" => throw new NotSupportedException("UE 5.8 graph parsing not implemented (placeholder)"),
+            _ => throw new NotSupportedException($"Unsupported engine version '{version}' (implemented: 5.0)"),
         };
     }
 
@@ -56,16 +56,16 @@ public static class BlueprintGraphReader
     {
         var definition = new Dictionary<string, object?>();
 
-        // --- summary 级信息 ---
-        // 桥端总是输出 members / components / functions（即使为空数组）
+        // --- summary-level info ---
+        // Bridge always outputs members / components / functions (even if empty arrays)
         ExtractSummary(package, definition);
 
-        // --- graph/full 级：图节点与连线 ---
+        // --- graph/full-level: graph nodes and links ---
         if (level == "graph" || level == "full")
         {
             bool bIncludeCoords = (level == "full");
 
-            // 事件图（UbergraphPages）：桥端 Blueprint->UbergraphPages
+            // Event graph (UbergraphPages): bridge Blueprint->UbergraphPages
             var eventGraphs = new List<object>();
             for (int i = 0; i < package.Exports.Count; i++)
             {
@@ -87,7 +87,7 @@ public static class BlueprintGraphReader
                 definition["eventGraphs"] = eventGraphs;
             }
 
-            // 函数图：在 summary 的 functions 条目中嵌入 graph 子对象
+            // Function graph: embed graph sub-object inside summary's functions entries
             if (definition.TryGetValue("functions", out object? funcsObj) && funcsObj is List<object> funcs)
             {
                 for (int fi = 0; fi < funcs.Count; fi++)
@@ -96,7 +96,7 @@ public static class BlueprintGraphReader
                     string funcName = funcEntry.TryGetValue("name", out object? n) ? n?.ToString() ?? "" : "";
                     if (string.IsNullOrEmpty(funcName)) continue;
 
-                    // 找到对应的 EdGraph 导出项
+                    // Find the matching EdGraph export
                     for (int i = 0; i < package.Exports.Count; i++)
                     {
                         if (!IsGraphExport(package, i)) continue;
@@ -114,23 +114,23 @@ public static class BlueprintGraphReader
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Summary 提取
+    // Summary extraction
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 从 BlueprintGeneratedClass 导出项提取 extends（ParentClass）。
-    /// 从 SCS_Node 提取 components。从 EdGraph 提取 functions 列表。
+    /// Extract extends (ParentClass) from BlueprintGeneratedClass export.
+    /// Extract components from SCS_Node. Extract functions list from EdGraph.
     /// </summary>
     private static void ExtractSummary(UAssetPackage package,
         Dictionary<string, object?> definition)
     {
-        // 桥端总是输出 members（即使为空），对应 Blueprint->NewVariables
-        // .uasset 中不直接含 UBlueprint 导出项，变量信息保存在
-        // BlueprintGeneratedClass 的 tagged properties 中（UTFrac:NewVariables）
-        // 暂时输出空数组，后续可从 BGC tagged properties 提取
+        // Bridge always outputs members (even if empty), corresponding to Blueprint->NewVariables
+        // .uasset does not directly contain UBlueprint exports; variable info is stored in
+        // BlueprintGeneratedClass tagged properties (UTFrac:NewVariables)
+        // Output empty array for now; later extractable from BGC tagged properties
         definition["members"] = new List<object>();
 
-        // 找 BlueprintGeneratedClass 导出项
+        // Find BlueprintGeneratedClass export
         for (int i = 0; i < package.Exports.Count; i++)
         {
             ObjectExport export = package.Exports[i];
@@ -138,14 +138,14 @@ public static class BlueprintGraphReader
 
             if (classObjName == "BlueprintGeneratedClass" || classObjName == "Blueprint")
             {
-                // 从 tagged properties 提取 ParentClass
+                // Extract ParentClass from tagged properties
                 ExtractParentClass(package, export, definition);
                 break;
             }
         }
 
-        // 提取 components（从 SCS_Node 导出项）
-        // 桥端总是输出 components（即使为空）
+        // Extract components (from SCS_Node exports)
+        // Bridge always outputs components (even if empty)
         var components = new List<object>();
         for (int i = 0; i < package.Exports.Count; i++)
         {
@@ -161,15 +161,15 @@ public static class BlueprintGraphReader
         }
         definition["components"] = components;
 
-        // 提取 functions（从 EdGraph 导出项中找函数图）
-        // 桥端总是输出 functions（即使为空）
+        // Extract functions (find function graphs from EdGraph exports)
+        // Bridge always outputs functions (even if empty)
         var functions = new List<object>();
         for (int i = 0; i < package.Exports.Count; i++)
         {
             if (IsGraphExport(package, i))
             {
                 string graphName = package.Exports[i].ObjectName;
-                // 函数图：不是 EventGraph 也不是 UserConstructionScript
+                // Function graph: neither EventGraph nor UserConstructionScript
                 if (graphName != "EventGraph" && graphName != "UserConstructionScript")
                 {
                     var funcEntry = new Dictionary<string, object?>
@@ -179,7 +179,7 @@ public static class BlueprintGraphReader
                         ["inputs"] = new List<object>(),
                         ["outputs"] = new List<object>(),
                     };
-                    // 提取函数签名（inputs/outputs）
+                    // Extract function signature (inputs/outputs)
                     ExtractFunctionSignature50(package, i, funcEntry);
                     functions.Add(funcEntry);
                 }
@@ -188,14 +188,14 @@ public static class BlueprintGraphReader
         definition["functions"] = functions;
     }
 
-    /// <summary>从 BlueprintGeneratedClass 的 tagged properties 提取 ParentClass。</summary>
+    /// <summary>Extract ParentClass from BlueprintGeneratedClass tagged properties.</summary>
     private static void ExtractParentClass(UAssetPackage package, ObjectExport export,
         Dictionary<string, object?> definition)
     {
         byte[]? raw = export.Data?.RawData;
         if (raw is null || raw.Length == 0)
         {
-            // 尝试 Properties
+            // Try Properties first
             if (export.Data?.Properties != null)
             {
                 foreach (var prop in export.Data.Properties)
@@ -261,7 +261,7 @@ public static class BlueprintGraphReader
                     }
                 }
 
-                // 提取 ParentClass（ObjectProperty）
+                // Extract ParentClass (ObjectProperty)
                 if (propName == "ParentClass" && type == "ObjectProperty" && size >= 4)
                 {
                     int objIndex = reader.ReadInt32();
@@ -274,7 +274,7 @@ public static class BlueprintGraphReader
         catch { }
     }
 
-    /// <summary>从 SCS_Node 的 tagged properties 提取组件名和类型。</summary>
+    /// <summary>Extract component name and type from SCS_Node tagged properties.</summary>
     private static object? ExtractSCSNodeComponent(UAssetPackage package, ObjectExport export)
     {
         if (export.Data?.Properties != null && export.Data.Properties.Count > 0)
@@ -312,7 +312,7 @@ public static class BlueprintGraphReader
             }
         }
 
-        // 尝试 RawData
+        // Try RawData
         byte[]? raw = export.Data?.RawData;
         if (raw is null || raw.Length == 0) return null;
 
@@ -403,7 +403,7 @@ public static class BlueprintGraphReader
         return null;
     }
 
-    /// <summary>解析 FPackageIndex 为对象名（import 的 ObjectName 或 export 的 ObjectName）。</summary>
+    /// <summary>Resolve FPackageIndex to object name (import ObjectName or export ObjectName).</summary>
     private static string ResolveObjectIndex(UAssetPackage package, FPackageIndex index)
     {
         if (index.IsNull) return "(null)";
@@ -425,11 +425,11 @@ public static class BlueprintGraphReader
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Graph 读取（节点 + 连线）
+    // Graph reading (nodes + links)
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 节点元数据（从 tagged properties 提取）。
+    /// Node metadata (extracted from tagged properties).
     /// </summary>
     private sealed class NodeMetadata
     {
@@ -449,8 +449,8 @@ public static class BlueprintGraphReader
     }
 
     /// <summary>
-    /// 读取一张图的节点与连线，输出与桥端 GraphToIR 一致的格式。
-    /// 两遍扫描：第一遍提取节点元数据和引脚，第二遍解析连线。
+    /// Read a graph's nodes and links, output format identical to bridge GraphToIR.
+    /// Two-pass scan: first pass extracts node metadata and pins, second pass resolves links.
     /// </summary>
     private static object ReadGraph50(UAssetPackage package, int graphExportIndex,
         string graphName, string graphKind, bool bIncludeCoords)
@@ -462,8 +462,8 @@ public static class BlueprintGraphReader
         // (exportIndex, pinGuid) → (nodeId, pinName)
         var pinIndex = new Dictionary<(int Node, UAssetGuid Pin), (string NodeId, string PinName)>();
 
-        // 第一遍：提取节点和引脚
-        // 同时收集引脚的 LinkedTo 信息以便第二遍解析连线
+        // First pass: extract nodes and pins
+        // Also collect pin LinkedTo info for the second pass to resolve links
         var nodeLinkedTo = new List<(string FromNodeId, string FromPinName, string FromPinDir,
             List<(int TargetExport, UAssetGuid TargetPinId)> Links)>();
 
@@ -498,7 +498,7 @@ public static class BlueprintGraphReader
                 using var stream = new MemoryStream(raw);
                 var reader = new UAssetReader(stream);
 
-                // 1) 解析 tagged properties，提取 NodeGuid/NodePosX/NodePosY
+                // 1) Parse tagged properties, extract NodeGuid/NodePosX/NodePosY
                 var meta = ExtractNodeMetadata(reader, package, trace);
                 if (meta.NodeGuid.HasValue)
                 {
@@ -525,13 +525,13 @@ public static class BlueprintGraphReader
 
                     var pin = ReadPin50(reader, package);
 
-                    // 桥端跳过 bHidden 的引脚
+                    // Bridge skips bHidden pins
                     if (pin.bHidden)
                     {
                         continue;
                     }
 
-                    // 输出与桥端一致的 pin 格式
+                    // Output pin format matching bridge
                     var pinEntry = new Dictionary<string, object?>
                     {
                         ["name"] = pin.Name,
@@ -546,7 +546,7 @@ public static class BlueprintGraphReader
 
                     pinIndex[(exportIndex, pinId)] = (nodeId, pin.Name);
 
-                    // 保存连线信息
+                    // Save link info
                     if (pin.Direction == "output" && pin.LinkedTo.Count > 0)
                     {
                         nodeLinkedTo.Add((nodeId, pin.Name, pin.Direction, pin.LinkedTo));
@@ -558,16 +558,16 @@ public static class BlueprintGraphReader
                 warnings.Add($"export[{exportIndex}] '{export.ObjectName}': {ex.GetType().Name}: {ex.Message} | {string.Join(", ", trace)}");
             }
 
-            // TODO: 临时输出 trace 用于调试
+            // TODO: temporary trace output for debugging
             if (trace.Count > 0)
             {
                 warnings.Add($"export[{exportIndex}] trace: {string.Join(", ", trace)}");
             }
 
-            // 输出与桥端一致的 node 格式
-            // 桥端: id = NodeGuid.ToString(), type = GetClass()->GetName(), title = GetNodeTitle(FullTitle)
-            // 对于 K2Node，GetClass()->GetName() 就是导入表中 ClassIndex 指向的 ObjectName
-            // GetNodeTitle(FullTitle) 对于大多数 K2Node 返回 export.ObjectName
+            // Output node format matching bridge
+            // Bridge: id = NodeGuid.ToString(), type = GetClass()->GetName(), title = GetNodeTitle(FullTitle)
+            // For K2Node, GetClass()->GetName() is the ObjectName pointed to by ClassIndex in the import table
+            // GetNodeTitle(FullTitle) returns export.ObjectName for most K2Nodes
             var nodeEntry = new Dictionary<string, object?>
             {
                 ["id"] = nodeId,
@@ -583,8 +583,8 @@ public static class BlueprintGraphReader
             nodes.Add(nodeEntry);
         }
 
-        // 第二遍：解析连线
-        // 桥端: 只处理 output 引脚的 LinkedTo
+        // Second pass: resolve links
+        // Bridge: only processes LinkedTo of output pins
         foreach (var (fromNodeId, fromPinName, _, links) in nodeLinkedTo)
         {
             foreach (var (targetExport, targetPinId) in links)
@@ -608,26 +608,26 @@ public static class BlueprintGraphReader
             }
         }
 
-        // 桥端 GraphToIR 输出: name, kind, nodes, connections
+        // Bridge GraphToIR output: name, kind, nodes, connections
         return new
         {
             name = graphName,
             kind = graphKind,
             nodes,
             connections,
-            // TODO: 临时输出 warnings 用于调试，确认正确后移除
+            // TODO: temporary warnings output for debugging, remove once confirmed correct
             warnings,
         };
     }
 
     /// <summary>
-    /// 解析 UEdGraphNode 的 tagged properties，提取 NodeGuid/NodePosX/NodePosY。
-    /// 使用 UPropertyTag.ReadFrom 进行完整解析（header + value），
-    /// 确保与 UAssetSerializer 的 tag 解析完全一致，
-    /// 避免手写 header 解析因边缘情况导致偏移错误。
+    /// Parse UEdGraphNode tagged properties, extract NodeGuid/NodePosX/NodePosY.
+    /// Uses UPropertyTag.ReadFrom for complete parsing (header + value),
+    /// ensuring full consistency with UAssetSerializer's tag parsing,
+    /// avoiding offset errors from handwritten header parsing in edge cases.
     ///
-    /// 读完所有 properties 后，reader 位置位于 None 终止符之后，
-    /// 即 pins 数据的开始处。
+    /// After reading all properties, reader position is past the None terminator,
+    /// i.e. at the start of pins data.
     /// </summary>
     private static NodeMetadata ExtractNodeMetadata(UAssetReader reader,
         UAssetPackage package, List<string>? trace)
@@ -655,11 +655,11 @@ public static class BlueprintGraphReader
 
             trace?.Add($"{tag.Name}:{tag.Type}[{tag.Size}]");
 
-            // 提取 NodeGuid（StructProperty, StructName="Guid"）
+            // Extract NodeGuid (StructProperty, StructName="Guid")
             if (tag.Name == "NodeGuid" && tag.Type == "StructProperty"
                 && tag.Value?.RawData is { Length: >= 16 } rawData)
             {
-                // Guid 的 raw bytes 是 4 个 uint32 (A, B, C, D)，小端序
+                // Guid raw bytes are 4 uint32 (A, B, C, D), little-endian
                 uint a = BitConverter.ToUInt32(rawData, 0);
                 uint b = BitConverter.ToUInt32(rawData, 4);
                 uint c = BitConverter.ToUInt32(rawData, 8);
@@ -682,7 +682,7 @@ public static class BlueprintGraphReader
     }
 
     /// <summary>
-    /// UEdGraphPin::Serialize（EdGraphPin.cpp:1659）的字段顺序。
+    /// UEdGraphPin::Serialize (EdGraphPin.cpp:1659) field order.
     /// </summary>
     private static PinData50 ReadPin50(UAssetReader reader, UAssetPackage package)
     {
@@ -781,12 +781,12 @@ public static class BlueprintGraphReader
     }
 
     /// <summary>
-    /// FEdGraphPinType::Serialize (EdGraphPin.cpp:155) 的字段顺序。
-    /// 使用自定义版本 FFrameworkObjectVersion::GUID 和 FReleaseObjectVersion::GUID。
-    /// 注意：bool 类型字段 (bIsReference, bIsWeakPointer, bIsConst, bIsUObjectWrapper)
-    /// 通过 Ar << boolValue 序列化为 4 字节 uint32 (FArchive::operator<<(bool&))。
-    /// FSimpleMemberReference 有自定义 operator<<，直接序列化 MemberParent(4B) + MemberName(8B) + MemberGuid(16B)。
-    /// FEdGraphTerminalType 没有 operator<<，用 tagged properties 序列化。
+    /// FEdGraphPinType::Serialize (EdGraphPin.cpp:155) field order.
+    /// Uses custom versions FFrameworkObjectVersion::GUID and FReleaseObjectVersion::GUID.
+    /// Note: bool fields (bIsReference, bIsWeakPointer, bIsConst, bIsUObjectWrapper)
+    /// are serialized as 4-byte uint32 via Ar << boolValue (FArchive::operator<<(bool&)).
+    /// FSimpleMemberReference has custom operator<<, directly serializes MemberParent(4B) + MemberName(8B) + MemberGuid(16B).
+    /// FEdGraphTerminalType has no operator<<, serialized via tagged properties.
     /// </summary>
     private static string ReadPinType50(UAssetReader reader, UAssetPackage package)
     {
@@ -832,31 +832,31 @@ public static class BlueprintGraphReader
         // bIsUObjectWrapperBool (bool, 4 bytes, PinTypeIncludesUObjectWrapperFlag)
         _ = reader.ReadBool();
 
-        // 将 PinType 转换为桥端 PinTypeToText 格式
+        // Convert PinType to bridge PinTypeToText format
         return PinTypeToText(category, subCategory, subCategoryObject, containerType, package);
     }
 
     /// <summary>
-    /// 将离线读取的 FEdGraphPinType 字段转换为桥端
-    /// ForgeMindBlueprintUtils::PinTypeToText 的输出格式。
+    /// Convert offline-read FEdGraphPinType fields to bridge
+    /// ForgeMindBlueprintUtils::PinTypeToText output format.
     ///
-    /// 桥端逻辑 (ForgeMindBlueprintUtils.cpp:862):
-    /// - PC_Boolean → "bool"
-    /// - PC_Byte → "byte" 或 "byte&lt;EnumName&gt;"
-    /// - PC_Int → "int"
-    /// - PC_Int64 → "int64"
-    /// - PC_Real → 根据子类别 "float" 或 "double"
-    /// - PC_Name → "name"
-    /// - PC_String → "string"
-    /// - PC_Text → "text"
-    /// - PC_Struct → "vector"/"rotator"/"transform"/"linearcolor"/"struct&lt;Name&gt;"
-    /// - PC_Object → 对象类名或 "object"
-    /// - 其他 → category.ToString()
+    /// Bridge logic (ForgeMindBlueprintUtils.cpp:862):
+    /// - PC_Boolean -> "bool"
+    /// - PC_Byte -> "byte" or "byte&lt;EnumName&gt;"
+    /// - PC_Int -> "int"
+    /// - PC_Int64 -> "int64"
+    /// - PC_Real -> "float" or "double" based on subcategory
+    /// - PC_Name -> "name"
+    /// - PC_String -> "string"
+    /// - PC_Text -> "text"
+    /// - PC_Struct -> "vector"/"rotator"/"transform"/"linearcolor"/"struct&lt;Name&gt;"
+    /// - PC_Object -> object class name or "object"
+    /// - Others -> category.ToString()
     ///
-    /// 容器类型后缀:
-    /// - Array → "Base[]"
-    /// - Set → "set&lt;Base&gt;"
-    /// - Map → "map&lt;Key,Value&gt;"
+    /// Container type suffixes:
+    /// - Array -> "Base[]"
+    /// - Set -> "set&lt;Base&gt;"
+    /// - Map -> "map&lt;Key,Value&gt;"
     /// </summary>
     private static string PinTypeToText(string category, string subCategory,
         FPackageIndex subCategoryObject, byte containerType, UAssetPackage package)
@@ -864,7 +864,7 @@ public static class BlueprintGraphReader
         string base_ = category switch
         {
             "bool" => "bool",
-            "byte" => "byte",  // TODO: enum 子类别对象解析
+            "byte" => "byte",  // TODO: enum subcategory object resolution
             "int" => "int",
             "int64" => "int64",
             "real" => subCategory == "float" ? "float" : "double",
@@ -872,7 +872,7 @@ public static class BlueprintGraphReader
             "string" => "string",
             "text" => "text",
             "exec" => "exec",
-            "struct" => "struct",  // TODO: 结构体子类别对象解析
+            "struct" => "struct",  // TODO: struct subcategory object resolution
             "object" => ResolveImportObjectName(package, subCategoryObject)
                 is { Length: > 0 } objName ? objName : "object",
             "class" => "class",
@@ -987,7 +987,7 @@ public static class BlueprintGraphReader
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 自定义版本常量与辅助
+    // Custom version constants and helpers
     // ─────────────────────────────────────────────────────────────
 
     // FFrameworkObjectVersion::GUID (DevObjectVersion.cpp)
@@ -1010,9 +1010,7 @@ public static class BlueprintGraphReader
     // From UE5MainStreamObjectVersion.h, counting from BeforeCustomVersionWasAdded=0
     private const int EdGraphPinSourceIndexVersion = 50;
 
-    /// <summary>
-    /// 检查包的自定义版本是否 >= 指定版本号。
-    /// </summary>
+    /// <summary>Check if package custom version >= specified version.</summary>
     private static bool HasCustomVersion(UAssetPackage package, UAssetGuid guid, int minVersion)
     {
         foreach (var cv in package.Summary.CustomVersions)
@@ -1022,20 +1020,20 @@ public static class BlueprintGraphReader
                 return cv.Version >= minVersion;
             }
         }
-        // 如果找不到自定义版本条目，默认为 0（BeforeCustomVersionWasAdded）
-        // 对于 UE 5.0 的包，所有自定义版本都应该存在
+        // If no custom version found, default to 0 (BeforeCustomVersionWasAdded)
+        // For UE 5.0 packages, all custom versions should exist
         return false;
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 函数签名提取
+    // Function signature extraction
     // ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 从函数图中提取函数签名（inputs/outputs）。
-    /// 桥端 ExtractFunctionSignature 逻辑：
-    /// - 找 K2Node_FunctionEntry 节点，其 output 非 exec 引脚 = inputs
-    /// - 找 K2Node_FunctionResult 节点，其 input 非 exec 引脚 = outputs
+    /// Extract function signature (inputs/outputs) from a function graph.
+    /// Bridge ExtractFunctionSignature logic:
+    /// - Find K2Node_FunctionEntry, its output non-exec pins = inputs
+    /// - Find K2Node_FunctionResult, its input non-exec pins = outputs
     /// </summary>
     private static void ExtractFunctionSignature50(UAssetPackage package, int graphExportIndex,
         Dictionary<string, object?> funcEntry)
@@ -1065,10 +1063,10 @@ public static class BlueprintGraphReader
                 var reader = new UAssetReader(stream);
                 var trace = new List<string>();
 
-                // 解析 tagged properties
+                // Parse tagged properties
                 var meta = ExtractNodeMetadata(reader, package, trace);
 
-                // 读取 pins
+                // Read pins
                 int pinCount = reader.ReadInt32();
                 for (int p = 0; p < pinCount; p++)
                 {
@@ -1081,7 +1079,7 @@ public static class BlueprintGraphReader
                     var pin = ReadPin50(reader, package);
                     if (pin.bHidden) continue;
 
-                    // exec 类型引脚跳过
+                    // Skip exec type pins
                     if (pin.Type == "exec") continue;
 
                     var pinEntry = new Dictionary<string, object?>
@@ -1091,8 +1089,8 @@ public static class BlueprintGraphReader
                         ["direction"] = pin.Direction,
                     };
 
-                    // FunctionEntry: output 非 exec 引脚 = inputs
-                    // FunctionResult: input 非 exec 引脚 = outputs
+                    // FunctionEntry: output non-exec pins = inputs
+                    // FunctionResult: input non-exec pins = outputs
                     if (isFunctionEntry && pin.Direction == "output")
                     {
                         inputs.Add(pinEntry);
@@ -1111,7 +1109,7 @@ public static class BlueprintGraphReader
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 辅助方法
+    // Auxiliary methods
     // ─────────────────────────────────────────────────────────────
 
     private static bool IsGraphExport(UAssetPackage package, int exportIndex)
@@ -1127,7 +1125,7 @@ public static class BlueprintGraphReader
         return className.StartsWith("K2Node_", System.StringComparison.Ordinal);
     }
 
-    /// <summary>解析 import 引用的对象名（ObjectName）。</summary>
+    /// <summary>Resolve import reference object name (ObjectName).</summary>
     private static string ResolveImportObjectName(UAssetPackage package, FPackageIndex index)
     {
         if (!index.IsImport)

@@ -104,7 +104,7 @@ public sealed class KnowledgeStore : IDisposable
 
     /// <summary>
     /// Lists all version buckets present in the backend.
-    /// 桶标记即 <see cref="EngineVersion"/> 的枚举值名（"UE_5_4"）或通用桶 "universal"。
+    /// Bucket tag is the enum value name of <see cref="EngineVersion"/> ("UE_5_4") or the universal bucket "universal".
     /// </summary>
     public IReadOnlyList<string> ListVersions() => _source.ListVersions();
 
@@ -127,8 +127,8 @@ public sealed class KnowledgeStore : IDisposable
                 result.Add(new ScopedEntry(entry, bucket));
         }
 
-        // 通用桶直接匹配：查任何版本时都连带搜索它。
-        // 查询目标本身就是通用桶时上面已经取过，此处避免重复。
+        // Universal bucket is directly matched: searched alongside any version query.
+        // When the query target itself is the universal bucket it was already taken above; avoid duplicate here.
         if (!string.Equals(bucket, EngineVersions.UniversalBucket, StringComparison.OrdinalIgnoreCase))
         {
             foreach (KnowledgeEntry entry in _source.ListEntries(EngineVersions.UniversalBucket))
@@ -191,7 +191,7 @@ public sealed class KnowledgeStore : IDisposable
         // through MemoryMarshal.CreateReadOnlySpan / Unsafe, and the host's plugin
         // security scanner rejects those TypeRefs
         string[] tokens = (query ?? "")
-            .Split(" \t,，".ToCharArray(), StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split(" \t,,".ToCharArray(), StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(t => t.ToLowerInvariant())
             .ToArray();
 

@@ -46,9 +46,9 @@ using Task = System.Threading.Tasks.Task;
 //   check (same-name param inconsistency -> Error terminates batch), see BlueprintTranslator's
 //   CheckOverrideSignatureConsistency.
 //
-// Note: per collaboration spec point 9, "diff comparison" (VerifyIrSnapshot) not attached
-// when transwriting task docs -- pending user visual confirmation of cases and results,
-// then separately inserted per user instruction.
+// Note: mis-touch comparison (VerifyIrSnapshot) attached by user instruction (collaboration
+//   spec point 9), one per subtask side: Ease_Out_A / Ease_Out_B / Ease_Types_A / Ease_Types_B /
+//   Ease_Tick_A / Ease_Tick_B. First run records the baselines.
 // =========================================================================
 
 public sealed class Blueprint_Ease : ITestCase
@@ -83,9 +83,11 @@ public sealed class Blueprint_Ease : ITestCase
         // Ease is a pure node (no exec pin), execution chain can only be entry straight to result (same as Lerp_F_A).
         BlueprintTestHelper.Connect(ctx, a1, f1.entryId, "then", f1.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a1);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
 
         // DSL path (copied from task doc; only easing curve name rewritten per 5.0.3 real enum)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Ease_Out_B");
 
         // -- Subtask 2: Ease (different easing types) --
         // Doc task 2 says CubicInOut -- 5.0.3 has no Cubic* items, use synonym real member
@@ -102,8 +104,10 @@ public sealed class Blueprint_Ease : ITestCase
         BlueprintTestHelper.Connect(ctx, a2, ease2.nodeId, "ReturnValue", f2.resultId, "ReturnValue");
         BlueprintTestHelper.Connect(ctx, a2, f2.entryId, "then", f2.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a2);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Ease_Types_B");
 
         // -- Subtask 3: Ease driven in Tick --
         // MCP steps: Ease_Tick_A (Extends Actor) + P : float (0->1 accumulation)
@@ -164,6 +168,7 @@ public sealed class Blueprint_Ease : ITestCase
         BlueprintTestHelper.Connect(ctx, a3, ev3.nodeId, "then", setP3.nodeId, "execute");
         BlueprintTestHelper.Connect(ctx, a3, setP3.nodeId, "then", setLoc3.nodeId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 
         // DSL path (copied from task doc; easing curve name / clamping function name / Tick param name
         // three places rewritten per 5.0.3 real names, see file header "Probe"). Tick param
@@ -172,6 +177,7 @@ public sealed class Blueprint_Ease : ITestCase
         // and all references to that name in the function body disconnect
         // (doc wrote exactly d).
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Ease_Tick_B");
 
         await Task.CompletedTask;
     }

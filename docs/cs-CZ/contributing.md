@@ -67,7 +67,7 @@ Host načítá pluginy z `<adresář_hostu>\plugins\` (přepsání proměnnou pr
 2. Zpráva commitu: `<typ>: <popis jednou větou>`.
 3. Vlastní ověření před commitem:
    - sestavujte jednotlivě podle §3, vše musí projít;
-   - pokud změna zasahuje mostní příkazy / chování nástrojů, musí projít příslušné skupiny `ForgeMindServerTest` (způsob spuštění v `development-guide.md` §6);
+   - pokud změna zasahuje bridge příkazy / chování nástrojů, musí projít příslušné skupiny `ForgeMindServerTest` (způsob spuštění v `development-guide.md` §6);
    - pokud zasahuje SPK / data skenování, musí projít `ForgeMind.PublicTests`;
    - nepřidávejte odkazy na komerční moduly;
    - synchronně aktualizujte odpovídající stránky v `docs\zh-CN\`.
@@ -76,17 +76,17 @@ Host načítá pluginy z `<adresář_hostu>\plugins\` (přepsání proměnnou pr
 
 ## 6. Požadavky na testy
 
-- Změny mostních příkazů / chování nástrojů / logiky adaptérů by měly být doplněny testovacími případy (přidávejte `*_Tests.cs` pod `tests\ForgeMindServerTest\Task\`).
+- Změny bridge příkazů / chování nástrojů / logiky adaptérů by měly být doplněny testovacími případy (přidávejte `*_Tests.cs` pod `tests\ForgeMindServerTest\Task\`).
 - Integrační testy serveru vyžadují prostředí editoru UE; testy čistého zpracování dat (SPK, skenování) jdou do `tests\ForgeMind.PublicTests\`, bez závislosti na enginu.
 - Případy musí stabilně procházet ve výchozím pořadí (fail-fast, zastavení na první chybě).
 
 ## 7. Přispívání do dokumentace
 
-- Čínská dokumentace je v `docs\zh-CN\`; obsah by měl odpovídat faktům zdrojového kódu; při nejistotě označujte jako «čeká na potvrzení».
+- Čínská dokumentace je v `docs\zh-CN\`; obsah by měl odpovídat faktům zdrojového kódu; při nejistotě označujte jako „čeká na potvrzení".
 - Při změně seznamu veřejných nástrojů aktualizujte také `tools-reference.md`.
 - Komerční funkce (syntaxe DSL, mechanismus autorizace) jsou v dokumentaci pouze přehledem, bez vnitřních detailů.
 
 ## 8. Kodex chování
 
-- Respektujte existující návrhová rozhodnutí (mostní protokol, kontrakty nástrojů, formát SPK); důležité změny je třeba nejprve prodiskutovat.
+- Respektujte existující návrhová rozhodnutí (bridge protokol, kontrakty nástrojů, formát SPK); důležité změny je třeba nejprve prodiskutovat.
 - Nehanobte veřejně konkurenční produkty; propagační obsah se řídí pravidly veřejné komunikace z `promo.md`.

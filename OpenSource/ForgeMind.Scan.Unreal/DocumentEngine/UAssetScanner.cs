@@ -1,35 +1,35 @@
 ﻿// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Hoshino Kennji
 
-// UAsset 模块类型位于根命名空间 ForgeMindServer（文件夹不映射命名空间）
+// UAsset module types live in the root namespace ForgeMindServer (folder does not map to namespace)
 
 using ForgeMind.Assets;
 
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// 资产类型过滤器：决定一个 .uasset 是否属于需要索引的类型。
+/// Asset type filter: decides whether a .uasset belongs to a type that needs indexing.
 /// <para>
-/// 默认实现 <see cref="BlueprintOnlyFilter"/> 只保留蓝图类资产，
-/// 非蓝图类型（贴图、材质、动画序列、音频等）直接跳过以避免爆内存。
-/// 未来可通过实现此接口扩展为支持其他资产类型。
+/// The default implementation <see cref="BlueprintOnlyFilter"/> keeps only blueprint-class assets;
+/// non-blueprint types (textures, materials, animation sequences, audio, etc.) are skipped to avoid memory blowup.
+/// Extend by implementing this interface to support other asset types in the future.
 /// </para>
 /// </summary>
 internal interface IAssetTypeFilter
 {
     /// <summary>
-    /// 判断给定的导出对象列表是否表示该资产属于需要索引的类型。
+    /// Determines whether the given export-class list means the asset belongs to a type that needs indexing.
     /// </summary>
-    /// <param name="exportClassNames">该 uasset 所有导出对象的类名集合（已去 null）。</param>
-    /// <returns>true = 需要索引；false = 跳过。</returns>
+    /// <param name="exportClassNames">Set of all export-object class names for this uasset (nulls already removed).</param>
+    /// <returns>true = needs indexing; false = skip.</returns>
     bool ShouldIndex(IEnumerable<string> exportClassNames);
 }
 
 /// <summary>
-/// 默认过滤器：只保留蓝图类资产。
+/// Default filter: keeps only blueprint-class assets.
 /// <para>
-/// 判据：导出表中存在任一类名包含 "BlueprintGeneratedClass" 的导出对象。
-/// 这覆盖了标准蓝图、控件蓝图、动画蓝图等所有 BlueprintGeneratedClass 变体。
+/// Criterion: the export table contains any export object whose class name contains "BlueprintGeneratedClass".
+/// This covers standard Blueprints, Widget Blueprints, Animation Blueprints, and all other BlueprintGeneratedClass variants.
 /// </para>
 /// </summary>
 internal sealed class BlueprintOnlyFilter : IAssetTypeFilter
@@ -47,11 +47,11 @@ internal sealed class BlueprintOnlyFilter : IAssetTypeFilter
 }
 
 /// <summary>
-/// uasset 资产扫描器：反序列化 .uasset 的包摘要与导出对象，产出「资产」来源的索引条目。
-/// 单文件解析失败不中断扫描（跳过并计数，供诊断）。
+/// uasset asset scanner: deserializes .uasset package summary and export objects, yielding index entries from the "asset" source.
+/// Single-file parse failure does not halt scanning (skipped and counted, for diagnostics).
 /// <para>
-/// 默认只索引蓝图类资产（<see cref="BlueprintOnlyFilter"/>），非蓝图类型跳过以避免爆内存。
-/// 可通过 <see cref="ActiveFilter"/> 替换为其他过滤器以支持更多资产类型。
+/// By default only blueprint-class assets are indexed (<see cref="BlueprintOnlyFilter"/>); non-blueprint types are skipped to avoid memory blowup.
+/// Replace via <see cref="ActiveFilter"/> to support more asset types.
 /// </para>
 /// </summary>
 internal static class UAssetScanner
@@ -62,12 +62,12 @@ internal static class UAssetScanner
     ];
 
     /// <summary>
-    /// 当前生效的资产类型过滤器（默认 <see cref="BlueprintOnlyFilter"/>）。
-    /// 替换此字段即可扩展为支持其他资产类型——无需修改扫描器本身。
+    /// Currently active asset type filter (default <see cref="BlueprintOnlyFilter"/>).
+    /// Replace this field to support more asset types — no scanner modifications needed.
     /// </summary>
     public static IAssetTypeFilter ActiveFilter { get; set; } = new BlueprintOnlyFilter();
 
-    /// <summary>扫描目录下全部 .uasset；解析失败数通过 <paramref name="failedCount"/> 报告（供诊断）。</summary>
+    /// <summary>Scans all .uasset files in the directory; the parse-failure count is reported via <paramref name="failedCount"/> (for diagnostics).</summary>
     public static List<UeAssetEntry> Scan(string directory, ScopeLevel scope, out int failedCount)
     {
         var entries = new List<UeAssetEntry>();
@@ -77,7 +77,7 @@ internal static class UAssetScanner
 
         foreach (string file in Directory.EnumerateFiles(directory, "*.uasset", SearchOption.AllDirectories))
         {
-            // 跳过中间产物目录（父目录一级判断，如 Intermediate/xxx.uasset）
+            // Skip intermediate product directories (one-level parent judgment, e.g. Intermediate/xxx.uasset)
             string? parent = Path.GetDirectoryName(Path.GetDirectoryName(file));
             if (parent is not null &&
                 SkippedDirNames.Contains(Path.GetFileName(parent), StringComparer.OrdinalIgnoreCase))
@@ -105,7 +105,7 @@ internal static class UAssetScanner
             using FileStream stream = File.OpenRead(filePath);
             UAssetPackage package = UAssetSerializer.Load(stream);
 
-            // 先收集所有导出对象的类名，用于类型过滤
+            // First collect all export object class names for type filtering
             var exportClassNames = new List<string>(package.Exports.Count);
             foreach (ObjectExport export in package.Exports)
             {
@@ -121,7 +121,7 @@ internal static class UAssetScanner
                     exportClassNames.Add(className);
             }
 
-            // 类型过滤：非目标类型直接跳过（不产出条目，不占内存）
+            // Type filter: non-target types skipped directly (no entry produced, no memory used)
             if (!ActiveFilter.ShouldIndex(exportClassNames))
                 return null;
 
@@ -156,7 +156,7 @@ internal static class UAssetScanner
         }
         catch
         {
-            return null; // 单文件失败跳过（非 UE 包 / 加密 / 截断等）
+            return null; // Single-file failure skipped (non-UE package / encrypted / truncated, etc.)
         }
     }
 }

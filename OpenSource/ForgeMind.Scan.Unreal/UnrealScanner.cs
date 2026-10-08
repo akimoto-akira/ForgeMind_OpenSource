@@ -15,7 +15,7 @@ namespace ForgeMind.Scan.Unreal;
 /// The Core / Scan framework and every consumer program against <see cref="IScanner"/> /
 /// <see cref="IScanDataProvider"/>, never against the UE-specific types in this assembly.
 /// A future scanner provider (Unity / Godot / custom) implements the same contract without
-/// touching Core — that is the通用化 hardening target (refactor plan §37).</para>
+/// touching Core — that is the generalization hardening target (refactor plan §37).</para>
 /// </summary>
 public sealed class UnrealScanner : IScanner
 {
@@ -108,12 +108,12 @@ public sealed class UnrealScanner : IScanner
     }
 
     /// <summary>
-    /// 跑同一套 UE 扫描生命周期，但<b>不</b>把结果规范化成视图：原样返回算法产出的
-    /// <see cref="ScanRoot"/> 树，供 <see cref="ScanCachePackWriter"/> 以 ScanCache 格式打包。
-    /// <para>
-    /// 扫描算法本身没有问题（历史 25+ 用例是在它上面跑过的），问题在于
-    /// <see cref="Scan"/> 把树拍平成视图后丢掉了层级、属性、说明符与元数据。打包走这条路，
-    /// 包里装的就是算法原本的产物。</para>
+/// Runs the same UE scan lifecycle but <b>does not</b> normalize results into a view: returns the algorithm-produced
+/// <see cref="ScanRoot"/> tree verbatim, so <see cref="ScanCachePackWriter"/> can pack it in ScanCache format.
+/// <para>
+/// The scan algorithm itself is fine (25+ historical use cases ran on it); the problem is that
+/// <see cref="Scan"/> flattens the tree into a view, losing hierarchy, properties, specifiers, and metadata. The
+/// pack path keeps the algorithm's original output.
     /// </summary>
     public (string Version, IReadOnlyList<ScanRoot> CodeRoots, IReadOnlyList<ScanRoot> AssetRoots)
         ScanRoots(IScanTarget target, CancellationToken cancellationToken = default)
@@ -186,12 +186,12 @@ public sealed class UnrealScanner : IScanner
     }
 
     /// <summary>
-    /// 引擎扫描根 = <c>{InstallLocation}\Engine</c>，不是安装目录本身。
+    /// Engine scan root = <c>{InstallLocation}\Engine</c>, not the install directory itself.
     /// <para>
-    /// 安装目录下既没有 <c>Source</c> 也没有 <c>Plugins</c>——它们都在 <c>Engine\</c> 子目录里。
-    /// 传安装目录会让 <c>RulesFileScanner.GetEngineSourceRoots</c> 与插件发现全部落空，
-    /// 结果就是一个没有任何模块的空 root（历史上 25+ 用例跑通时的 root 可不是空的）。
-    /// 已经是 <c>...\Engine</c> 结尾（源码构建的注册项常直接指向它）时原样返回。</para>
+    /// The install directory contains neither <c>Source</c> nor <c>Plugins</c> — both live in the <c>Engine\</c> subdirectory.
+    /// Passing the install directory would cause <c>RulesFileScanner.GetEngineSourceRoots</c> and plugin discovery to fail,
+    /// producing an empty root with no modules (which is unlike the roots from the 25+ historical passing cases).
+    /// When the path already ends with <c>...\Engine</c> (common for source-build registry entries), it is returned as-is.</para>
     /// </summary>
     private static string? ResolveEngineRoot(string? installLocation)
     {

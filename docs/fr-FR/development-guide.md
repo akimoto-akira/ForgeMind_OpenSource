@@ -6,7 +6,7 @@ Destiné aux développeurs qui souhaitent étendre ForgeMind : comment compiler,
 
 | Projet | Rôle |
 |---|---|
-| `OpenSource\ForgeMindServer` | Hôte du serveur MCP : 4 outils intégrés, démarre le pont TCP, charge les plugins |
+| `OpenSource\ForgeMindServer` | Hôte du serveur MCP : 4 outils intégrés, démarre le bridge TCP, charge les plugins |
 | `OpenSource\ForgeMind.OfflineEngineKit` | Plugin : outils engine / project / project_files / switch_version / launch / build / editor |
 | `OpenSource\ForgeMind.Assets` | Plugin : outil asset (lecture hors ligne de `.uasset`) |
 | `OpenSource\ForgeMind.Knowledge` | Plugin : outil knowledge (recherche de connaissances) |
@@ -33,7 +33,7 @@ L'hôte ne contient que 4 outils intégrés : `settings`, `get_task_result`, `li
 
 - Répertoire des plugins : `<répertoire de l'hôte>\plugins\` (la variable d'environnement `FORGEMIND_PLUGINS_DIR` le remplace).
 - Disposition du paquet de plugin : `plugins\<nom du plugin>\` contient la DLL principale + le `.manifest.json` homonyme + les dépendances ; les DLL libres à la racine sont également prises en charge (drop-in manuel).
-- Le `PluginLoader` de l'hôte scanne les plugins → `PluginContext` injecte (tables d'outils, registre des moteurs, pont) → le plugin appelle `RegisterTool` dans `OnLoad` pour enregistrer les outils.
+- Le `PluginLoader` de l'hôte scanne les plugins → `PluginContext` injecte (tables d'outils, registre des moteurs, bridge) → le plugin appelle `RegisterTool` dans `OnLoad` pour enregistrer les outils.
 - Intégrité des plugins : `PluginIntegrityVerifier` / `PluginSigningKeys` sont chargés de la validation du manifeste et de la signature ; les plugins de confiance peuvent étendre les services via ServiceOverride (voir §7).
 
 Ajouter un nouvel outil MCP :
@@ -91,7 +91,7 @@ Mécanisme :
 
 - Précompilation : d'abord compiler `ForgeMindServer.csproj`, puis trouver les projets de plugins sous `ForgeMind.*` avec un `.manifest.json` homonyme, les compiler un par un et les staging vers `<répertoire d'entrée>\plugins\<nom du plugin>\`.
 - Exécution : trouver `ITestCase` par réflexion, trier par `Group` / `Order`, **fail-fast** ; « démarrer l'éditeur / fermer l'éditeur » sont également des cas normaux (`Order=0` démarre, `Order=int.MaxValue` ferme), les groupes partagent une session.
-- Les cas de test appellent directement les outils via `ITool.Execute` (sans passer par le protocole MCP) ; en interne, les outils communiquent avec UE via le pont.
+- Les cas de test appellent directement les outils via `ITool.Execute` (sans passer par le protocole MCP) ; en interne, les outils communiquent avec UE via le bridge.
 - Sortie : rapport JSON et résumé lisible après l'exécution (répertoire de sortie indiqué dans le résultat d'exécution).
 - Assets de test : plus de 30 `Blueprint_*_Tests.cs` sous `Task\UE5_0\` (domaines Blueprint : variables / fonctions / événements / matériaux / macros / interfaces, etc.) + `Task\Base\Engine_List_Tests.cs` ; `BlueprintTestHelper` encapsule les commandes bridge, la distribution de texte et la comparaison de snapshots IR (protection contre les modifications involontaires).
 

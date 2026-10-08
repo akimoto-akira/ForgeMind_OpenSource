@@ -601,6 +601,12 @@ public static class BlueprintTestHelper
     /// (key sets, array elements per-position, values - any field difference, count difference,
     /// or rewired connection will error and list each diff path).
     ///
+    /// User-defined struct members are normalised as well: their IR "name" is the engine-internal
+    /// VarName whose trailing GUID is FGuid::NewGuid() per struct creation (see
+    /// <see cref="ScrubVolatileGuidTails"/>), and Content/Tests is wiped every run - so that tail
+    /// is stripped before comparison, otherwise FHealth_A / FHealth_B / Struct_Custom_A /
+    /// Struct_Custom_B could never match their baseline.
+    ///
     /// When baseline doesn't exist, save current normalized IR (first run setup, no failure).
     /// </summary>
     public static void VerifyIrSnapshot(TestContext ctx, string assetPath)
@@ -639,22 +645,75 @@ public static class BlueprintTestHelper
     /// <summary>
     /// Deep copy IR entry and re-key node guids to stable keys in all graphs
     /// (functions[].graph and eventGraphs[]), with connection endpoints updated accordingly.
+    /// User-defined struct member names additionally get their volatile GUID tail stripped
+    /// (see <see cref="ScrubVolatileGuidTails"/>).
     /// </summary>
-    private static JsonNode NormalizeIrForSnapshot(JsonNode ir)
-    {
-        var clone = JsonNode.Parse(ir.ToJsonString())!;
-        var def = clone["definition"];
-        if (def == null) return clone;
+        private static JsonNode NormalizeIrForSnapshot(JsonNode ir)
+        {
+            var clone = JsonNode.Parse(ir.ToJsonString())!;
+            ScrubVolatileGuidTails(clone);
+            var def = clone["definition"];
+            if (def == null) return clone;
 
-        foreach (var fn in def["functions"]?.AsArray() ?? new JsonArray())
-            NormalizeIrGraph(fn?["graph"]);
-        foreach (var g in def["eventGraphs"]?.AsArray() ?? new JsonArray())
-            NormalizeIrGraph(g);
-        // Macro graphs (bridge get_asset_ir macros[], added 2026-10-04): macro body internals also need
-        // re-keying, otherwise macro body changes won't be visible to mis-touch detection.
-        foreach (var m in def["macros"]?.AsArray() ?? new JsonArray())
-            NormalizeIrGraph(m?["graph"]);
-        return clone;
+            foreach (var fn in def["functions"]?.AsArray() ?? new JsonArray())
+                NormalizeIrGraph(fn?["graph"]);
+            foreach (var g in def["eventGraphs"]?.AsArray() ?? new JsonArray())
+                NormalizeIrGraph(g);
+            // Macro graphs (bridge get_asset_ir macros[], added 2026-10-04): macro body internals also need
+            // re-keying, otherwise macro body changes won't be visible to mis-touch detection.
+            foreach (var m in def["macros"]?.AsArray() ?? new JsonArray())
+                NormalizeIrGraph(m?["graph"]);
+            return clone;
+        }
+
+        /// <summary>
+    /// Trailing random GUID of a user-defined struct member's internal name.
+    ///
+    /// UE builds the member VarName as "&lt;FriendlyName&gt;_&lt;seq&gt;_&lt;32 hex digits&gt;"
+    /// (FMemberVariableNameHelper::Generate, StructureEditorUtils.cpp:259/264), where the GUID
+    /// comes from FGuid::NewGuid() at AddVariable (StructureEditorUtils.cpp:304) — a fresh random
+    /// value for every variable of every freshly created struct. Bridge get_asset_ir emits that
+    /// internal VarName (ForgeMindIR_Blueprint.cpp:1807) rather than FriendlyName, and pins of
+    /// K2Node_MakeStruct are named after the same VarName — so FHealth_A / FHealth_B member names
+    /// and Struct_Custom_A / Struct_Custom_B pin names all carry it.
+    ///
+    /// GroupLifecycle deletes Content/Tests before every run, so struct assets are recreated from
+    /// scratch each run and this tail differs every run; comparing it verbatim makes those four
+    /// baselines unmatchable by construction (observed TestRuns/20261008_1510: baseline
+    /// Cur_2_2278FA58… vs actual Cur_2_E5D7D3C0…). Only the 32-hex tail is removed — the
+    /// "&lt;FriendlyName&gt;_&lt;seq&gt;" prefix is deterministic (Cur_2 / Max_4 in every run) and
+    /// member renames still show up as diffs.
+    /// </summary>
+    private static readonly Regex StructVarGuidTail = new(@"_[0-9A-F]{32}$", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Strip that GUID tail from every string "name" field of the IR (struct definition.members[]
+    /// and graph nodes[].pins[]). Only "name" fields are touched: a real member rename / pin
+    /// rename must still surface as a diff, and values such as defaultValue are left alone.
+    /// </summary>
+    private static void ScrubVolatileGuidTails(JsonNode? node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                // Snapshot the keys: the loop body may replace a value (same key, no add/remove).
+                foreach (string key in obj.Select(kvp => kvp.Key).ToList())
+                {
+                    var value = obj[key];
+                    if (key == "name" && value is JsonValue jv
+                        && jv.TryGetValue<string>(out var text) && text != null)
+                    {
+                        string scrubbed = StructVarGuidTail.Replace(text, "");
+                        if (scrubbed != text) obj[key] = scrubbed;
+                    }
+                    ScrubVolatileGuidTails(value);
+                }
+                break;
+            case JsonArray arr:
+                foreach (var item in arr)
+                    ScrubVolatileGuidTails(item);
+                break;
+        }
     }
 
     /// <summary>

@@ -121,6 +121,7 @@ public:
 	TSharedPtr<FJsonObject> HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateBlueprintStruct(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateBlueprintEnum(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleCreateBlueprintInterface(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleAddStructMember(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleUpdateStructMember(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleRemoveStructMember(const TSharedPtr<FJsonObject>& Payload);

@@ -19,7 +19,7 @@ public sealed class KnowledgePlugin : IPlugin
 
     public string Version => "1.0.0";
 
-    public string Description => "UE 知识库工具（list / search / get），由宿主迁出为独立插件";
+    public string Description => "UE knowledge base tool (list / search / get), migrated from host as a standalone plugin";
 
     public ModuleIdentity Identity => new()
     {

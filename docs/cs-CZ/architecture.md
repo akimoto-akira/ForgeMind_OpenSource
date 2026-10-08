@@ -1,6 +1,6 @@
 ﻿# Architektura ForgeMind
 
-ForgeMind je **platforma pro ovládání herních enginů s rozhraním MCP**: server (host) zpřístupňuje nástroje AI klientům prostřednictvím protokolu MCP; funkce nástrojů injektují především pluginy. Na straně enginu přijímá plugin adaptéru operace přes lokální TCP bridge. UE je aktuální implementace; platformu lze rozšířit na další enginy. Tento dokument vychází z kódu viditelného v **veřejné části**; komerční funkce jsou popsány pouze obecně v §7.
+ForgeMind je **platforma pro ovládání herních enginů s rozhraním MCP**: server (host) zpřístupňuje nástroje AI klientům prostřednictvím protokolu MCP; funkce nástrojů injektují především pluginy. Na straně enginu přijímá plugin adaptéru operace přes lokální TCP bridge. UE je aktuální implementace; platformu lze rozšířit na další enginy. Tento dokument vychází z kódu viditelného ve **veřejné části**; komerční funkce jsou popsány pouze obecně v §7.
 
 ## 1. Přehled
 

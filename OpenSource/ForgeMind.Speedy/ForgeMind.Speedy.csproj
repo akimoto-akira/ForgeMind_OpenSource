@@ -15,7 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 唯一的外部依赖：MessagePack 3.1.7（与 SiliconLife.Speedy 一致） -->
+    <!-- Only external dependency: MessagePack 3.1.7 (matches SiliconLife.Speedy) -->
     <PackageReference Include="MessagePack" Version="3.1.7" />
   </ItemGroup>
 

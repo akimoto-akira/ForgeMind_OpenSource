@@ -21,7 +21,7 @@ dotnet build OpenSource\ForgeMind.Assets\ForgeMind.Assets.csproj
 dotnet build OpenSource\ForgeMind.Knowledge\ForgeMind.Knowledge.csproj
 ```
 
-> Nesestavujte celý `ForgeMind.sln` přímo (obsahuje odkazy na komerční projekty; komerční adresář není součástí části). Pluginy lze také použít z buildovacích artefaktů dodaných distributorem.
+> Nesestavujte celý `ForgeMind.sln` přímo (obsahuje odkazy na komerční projekty; komerční adresář není součástí repozitáře). Pluginy lze také použít z buildovacích artefaktů dodaných distributorem.
 
 ## 3. Spuštění
 

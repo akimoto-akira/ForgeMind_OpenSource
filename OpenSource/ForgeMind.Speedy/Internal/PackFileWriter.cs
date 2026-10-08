@@ -42,7 +42,7 @@ internal sealed class PackFileWriter : IDisposable
     private readonly FreeList _freeList = new();
 
     private SpkHeader _header;
-    private int _activeSlot; // 当前生效的 Header 槽位（0 或 1）
+    private int _activeSlot; // Currently active header slot (0 or 1)
 
     private PackFileWriter(string filePath, FileStream stream, SpkHeader header, int activeSlot)
     {

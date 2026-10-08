@@ -7,15 +7,15 @@ using ForgeMindServer.Engine;
 namespace ForgeMind.Knowledge;
 
 /// <summary>
-/// Knowledge base ("textbook") tool (总需求.md §2.4.2). Tool name is
+/// Knowledge base ("textbook") tool (see spec §2.4.2). Tool name is
 /// engine-agnostic ("knowledge").
-/// <para>单一入口、不按引擎拆文件、也不按引擎单独注册：版本差异统一在
-/// <see cref="Execute"/> 内用 switch 按 <see cref="EngineVersion"/> 分派。当前各版本
-/// 逻辑一致，所有分支落到 <c>RunUnrealKnowledge</c>；将来某版本出现差异，改写对应
-/// case 即可，不需要新增引擎专用文件或专用注册。</para>
-/// <para>版本桶标记就是 <see cref="EngineVersion"/> 的<b>枚举值名</b>（如 "UE_5_4"）；
-/// 通用桶 "universal" 不是枚举值，它<b>直接匹配</b>——查任何版本时都连带搜索它
-/// （见 <see cref="KnowledgeStore.ListEntriesInScope"/>）。</para>
+/// <para>Single entry point, not split per engine and not registered per engine: version differences are unified
+/// inside <see cref="Execute"/> via a switch on <see cref="EngineVersion"/>. Currently all versions
+/// share identical logic, all branches fall through to <c>RunUnrealKnowledge</c>; when a version diverges in the future,
+/// modify the corresponding case — no need for engine-specific files or extra registration.</para>
+/// <para>Version bucket tag is the <b>enum value name</b> of <see cref="EngineVersion"/> (e.g. "UE_5_4");
+/// the "universal" bucket is not an enum value, it <b>directly matches</b> — it is searched alongside any version query
+/// (see <see cref="KnowledgeStore.ListEntriesInScope"/>).</para>
 /// <para>Backed by <see cref="KnowledgeStore"/>: a read-only .spk pack in
 /// release stage, a folder tree in development stage.</para>
 /// </summary>
@@ -110,10 +110,10 @@ public sealed class KnowledgeTool : ITool
 
         (string bucket, string versionSource, List<string> notes) = ResolveTargetVersion(parameters);
 
-        // 按引擎版本路由：每个受支持版本一个分支。桶标记即枚举值名（"UE_5_4"），
-        // 当前各版本逻辑一致 → 统一落到 RunUnrealKnowledge；将来某版本出现差异，
-        // 改写对应 case 即可（不需要新增引擎专用文件，也不需要额外注册）。
-        // "universal" 是通用桶而非具体版本，落到 default 分支。
+        // Route by engine version: one branch per supported version. Bucket tag is the enum value name ("UE_5_4"),
+        // currently all versions share logic -> unified RunUnrealKnowledge; when a version diverges,
+        // modify the corresponding case (no extra engine-specific file or registration needed).
+        // "universal" is the universal bucket, not a specific version, falls through to the default branch.
         EngineVersion? engineVersion = EngineVersions.Parse(bucket);
         return engineVersion switch
         {
@@ -141,8 +141,8 @@ public sealed class KnowledgeTool : ITool
     }
 
     /// <summary>
-    /// 当前各版本共用的知识库实现（list / search / get）。
-    /// 某个版本将来出现差异时，在 <see cref="Execute"/> 的对应 case 里改走别的分支即可。
+    /// <summary>Shared knowledge base implementation for all current versions (list / search / get).</summary>
+        // When a version diverges in the future, modify the corresponding case in <see cref="Execute"/> to take a different branch.
     /// </summary>
     private static ToolResult RunUnrealKnowledge(
         string action, KnowledgeStore store, string bucket, string versionSource,

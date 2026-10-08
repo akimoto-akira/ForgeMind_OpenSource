@@ -8,6 +8,9 @@
 #include "Editor.h"
 #include "Misc/CoreDelegates.h"
 #include "EdGraph/EdGraphPin.h"
+#include "EdGraph/EdGraph.h"
+#include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -53,6 +56,7 @@
 #include "WidgetBlueprint.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/UserWidget.h"
+#include "ForgeMindBlueprintUtils.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -230,7 +234,7 @@ FForgeMindBridgeClient::FForgeMindBridgeClient()
 {
 	ActiveInstance() = this;
 
-	AdvertisedCommands = { TEXT("ping"), TEXT("get_status"), TEXT("open_asset"), TEXT("exec_console"), TEXT("quit_editor"), TEXT("list_class_hierarchy"), TEXT("get_current_level"), TEXT("create_level"), TEXT("set_pie"), TEXT("list_level_actors"), TEXT("get_actor_details"), TEXT("delete_actor"), TEXT("spawn_actor"), TEXT("set_actor_property"), TEXT("create_blueprint"), TEXT("create_blueprint_struct"), TEXT("create_blueprint_enum"), TEXT("add_struct_member"), TEXT("update_struct_member"), TEXT("remove_struct_member"), TEXT("add_enum_entry"), TEXT("update_enum_entry"), TEXT("remove_enum_entry"), TEXT("scan_assets"), TEXT("list_assets"), TEXT("get_asset_info"), TEXT("add_blueprint_variable"), TEXT("add_event_dispatcher"), TEXT("set_blueprint_variable_default"), TEXT("update_blueprint_variable"), TEXT("list_blueprint_variables"), TEXT("remove_blueprint_variable"), TEXT("list_blueprint_graph"), TEXT("list_blueprint_catalog"), TEXT("add_blueprint_node"), TEXT("connect_blueprint_pins"), TEXT("set_pin_default_value"), TEXT("delete_blueprint_node"), TEXT("break_blueprint_pins"), TEXT("save_asset"), TEXT("delete_asset"), TEXT("create_function_graph"), TEXT("remove_function_graph"), TEXT("create_macro_graph"), TEXT("compile_blueprint"), TEXT("add_comment_box"), TEXT("move_nodes_to_comment"), TEXT("remove_nodes_from_comment"), TEXT("get_debug_output"), TEXT("get_screen_output"), TEXT("add_blueprint_component"), TEXT("list_blueprint_components"), TEXT("set_component_property"), TEXT("remove_blueprint_component"), TEXT("create_input_action"), TEXT("create_input_mapping_context"), TEXT("add_input_mapping"), TEXT("list_editor_settings"), TEXT("add_widget_child"), TEXT("list_widget_children"), TEXT("apply_asset_ir"), TEXT("get_asset_ir"), TEXT("take_screenshot"), TEXT("list_windows") };
+	AdvertisedCommands = { TEXT("ping"), TEXT("get_status"), TEXT("open_asset"), TEXT("exec_console"), TEXT("quit_editor"), TEXT("list_class_hierarchy"), TEXT("get_current_level"), TEXT("create_level"), TEXT("set_pie"), TEXT("list_level_actors"), TEXT("get_actor_details"), TEXT("delete_actor"), TEXT("spawn_actor"), TEXT("set_actor_property"), TEXT("create_blueprint"), TEXT("create_blueprint_struct"), TEXT("create_blueprint_enum"), TEXT("create_blueprint_interface"), TEXT("add_struct_member"), TEXT("update_struct_member"), TEXT("remove_struct_member"), TEXT("add_enum_entry"), TEXT("update_enum_entry"), TEXT("remove_enum_entry"), TEXT("scan_assets"), TEXT("list_assets"), TEXT("get_asset_info"), TEXT("add_blueprint_variable"), TEXT("add_event_dispatcher"), TEXT("set_blueprint_variable_default"), TEXT("update_blueprint_variable"), TEXT("list_blueprint_variables"), TEXT("remove_blueprint_variable"), TEXT("list_blueprint_graph"), TEXT("list_blueprint_catalog"), TEXT("add_blueprint_node"), TEXT("connect_blueprint_pins"), TEXT("set_pin_default_value"), TEXT("delete_blueprint_node"), TEXT("break_blueprint_pins"), TEXT("save_asset"), TEXT("delete_asset"), TEXT("create_function_graph"), TEXT("remove_function_graph"), TEXT("create_macro_graph"), TEXT("compile_blueprint"), TEXT("add_comment_box"), TEXT("move_nodes_to_comment"), TEXT("remove_nodes_from_comment"), TEXT("get_debug_output"), TEXT("get_screen_output"), TEXT("add_blueprint_component"), TEXT("list_blueprint_components"), TEXT("set_component_property"), TEXT("remove_blueprint_component"), TEXT("create_input_action"), TEXT("create_input_mapping_context"), TEXT("add_input_mapping"), TEXT("list_editor_settings"), TEXT("add_widget_child"), TEXT("list_widget_children"), TEXT("apply_asset_ir"), TEXT("get_asset_ir"), TEXT("take_screenshot"), TEXT("list_windows") };
 
 	RequestHandlers.Add(TEXT("ping"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandlePing(Payload); });
 	RequestHandlers.Add(TEXT("get_status"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleGetStatus(Payload); });
@@ -249,6 +253,7 @@ FForgeMindBridgeClient::FForgeMindBridgeClient()
 	RequestHandlers.Add(TEXT("create_blueprint"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprint(Payload); });
 	RequestHandlers.Add(TEXT("create_blueprint_struct"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprintStruct(Payload); });
 	RequestHandlers.Add(TEXT("create_blueprint_enum"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprintEnum(Payload); });
+	RequestHandlers.Add(TEXT("create_blueprint_interface"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprintInterface(Payload); });
 	RequestHandlers.Add(TEXT("add_struct_member"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleAddStructMember(Payload); });
 	RequestHandlers.Add(TEXT("update_struct_member"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleUpdateStructMember(Payload); });
 	RequestHandlers.Add(TEXT("remove_struct_member"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleRemoveStructMember(Payload); });
@@ -2085,6 +2090,26 @@ UClass* ForgeMindResolveBlueprintClassByName(const FString& BlueprintName)
 	{
 		return Generated;
 	}
+	// Full asset path (e.g. /Game/Tests/UE5_0/Inherit_Base_B from [Extends] after cross-block
+	// alias injection): load directly, do not prepend a root directory — that produced
+	// "/Game/Tests//Game/Tests/..." double-slash package names and a Fatal at
+	// UObjectGlobals.cpp:614 (2026-10-08, Inherit_Child_B crash).
+	if (BlueprintName.StartsWith(TEXT("/")))
+	{
+		FString BpAssetPath = BlueprintName;
+		if (!BpAssetPath.Contains(TEXT(".")))
+		{
+			BpAssetPath = FString::Printf(TEXT("%s.%s"), *BlueprintName, *FPaths::GetBaseFilename(BlueprintName));
+		}
+		if (UBlueprint* Bp = LoadObject<UBlueprint>(nullptr, *BpAssetPath))
+		{
+			if (Bp->GeneratedClass != nullptr)
+			{
+				return Bp->GeneratedClass;
+			}
+		}
+		return nullptr;
+	}
 	// If still not found, load by known asset root directory and get its GeneratedClass.
 	for (const FString& Root : { FString(TEXT("/Game/Tests")), FString(TEXT("/Game")) })
 	{
@@ -2315,6 +2340,120 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprint(const TSha
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
 	FAssetRegistryModule::AssetCreated(Blueprint);
 	Blueprint->MarkPackageDirty();
+
+	// Optional 'implements' field: array of interface asset paths to implement.
+	// FBlueprintEditorUtils::ImplementNewInterface attaches the interface and
+	// auto-builds an implementation function graph for each interface message
+	// (signature only — the caller fills in the body via list_blueprint_graph
+	// + add_blueprint_node, since create_function_graph would collide with
+	// the auto-built graph).
+	const TArray<TSharedPtr<FJsonValue>>* ImplementsArray = nullptr;
+	if (Payload->TryGetArrayField(TEXT("implements"), ImplementsArray) && ImplementsArray != nullptr && ImplementsArray->Num() > 0)
+	{
+		for (const TSharedPtr<FJsonValue>& ImplVal : *ImplementsArray)
+		{
+			FString InterfacePath;
+			if (!ImplVal.IsValid() || !ImplVal->TryGetString(InterfacePath) || InterfacePath.IsEmpty())
+			{
+				continue;
+			}
+			UBlueprint* InterfaceBP = ForgeMindBlueprintUtils::ResolveBlueprint(InterfacePath);
+			if (InterfaceBP == nullptr || InterfaceBP->GeneratedClass == nullptr)
+			{
+				Result->SetBoolField(TEXT("created"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("implements: no interface blueprint found at '%s'"), *InterfacePath));
+				return Result;
+			}
+			FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceBP->GeneratedClass->GetFName());
+
+			// ImplementNewInterface skips void interface functions: its condition
+			// CanKismetOverrideFunction && !FunctionCanBePlacedAsEvent is false for
+			// void + FUNC_BlueprintEvent (FunctionCanBePlacedAsEvent returns true
+			// when there are no output params). UE expects those to be implemented
+			// via event nodes, but the test expects a function graph with
+			// entry/result nodes. Manually create implementation graphs for the
+			// skipped (void) functions, mirroring ImplementNewInterface's own path
+			// (CreateNewGraph + AddInterfaceGraph) and registering them on the
+			// FBPInterfaceDescription so list_blueprint_graph discovers them.
+			UClass* InterfaceClass = InterfaceBP->GeneratedClass;
+			UE_LOG(LogForgeMindBridge, Warning, TEXT("implements: InterfaceClass=%s, ImplementedInterfaces.Num=%d"), InterfaceClass != nullptr ? *InterfaceClass->GetName() : TEXT("null"), Blueprint->ImplementedInterfaces.Num());
+			FBPInterfaceDescription* ImplDesc = nullptr;
+			for (FBPInterfaceDescription& Desc : Blueprint->ImplementedInterfaces)
+			{
+				UE_LOG(LogForgeMindBridge, Warning, TEXT("implements: Desc.Interface=%s"), Desc.Interface != nullptr ? *Desc.Interface->GetName() : TEXT("null"));
+				if (Desc.Interface == InterfaceClass)
+				{
+					ImplDesc = &Desc;
+					break;
+				}
+			}
+			UE_LOG(LogForgeMindBridge, Warning, TEXT("implements: ImplDesc=%s"), ImplDesc != nullptr ? TEXT("found") : TEXT("null"));
+			for (TFieldIterator<UFunction> FuncIt(InterfaceClass, EFieldIteratorFlags::IncludeSuper); FuncIt; ++FuncIt)
+			{
+				UFunction* InterfaceFunc = *FuncIt;
+				const bool bCanOverride = UEdGraphSchema_K2::CanKismetOverrideFunction(InterfaceFunc);
+				UE_LOG(LogForgeMindBridge, Warning, TEXT("implements: Func=%s, CanOverride=%d, Flags=0x%X"), *InterfaceFunc->GetName(), bCanOverride ? 1 : 0, InterfaceFunc->FunctionFlags);
+				if (!bCanOverride)
+				{
+					continue;
+				}
+				const FName FuncName = InterfaceFunc->GetFName();
+				UEdGraph* ExistingGraph = FindObject<UEdGraph>(Blueprint, *FuncName.ToString());
+				UE_LOG(LogForgeMindBridge, Warning, TEXT("implements: ExistingGraph=%s"), ExistingGraph != nullptr ? TEXT("exists") : TEXT("null"));
+				if (ExistingGraph != nullptr)
+				{
+					continue;
+				}
+				UEdGraph* NewImplGraph = FBlueprintEditorUtils::CreateNewGraph(
+					Blueprint, FuncName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+				NewImplGraph->bAllowDeletion = false;
+				// Mirror ImplementNewInterface (BlueprintEditorUtils.cpp L6488): bind the
+				// graph to the interface function so the compiler treats it as that
+				// message's implementation rather than an unrelated same-named graph.
+				NewImplGraph->InterfaceGuid = FBlueprintEditorUtils::FindInterfaceFunctionGuid(InterfaceFunc, InterfaceClass);
+				FBlueprintEditorUtils::AddInterfaceGraph(Blueprint, NewImplGraph, InterfaceClass);
+				// AddInterfaceGraph (CreateFunctionGraphTerminators) only creates a
+				// result node when the function has out params. void interface
+				// functions get an entry but no result, while the test expects both
+				// (FindTerminators looks for K2Node_FunctionResult). Create it manually.
+				bool bHasResult = false;
+				UK2Node_FunctionEntry* EntryNode = nullptr;
+				for (UEdGraphNode* Node : NewImplGraph->Nodes)
+				{
+					if (Cast<UK2Node_FunctionResult>(Node) != nullptr) bHasResult = true;
+					if (EntryNode == nullptr) EntryNode = Cast<UK2Node_FunctionEntry>(Node);
+				}
+				if (!bHasResult)
+				{
+					UK2Node_FunctionResult* ResultNode = NewObject<UK2Node_FunctionResult>(NewImplGraph);
+					ResultNode->CreateNewGuid();
+					ResultNode->PostPlacedNewNode();
+					if (EntryNode != nullptr)
+					{
+						ResultNode->FunctionReference = EntryNode->FunctionReference;
+					}
+					ResultNode->SetFlags(RF_Transactional);
+					ResultNode->AllocateDefaultPins();
+					NewImplGraph->AddNode(ResultNode);
+				}
+				if (ImplDesc != nullptr)
+				{
+					ImplDesc->Graphs.Add(NewImplGraph);
+				}
+				// NOTE: deliberately NOT added to Blueprint->FunctionGraphs.
+				// ImplementNewInterface (BlueprintEditorUtils.cpp L6490-6492) registers an
+				// implementation graph on the FBPInterfaceDescription only; adding it to
+				// FunctionGraphs as well makes the compiler see the same graph twice and
+				// fail with "found multiple functions with the same name <X>", which also
+				// shows up in the editor as the message appearing both under Interfaces and
+				// under Functions. Lookups reach it through CollectTargetableGraphs.
+				UE_LOG(LogForgeMindBridge, Warning, TEXT("implements: created graph %s, nodes=%d"), *FuncName.ToString(), NewImplGraph->Nodes.Num());
+			}
+		}
+		// Re-compile so the new interface graphs are baked into the class.
+		FKismetEditorUtilities::CompileBlueprint(Blueprint);
+		Blueprint->MarkPackageDirty();
+	}
 
 	Result->SetBoolField(TEXT("created"), true);
 	Result->SetBoolField(TEXT("dirty"), Blueprint->GetPackage()->IsDirty());

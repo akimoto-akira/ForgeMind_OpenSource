@@ -23,6 +23,9 @@
 #include "ObjectTools.h"
 #include "Kismet2/StructureEditorUtils.h"
 #include "Kismet2/EnumEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "Editor.h"
 #include "Internationalization/Text.h"
 #include "UserDefinedStructure/UserDefinedStructEditorData.h"
 #include "UObject/Package.h"
@@ -404,33 +407,6 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintStruct(cons
 
 	FAssetRegistryModule::AssetCreated(Struct);
 
-	// CreateUserDefinedStruct always inserts a single default boolean member
-	// so the struct is never completely empty (the editor needs at least one
-	// variable to show the struct editor).  Remove it before adding the
-	// caller's members so the struct only contains what was requested.
-	// If no members were requested the default is left in place — the
-	// caller can fill it in later via add_struct_member.
-	if (Members.Num() > 0)
-	{
-		// Snapshot all default member Guids before removing any — RemoveVariable
-		// may invalidate the reference returned by GetVarDesc (it can trigger
-		// OnStructureChanged which rebuilds the array), so iterating over the
-		// live reference in a while-loop risks an infinite loop or use-after-free.
-		TArray<FGuid> DefaultGuids;
-		{
-			const TArray<FStructVariableDescription>& DefaultVarDescs = FStructureEditorUtils::GetVarDesc(Struct);
-			for (const FStructVariableDescription& Desc : DefaultVarDescs)
-			{
-				DefaultGuids.Add(Desc.VarGuid);
-			}
-		}
-		for (const FGuid& DefaultGuid : DefaultGuids)
-		{
-			FStructureEditorUtils::RemoveVariable(Struct, DefaultGuid);
-		}
-		FStructureEditorUtils::OnStructureChanged(Struct, FStructureEditorUtils::EStructureEditorChangeInfo::RemovedVariable);
-	}
-
 	// Add members one by one. AddVariable appends a new variable description
 	// with an auto-generated name and Guid; we then rename it to the
 	// requested friendly name via RenameVariable.
@@ -453,6 +429,35 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintStruct(cons
 			FStructureEditorUtils::RenameVariable(Struct, NewVarGuid, Member.Name);
 		}
 		AddedMembers.Add(Member.Name);
+	}
+
+	// Remove the leftover default boolean member that CreateUserDefinedStruct
+	// always inserts.  We must add the caller's members FIRST because
+	// RemoveVariable refuses to make the struct empty (its internal guard is
+	// OldNum > 1 with bAllowToMakeEmpty = false).  After adding, scan for any
+	// member whose internal VarName starts with "MemberVar_" (the engine's
+	// auto-generated name for unnamed members) and remove it.
+	if (Members.Num() > 0 && AddedMembers.Num() > 0)
+	{
+		TArray<FGuid> DefaultGuids;
+		{
+			const TArray<FStructVariableDescription>& VarDescs = FStructureEditorUtils::GetVarDesc(Struct);
+			for (const FStructVariableDescription& Desc : VarDescs)
+			{
+				if (Desc.VarName.ToString().StartsWith(TEXT("MemberVar_")))
+				{
+					DefaultGuids.Add(Desc.VarGuid);
+				}
+			}
+		}
+		for (const FGuid& DefaultGuid : DefaultGuids)
+		{
+			FStructureEditorUtils::RemoveVariable(Struct, DefaultGuid);
+		}
+		if (DefaultGuids.Num() > 0)
+		{
+			FStructureEditorUtils::OnStructureChanged(Struct, FStructureEditorUtils::EStructureEditorChangeInfo::RemovedVariable);
+		}
 	}
 
 	// Notify listeners and recompile so the struct's property layout
@@ -607,6 +612,189 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintEnum(const 
 		EntryValues.Add(MakeShared<FJsonValueString>(AddedName));
 	}
 	Result->SetField(TEXT("entries"), MakeShared<FJsonValueArray>(EntryValues));
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// create_blueprint_interface
+//
+// Creates a Blueprint Interface asset (the "Blueprint Interface" the content
+// browser creates via right-click → Blueprints → Blueprint Interface). A
+// Blueprint Interface is a collection of named function signatures (messages)
+// with no implementation; other blueprints implement the interface and
+// provide bodies for each message.
+//
+// Payload keys:
+//   path        — project asset path, e.g. /Game/Tests/UE5_0/IDamageable
+//   messages    — array of { name, params:[{name,type}] }; each becomes a
+//                 function graph on the interface (signature only, no body)
+//
+// The interface is created via the same FKismetEditorUtilities::CreateBlueprint
+// call the engine's UBlueprintInterfaceFactory uses (EditorFactories.cpp:7040):
+// ParentClass = UInterface, BPType = BPTYPE_Interface. Each message is then
+// added as a function graph by reusing HandleCreateFunctionGraph.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintInterface(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	if (!Payload.IsValid()
+		|| (!Payload->TryGetStringField(TEXT("path"), AssetPath)
+			&& !Payload->TryGetStringField(TEXT("assetPath"), AssetPath)) || AssetPath.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (project asset path, e.g. /Game/Blueprints/IDamageable); optional: messages (array of { name, params:[{name,type}] })"));
+		return Result;
+	}
+
+	// Path normalisation — same rules as create_blueprint.
+	FString PackagePath = AssetPath;
+	int32 DotIndex = INDEX_NONE;
+	if (PackagePath.FindChar(TEXT('.'), DotIndex))
+	{
+		PackagePath = PackagePath.Left(DotIndex);
+	}
+	if (!FPackageName::IsValidLongPackageName(PackagePath) || !PackagePath.StartsWith(TEXT("/Game/")))
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("path must be a project content path like /Game/Blueprints/IDamageable"));
+		return Result;
+	}
+	const FString AssetName = FPaths::GetCleanFilename(PackagePath);
+
+	// Refuse to clobber an existing asset (disk-only check, same as enum handler).
+	{
+		FAssetRegistryModule& AssetRegModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& AssetRegistry = AssetRegModule.Get();
+		TArray<FAssetData> ExistingAssets;
+		AssetRegistry.GetAssetsByPackageName(FName(*PackagePath), ExistingAssets, /*bIncludeOnlyOnDiskAssets=*/true);
+		if (ExistingAssets.Num() > 0)
+		{
+			Result->SetBoolField(TEXT("created"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("An asset already exists at '%s'"), *PackagePath));
+			return Result;
+		}
+	}
+
+	// Guard against stale in-memory packages (same logic as create_blueprint).
+	UPackage* Package = nullptr;
+	if (UPackage* StalePackage = FindObject<UPackage>(nullptr, *PackagePath))
+	{
+		if (UBlueprint* StaleBP = FindObject<UBlueprint>(StalePackage, *AssetName))
+		{
+			if (GEditor)
+			{
+				UAssetEditorSubsystem* AssetEditorSys = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+				if (AssetEditorSys)
+				{
+					AssetEditorSys->CloseAllEditorsForAsset(StaleBP);
+				}
+			}
+			StaleBP->MarkAsGarbage();
+			if (UClass* GenClass = StaleBP->GeneratedClass)
+			{
+				GenClass->MarkAsGarbage();
+			}
+			StalePackage->MarkAsGarbage();
+			CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, true);
+		}
+		if (FindObject<UBlueprint>(nullptr, *FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName)))
+		{
+			if (UBlueprint* StillStaleBP = FindObject<UBlueprint>(nullptr, *FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName)))
+			{
+				const FString TempName = FString::Printf(TEXT("Stale_%s_%s"), *AssetName, *FGuid::NewGuid().ToString(EGuidFormats::Digits));
+				StillStaleBP->Rename(*TempName, StalePackage, REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
+				StillStaleBP->MarkAsGarbage();
+				CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS, true);
+			}
+			if (FindObject<UBlueprint>(nullptr, *FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName)))
+			{
+				Result->SetBoolField(TEXT("created"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("A stale blueprint '%s' exists in memory but not on disk. Clear the editor's transient data or restart the editor."), *PackagePath));
+				return Result;
+			}
+		}
+		Package = CreatePackage(*PackagePath);
+	}
+	else
+	{
+		Package = CreatePackage(*PackagePath);
+	}
+
+	// Create the interface blueprint. UE's UBlueprintInterfaceFactory
+	// (EditorFactories.cpp:7040) uses exactly this call: ParentClass =
+	// UInterface, BPType = BPTYPE_Interface, plain UBlueprint +
+	// UBlueprintGeneratedClass.
+	UBlueprint* Blueprint = FKismetEditorUtilities::CreateBlueprint(
+		UInterface::StaticClass(), Package, FName(*AssetName), BPTYPE_Interface,
+		UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
+	if (Blueprint == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Interface blueprint creation failed at '%s'"), *PackagePath));
+		return Result;
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+	FAssetRegistryModule::AssetCreated(Blueprint);
+
+	// Add each message as a function graph on the interface blueprint.
+	// HandleCreateFunctionGraph creates the EdGraph + entry/result nodes +
+	// parameter pins + compiles, which is exactly what an interface message
+	// needs (interface functions have no body — just the signature).
+	TArray<FString> AddedMessages;
+	const TArray<TSharedPtr<FJsonValue>>* MessagesArray = nullptr;
+	if (Payload->TryGetArrayField(TEXT("messages"), MessagesArray) && MessagesArray != nullptr)
+	{
+		const FString FullPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName);
+		for (const TSharedPtr<FJsonValue>& MessageVal : *MessagesArray)
+		{
+			const TSharedPtr<FJsonObject>* MessageObjPtr = nullptr;
+			if (!MessageVal.IsValid() || !MessageVal->TryGetObject(MessageObjPtr) || !MessageObjPtr->IsValid())
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> MessageObj = *MessageObjPtr;
+
+			FString MessageName;
+			if (!MessageObj->TryGetStringField(TEXT("name"), MessageName) || MessageName.IsEmpty())
+			{
+				continue;
+			}
+
+			// Build a payload for HandleCreateFunctionGraph: { path, name, params }.
+			TSharedPtr<FJsonObject> FuncPayload = MakeShared<FJsonObject>();
+			FuncPayload->SetStringField(TEXT("path"), FullPath);
+			FuncPayload->SetStringField(TEXT("name"), MessageName);
+
+			// Forward 'params' if present.
+			const TArray<TSharedPtr<FJsonValue>>* ParamsArray = nullptr;
+			if (MessageObj->TryGetArrayField(TEXT("params"), ParamsArray) && ParamsArray != nullptr)
+			{
+				FuncPayload->SetField(TEXT("params"), MakeShared<FJsonValueArray>(*ParamsArray));
+			}
+
+			TSharedPtr<FJsonObject> FuncResult = HandleCreateFunctionGraph(FuncPayload);
+			if (FuncResult.IsValid() && FuncResult->GetBoolField(TEXT("created")))
+			{
+				AddedMessages.Add(MessageName);
+			}
+		}
+	}
+
+	Blueprint->MarkPackageDirty();
+
+	Result->SetBoolField(TEXT("created"), true);
+	Result->SetBoolField(TEXT("dirty"), Blueprint->GetPackage()->IsDirty());
+	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
+	Result->SetNumberField(TEXT("messageCount"), AddedMessages.Num());
+	TArray<TSharedPtr<FJsonValue>> MessageValues;
+	for (const FString& AddedName : AddedMessages)
+	{
+		MessageValues.Add(MakeShared<FJsonValueString>(AddedName));
+	}
+	Result->SetField(TEXT("messages"), MakeShared<FJsonValueArray>(MessageValues));
 	return Result;
 }
 

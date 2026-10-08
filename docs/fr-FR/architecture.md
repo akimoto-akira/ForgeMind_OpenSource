@@ -56,16 +56,16 @@ L'hôte et les plugins interagissent via le contrat `ITool` (`Compat\ITool.cs`) 
 
 ## 5. Protocole bridge et adaptateur moteur
 
-- Bridge : TCP local. Les messages utilisent un préfixe de longueur 4 octets + enveloppe JSON (`BridgeMessage` / `BridgeSession` / `FrameCodec`). L'adaptateur lit d'abord `%USERPROFILE%\.forgemind\bridge.json` pour la découverte et l'authentification, puis connexion → handshake → boucle de messages.
+- Bridge : TCP local. Les messages utilisent un préfixe de longueur 4 octets + enveloppe JSON (`BridgeMessage` / `BridgeSession` / `FrameCodec`). L'adaptateur lit d'abord `%USERPROFILE%\.forgemind\bridge.json` pour la découverte et l'authentification, puis connexion → poignée de main → boucle de messages.
 - Côté serveur, le routage se fait selon le nom de commande vers l'implémentation de l'adaptateur. Les gestionnaires de commandes s'exécutent dans le thread principal du moteur (thread de jeu UE) pour garantir la cohérence avec l'état de l'éditeur.
 - L'adaptateur moteur (côté UE) se trouve dans `UEProject\ForgeMind_5_0\ForgeMind_5_0\Plugins\ForgeMindForUE\Source\ForgeMindForUE\`, un module Editor contenant le client bridge et l'applicateur IR. Le projet UE exemple est compatible avec 5.0–5.8.
 - Pour ajouter un nouveau moteur, il suffit d'implémenter un client bridge isomorphe et des gestionnaires de commandes (`development-guide.md` §4). Aucune modification de l'hôte ni des plugins n'est nécessaire.
 
 ## 6. Licence et sécurité (partie publique)
 
-- Autorisation par défaut : `OpenAuthorizationService` (`Authorization\Open\`) — fonctions communautaires fixes, **ne analyse pas les fichiers de licence**.
+- Autorisation par défaut : `OpenAuthorizationService` (`Authorization\Open\`) — fonctions communautaires fixes, **n'analyse pas les fichiers de licence**.
 - Sécurité des plugins : `PluginIntegrityVerifier` (vérification de l'intégrité des manifestes), `PluginSigningKeys` (vérification des signatures) ; `ManifestLoader` analyse les manifestes de plugins et prend en charge ServiceOverride (remplacement des services de l'hôte par des types abstraits, par ex. `IAuthorizationService`).
-- Authentification bridge : les connexions d'adaptateur doivent lire les informations d'identification locales depuis `bridge.json` pour terminer le handshake (`security.md`).
+- Authentification bridge : les connexions d'adaptateur doivent lire les informations d'identification locales depuis `bridge.json` pour terminer la poignée de main (`security.md`).
 
 ## 7. Fonctions commerciales (aperçu)
 

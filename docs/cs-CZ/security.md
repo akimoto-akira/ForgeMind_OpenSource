@@ -5,7 +5,7 @@ Tento dokument popisuje návrh zabezpečení a doporučení pro používání ve
 ## 1. Hranice lokální komunikace
 
 - **Server ve výchozím stavu naslouchá pouze loopbacku**: v režimu HTTP naslouchá na `127.0.0.1:8765`, nevystavuje se do vnější sítě.
-- **Most je lokální TCP**: mezi hostem a adaptérem enginu je lokální TCP spojení; adaptér musí přečíst `%USERPROFILE%\.forgemind\bridge.json` (host, port, pověření) pro discovery a autentizaci před handshakem.
+- **Bridge je lokální TCP**: mezi hostem a adaptérem enginu je lokální TCP spojení; adaptér musí přečíst `%USERPROFILE%\.forgemind\bridge.json` (host, port, pověření) pro discovery a autentizaci před handshakem.
 - Nevystavujte port serveru do veřejné sítě; pro vzdálené použití umístěte do důvěryhodné sítě a proxy přes bezpečný kanál (např. SSH tunel).
 
 ## 2. Integrita pluginů
@@ -17,9 +17,9 @@ Tento dokument popisuje návrh zabezpečení a doporučení pro používání ve
 
 **Zveřejňované bezpečnostní mechanismy**:
 - `IAuthorizationService`: abstrakce vstupního bodu autorizace hostu; výchozí implementace — `OpenAuthorizationService` (pevné komunitní schopnosti, neanalyzuje žádný licenční soubor a negeneruje zkušební autorizace).
-- Důvěryhodný ServiceOverride: přes ServiceOverride v manifestu pluginu může plugin nahrazovat služby hostu podle abstraktního typu (host nezná pojem «komerční», pouze nahrazuje podle typu).
+- Důvěryhodný ServiceOverride: přes ServiceOverride v manifestu pluginu může plugin nahrazovat služby hostu podle abstraktního typu (host nezná pojem „komerční", pouze nahrazuje podle typu).
 - Autentizace identity pluginů a kontrola manifestu: `PluginIntegrityVerifier` / `PluginSigningKeys` ověřují manifesty a podpisy pluginů a zajišťují načítání pouze důvěryhodných pluginů.
-- Autentizace mostního spojení: adaptér provádí discovery a handshake pověření přes `bridge.json`, čímž potvrzuje důvěryhodnost zdroje spojení.
+- Autentizace bridge spojení: adaptér provádí discovery a handshake pověření přes `bridge.json`, čímž potvrzuje důvěryhodnost zdroje spojení.
 
 **Komerční autorizace**: Core poskytuje abstrakci `IAuthorizationService` a důvěryhodný mechanismus rozšíření ServiceOverride. Implementace komerční autorizace je plugin s uzavřeným zdrojovým kódem; konkrétní protokol autorizace, vydávání, ověřování a logika vazby nejsou součástí veřejného výřezu.
 

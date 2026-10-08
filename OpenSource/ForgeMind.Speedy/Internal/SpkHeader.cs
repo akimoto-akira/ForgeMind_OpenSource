@@ -48,7 +48,7 @@ internal sealed class SpkHeader
     public const int SlotCount = 2;
     public const int TotalHeaderSize = SlotSize * SlotCount; // 8192
 
-    public const int HeaderBodySize = 28; // 参与 CRC 的字节数
+    public const int HeaderBodySize = 28; // Number of bytes that participate in CRC
     public const int HeaderCrcSize = 4;
     public const int HeaderPayloadSize = HeaderBodySize + HeaderCrcSize; // 32
 

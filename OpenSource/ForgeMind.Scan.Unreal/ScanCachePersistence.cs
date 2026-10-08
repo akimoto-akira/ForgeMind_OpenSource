@@ -7,17 +7,17 @@ using System.Text.Json.Serialization;
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// ScanCache 格式的序列化层：把扫描算法产出的 <see cref="ScanRoot"/> 树原样写成 JSON。
+/// ScanCache-format serialization layer: writes the algorithm-produced <see cref="ScanRoot"/> tree to JSON verbatim.
 /// <para>
-/// 这里不做任何视图化、扁平化或裁剪——扫描算法能撑过 25+ 用例说明它是对的，SPK 只是
-/// 装这些文件的容器。因此 JSON 的形状、字段名、嵌套层级、序列化选项都与历史上落到
-/// <c>ScanCache/{version}/engine.json</c> 的字节<b>逐字符一致</b>：同样的 DTO 形状、
-/// 同样的 <see cref="JsonSerializerOptions"/>（不缩进、null 不写、camelCase、默认 encoder）。
-/// 改动任何一个字段都会破坏与历史缓存的字节兼容性。</para>
+/// No view / flattening / trimming here — the algorithm has passed 25+ use cases so it is correct; the SPK is just
+/// the container for those files. Therefore the JSON shape, field names, nesting, and serializer options are
+/// <b>character-identical</b> to the bytes historically written to <c>ScanCache/{version}/engine.json</c>:
+/// same DTO shape, same <see cref="JsonSerializerOptions"/> (no indent, no null, camelCase, default encoder).
+/// Changing any field would break byte compatibility with historical caches.</para>
 /// </summary>
 public static class ScanCachePersistence
 {
-    // ── 中间 POCO（与历史完全一致；字段顺序即 JSON 字段顺序）──
+    // ── Intermediate POCOs (identical to history; field order is JSON field order) ──
 
     private sealed class DtoRoot
     {
@@ -108,7 +108,7 @@ public static class ScanCachePersistence
         public string? ClassName { get; set; }
     }
 
-    // ── 序列化选项（与历史逐项一致）──
+    // ── Serializer options (identical to history, item by item) ──
 
     private static readonly JsonSerializerOptions s_jsonOpts = new()
     {
@@ -118,18 +118,18 @@ public static class ScanCachePersistence
     };
 
     /// <summary>
-    /// 把引擎侧扫描根序列化为 <c>engine.json</c> 的内容（与历史文件逐字符一致）。
+    /// Serializes the engine-side scan root to <c>engine.json</c> content (character-identical to historical file).
     /// </summary>
     public static byte[] SerializeEngineRoots(IEnumerable<ScanRoot> roots) =>
         JsonSerializer.SerializeToUtf8Bytes(roots.Select(ToDto).ToList(), s_jsonOpts);
 
     /// <summary>
-    /// 把引擎资产扫描根序列化为 <c>assets.json</c> 的内容（与历史文件逐字符一致）。
+    /// Serializes the engine-asset scan root to <c>assets.json</c> content (character-identical to historical file).
     /// </summary>
     public static byte[] SerializeAssetRoots(IEnumerable<ScanRoot> roots) =>
         JsonSerializer.SerializeToUtf8Bytes(roots.Select(ToDto).ToList(), s_jsonOpts);
 
-    // ── 模型 → DTO ──
+    // ── Model → DTO ──
 
     private static DtoRoot ToDto(ScanRoot root) => new()
     {

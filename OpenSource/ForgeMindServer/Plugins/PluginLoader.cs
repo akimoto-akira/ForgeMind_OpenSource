@@ -118,7 +118,7 @@ public sealed class PluginLoader
         foreach (string dllPath in dllFiles)
         {
             // Load the sibling Manifest and the raw DLL bytes (for integrity verification)
-            // Manifest 文件存在但损坏 → InvalidDataException → 拒绝加载
+            // Manifest file is corrupt → InvalidDataException → refuse to load
             string? manifestPath = ManifestLoader.ResolveManifestPath(dllPath);
             ModuleManifest? manifest;
             try

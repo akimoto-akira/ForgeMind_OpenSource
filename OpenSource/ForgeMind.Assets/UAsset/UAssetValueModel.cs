@@ -126,22 +126,22 @@ public sealed class UPropertyValue
 
     public static UPropertyValue Array(string innerType, IReadOnlyList<UPropertyValue> items) => new(UPropertyValueKind.Array, 0, 0, 0, 0, false, 0, null, null, 0, 0, default, null, innerType, items);
 
-    /// <summary>FSoftObjectPath（SoftObject/SoftClass/AssetObject/AssetClass Property）。</summary>
+    /// <summary>FSoftObjectPath (SoftObject/SoftClass/AssetObject/AssetClass Property).</summary>
     public static UPropertyValue SoftObject(string assetPath, string subPath) => new(UPropertyValueKind.SoftObject, 0, 0, 0, 0, false, 0, null, null, 0, 0, default, null, string.Empty, null, null, assetPath, subPath);
 
-    /// <summary>FScriptDelegate（MulticastDelegateProperty / DelegateProperty）。</summary>
+    /// <summary>FScriptDelegate (MulticastDelegateProperty / DelegateProperty).</summary>
     public static UPropertyValue Delegate(FPackageIndex objectIndex, int fnNameIndex, int fnNameNumber) => new(UPropertyValueKind.Delegate, 0, 0, 0, 0, false, 0, null, null, 0, 0, default, null, string.Empty, null, null, null, null, objectIndex, fnNameIndex, fnNameNumber);
 
-    /// <summary>MapProperty 值体（逐条目 key/value tagged properties）。</summary>
+    /// <summary>MapProperty value body (per-entry key/value tagged properties).</summary>
     public static UPropertyValue Map(int numKeysToRemove, IReadOnlyList<UMapEntry> entries) => new(UPropertyValueKind.Map, 0, 0, 0, 0, false, 0, null, null, 0, 0, default, null, string.Empty, null, null, null, null, default, 0, 0, numKeysToRemove, entries);
 
-    /// <summary>SetProperty 值体（逐条目 tagged properties）。</summary>
+    /// <summary>SetProperty value body (per-entry tagged properties).</summary>
     public static UPropertyValue Set(int numKeysToRemove, IReadOnlyList<UPropertyTag> entries) => new(UPropertyValueKind.Set, 0, 0, 0, 0, false, 0, null, null, 0, 0, default, null, string.Empty, null, null, null, null, default, 0, 0, numKeysToRemove, null, entries);
 
     /// <summary>Wraps raw bytes for value bodies this module models opaquely (e.g. Guid, TextProperty history).</summary>
     public static UPropertyValue RawBytes(byte[] bytes) => new((UPropertyValueKind)(-1), 0, 0, 0, 0, false, 0, null, null, 0, 0, default, null, string.Empty, null, bytes);
 
-    // ---- 写入侧（Save 用：与读取器一一对应的值体回写） ----
+    // ---- Write side (Save use: value-body 1:1 writeback matching reader) ----
 
     /// <summary>
     /// Serializes this value body. <paramref name="innerType"/> / <paramref
@@ -249,7 +249,7 @@ public sealed class UPropertyValue
         }
     }
 
-    // ---- 读取侧（UAssetAPI MainSerializer 原理：类型名 → 注册表读取器） ----
+    // ---- Read side (UAssetAPI MainSerializer principle: type name -> registry reader) ----
 
     /// <summary>
     /// Deserializes a property value by its UE type name (used both for tagged

@@ -32,7 +32,12 @@ using Task = System.Threading.Tasks.Task;
 //   "cast to interface first then call message" is the message node's single call on engine side.
 //   Node spec takes add_blueprint_node's kind=message (name = message name, class = interface class path).
 // - Interface-typed function parameter: create_function_graph's params.type goes through
-//   PinTypeTextToPinType (no PC_Interface branch); written directly as interface generated class path.
+//   PinTypeTextToPinType -> BaseTypeTextToPinType -> SetObjectPinType, which emits
+//   PC_Interface + the interface class for UInterface-derived classes (2026-10-08), so the
+//   parameter keeps its interface type in the editor instead of degrading to a plain Object
+//   reference. Connecting it to a message node's self pin (PC_Object + UObject) works through
+//   the engine's own Conv_InterfaceToObject autocast (EdGraphSchema_K2.cpp L2502-2513).
+//   The test passes the interface generated class path (/Game/.../IDamageable.IDamageable_C).
 // - DSL side: ParserFactory.DomainMap has no blueprint_interface domain
 //   ([BlueprintInterface] would be rejected by DetectAssetType -> batch aborted); method-level
 //   interface implementation marked by [InterfaceImplementation] (BlueprintTranslator puts method
@@ -42,8 +47,9 @@ using Task = System.Threading.Tasks.Task;
 // - Task 2 DSL side copies doc's explicit `as` + null check forms (both supported by translator),
 //   `d.ApplyDamage(5)` whether it lowers to interface message node pending verification -- test is spec.
 //
-// Note: per collaboration spec point 9, "diff comparison" (VerifyIrSnapshot) not attached
-// when transwriting task docs.
+// Note: mis-touch comparison (VerifyIrSnapshot) has been inserted by user instruction,
+// covering all A-side and B-side assets -- the three implement/call/param blueprints on
+// both sides plus the two interface assets (IDamageable / IDamageable_B).
 // =========================================================================
 
 public sealed class Blueprint_Interface : ITestCase
@@ -75,6 +81,21 @@ public sealed class Blueprint_Interface : ITestCase
         return new BlueprintTestHelper.FuncInfo(entryId, resultId);
     }
 
+    /// <summary>
+    /// Save non-blueprint assets (interfaces): interfaces have no compile concept, so CompileAndSave
+    /// cannot be used (it would send compile_blueprint). Neither creation path saves either --
+    /// create_blueprint_interface only marks the package dirty, and ApplyDsl only compiles + saves
+    /// assets with assetType == "blueprint" (interfaces are "blueprint_interface") -- so an explicit
+    /// save is required, otherwise the asset lingers in memory dirty and the IR snapshot below is
+    /// taken against unsaved state. Same as Blueprint_Switch_Tests' SaveAsset.
+    /// </summary>
+    private static void SaveAsset(TestContext ctx, string assetPath)
+    {
+        var r = BlueprintTestHelper.EditorCall(ctx, "save_asset", new { path = assetPath });
+        ctx.AssertTrue(r["response"]?["saved"]?.GetValue<bool>() ?? false,
+            $"save_asset {assetPath}: {r["response"]?["reason"]?.GetValue<string>() ?? ""}");
+    }
+
     public async Task Run(TestContext ctx)
     {
         // -- Subtask 1: Implement Interface Message --
@@ -97,6 +118,8 @@ public sealed class Blueprint_Interface : ITestCase
         ctx.AssertTrue(ifaceCreated["response"]?["created"]?.GetValue<bool>() ?? false,
             $"create_blueprint_interface {ifaceA}: "
             + $"{ifaceCreated["response"]?["reason"]?.GetValue<string>() ?? ""}");
+        SaveAsset(ctx, ifaceA);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, ifaceA);
 
         const string a1 = "/Game/Tests/UE5_0/Iface_Impl_A";
         var implCreated = BlueprintTestHelper.EditorCall(ctx, "create_blueprint", new
@@ -116,6 +139,7 @@ public sealed class Blueprint_Interface : ITestCase
         BlueprintTestHelper.Connect(ctx, a1, g1.entryId, "Amount", p1.nodeId, "InString");
         BlueprintTestHelper.Connect(ctx, a1, p1.nodeId, "then", g1.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a1);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
 
         // DSL path (copied from task doc; interface block needs Path -- domain attribute must carry asset path;
         // [InterfaceImplementation] is translator-supported interface implementation marker;
@@ -123,6 +147,12 @@ public sealed class Blueprint_Interface : ITestCase
         // IDamageable_B asset (file-level `using IDamageable = "path";` alias is
         // core syntax section 11.5's established mechanism) pending verification -- test is spec)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        // ApplyDsl only compiles + saves assets with assetType == "blueprint"; the DSL-created
+        // interface has assetType "blueprint_interface" -- add an explicit save instruction.
+        const string ifaceB = "/Game/Tests/UE5_0/IDamageable_B";
+        SaveAsset(ctx, ifaceB);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, ifaceB);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Iface_Impl_B");
 
         // -- Subtask 2: Call Interface Message --
         // MCP steps: Iface_Call_A (Extends Actor)
@@ -139,9 +169,11 @@ public sealed class Blueprint_Interface : ITestCase
         BlueprintTestHelper.Connect(ctx, a2, f2.entryId, "target", msg2.nodeId, "self");
         BlueprintTestHelper.Connect(ctx, a2, msg2.nodeId, "then", f2.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a2);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
 
         // DSL path (copied from task doc: explicit cast to interface + null check + call message)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Iface_Call_B");
 
         // -- Subtask 3: Interface as Function Parameter Type --
         // MCP steps: Iface_Param_A (Extends Actor)
@@ -157,9 +189,11 @@ public sealed class Blueprint_Interface : ITestCase
         BlueprintTestHelper.Connect(ctx, a3, f3.entryId, "d", msg3.nodeId, "self");
         BlueprintTestHelper.Connect(ctx, a3, msg3.nodeId, "then", f3.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 
         // DSL path (copied from task doc: interface type as function parameter + call message)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Iface_Param_B");
 
         await Task.CompletedTask;
     }

@@ -2,29 +2,35 @@
 // Copyright (c) 2026 Hoshino Kennji
 
 // ============================================================================
-// UBT 规则存根（stub）：本文件定义 UE 的 *.Build.cs 所依赖的最小对象模型，
-// 使文档引擎能用 Roslyn 把 Build.cs 与本存根一起编译并反射实例化 ModuleRules。
+// UBT rule stubs: this file defines the minimal object model that UE *.Build.cs
+// files depend on, so the document engine can compile Build.cs together with
+// these stubs via Roslyn and reflectively instantiate ModuleRules.
 //
-// 兼容性哲学（数据收集优先）：
-// 模拟 UBT 只是为了把 Build.cs 编译起来并反射出模块数据，不是复刻 UBT 行为
-// ——宁可宽松，尽量少失败：
-//   1) 目标规则对象走动态兜底：规则编译器把 Build.cs 中的 TargetRules /
-//      ReadOnlyTargetRules 类型引用改写为 dynamic，一切 Target.* 成员访问在
-//      运行时绑定；已知成员返回真实值，未知成员由 DynamicStubObject 返回
-//      宽松默认值（false / "" / 可继续链式访问的动态存根）。
-//   2) Build.cs 中不带 Target 前缀的裸名字（ModuleDirectory、RuntimeDependencies
-//      等）无法动态兜底，按真实 UBT 定义补齐；定义以 UE 源码为准核对。
-//   3) 个别仍编译失败的文件由规则编译器逐文件隔离，不拖累其他模块。
+// Compatibility philosophy (data collection first):
+// We simulate UBT only to compile Build.cs and reflect out module data — not to
+// replicate UBT behavior. Leniency over strictness, fail as little as possible:
+//   1) Target rule objects use dynamic fallback: the rule compiler rewrites
+//      TargetRules / ReadOnlyTargetRules type references in Build.cs to dynamic;
+//      every Target.* member access binds at runtime; known members return real
+//      values, unknown members return lenient defaults via DynamicStubObject
+//      (false / "" / a chainable dynamic stub).
+//   2) Bare names in Build.cs without the Target prefix (ModuleDirectory,
+//      RuntimeDependencies, etc.) cannot be dynamically backed; we supply them
+//      per the real UBT definitions, verified against UE source.
+//   3) Files that still fail to compile are isolated per-file by the rule
+//      compiler and do not drag down other modules.
 //
-// 版本策略（测试驱动，不靠版本号推测）：本存根对某版本源码测试通过后，
-// 若对更高版本也通过则共用；报错则按 compat 工具的诊断决定是否分叉扫描器子类。
+// Versioning strategy (test-driven, no version-guessing): once this stub passes
+// tests against a version's source, it is shared with higher versions that also
+// pass; on failure, the compat tool's diagnostic decides whether to fork the
+// scanner subclass.
 // ============================================================================
 
 using System.Dynamic;
 
 namespace EpicGames
 {
-    /// <summary>占位类型：.NET 元数据不存在空命名空间，无类型则 using EpicGames.* 会 CS0246。</summary>
+    /// <summary>Placeholder type: .NET metadata has no "empty namespace"; without a type, using EpicGames.* triggers CS0246.</summary>
     internal static class NamespacePlaceholder
     {
     }
@@ -32,7 +38,7 @@ namespace EpicGames
 
 namespace EpicGames.Core
 {
-    /// <summary>占位类型：使 using EpicGames.Core 可绑定。</summary>
+    /// <summary>Placeholder type: allows using EpicGames.Core to bind.</summary>
     internal static class NamespacePlaceholder
     {
     }
@@ -40,7 +46,7 @@ namespace EpicGames.Core
 
 namespace UnrealBuildBase
 {
-    /// <summary>占位类型：使 using UnrealBuildBase 可绑定。</summary>
+    /// <summary>Placeholder type: allows using UnrealBuildBase to bind.</summary>
     internal static class NamespacePlaceholder
     {
     }
@@ -48,7 +54,7 @@ namespace UnrealBuildBase
 
 namespace UnrealBuildTool
 {
-    /// <summary>目标平台（仅列出 Build.cs 中常见的取值；缺失成员按测试反馈补齐）。</summary>
+    /// <summary>Target platform (only lists values commonly seen in Build.cs; missing members are added per test feedback).</summary>
     public enum UnrealTargetPlatform
     {
         Win32,
@@ -62,7 +68,7 @@ namespace UnrealBuildTool
         HoloLens,
     }
 
-    /// <summary>目标配置。</summary>
+    /// <summary>Target configuration.</summary>
     public enum UnrealTargetConfiguration
     {
         Unknown,
@@ -73,7 +79,7 @@ namespace UnrealBuildTool
         Test,
     }
 
-    /// <summary>目标类型。</summary>
+    /// <summary>Target type.</summary>
     public enum TargetType
     {
         Game,
@@ -83,14 +89,14 @@ namespace UnrealBuildTool
         Program,
     }
 
-    /// <summary>模块类型。</summary>
+    /// <summary>Module type.</summary>
     public enum ModuleType
     {
         CPlusPlus,
         External,
     }
 
-    /// <summary>代码优化策略。</summary>
+    /// <summary>Code optimization strategy.</summary>
     public enum CodeOptimization
     {
         Never,
@@ -98,7 +104,7 @@ namespace UnrealBuildTool
         Always,
     }
 
-    /// <summary>Build 设置版本。</summary>
+    /// <summary>Build settings version.</summary>
     public enum BuildSettingsVersion
     {
         Latest,
@@ -110,7 +116,7 @@ namespace UnrealBuildTool
         V5,
     }
 
-    /// <summary>引擎 include 顺序版本。</summary>
+    /// <summary>Engine include order version.</summary>
     public enum EngineIncludeOrderVersion
     {
         Latest,
@@ -126,7 +132,7 @@ namespace UnrealBuildTool
         Unreal5_8,
     }
 
-    /// <summary>IWYU 支持级别。</summary>
+    /// <summary>IWYU support level.</summary>
     public enum IWYUSupport
     {
         None,
@@ -135,7 +141,7 @@ namespace UnrealBuildTool
         Full,
     }
 
-    /// <summary>编译警告级别（与真实 UBT 同名同值）。</summary>
+    /// <summary>Compile warning level (same name and value as real UBT).</summary>
     public enum WarningLevel
     {
         Default,
@@ -144,7 +150,7 @@ namespace UnrealBuildTool
         Error,
     }
 
-    /// <summary>符号可见性（与真实 UBT 同名同值，含官方拼写 VisibileForDll）。</summary>
+    /// <summary>Symbol visibility (same name and value as real UBT, including the official misspelling VisibileForDll).</summary>
     public enum SymbolVisibility
     {
         Default,
@@ -154,7 +160,7 @@ namespace UnrealBuildTool
         VisibileForDll,
     }
 
-    /// <summary>平台分组（Build.cs 常用于 IsInPlatformGroup 判断；真实定义在 EpicGames.Build 程序集内）。</summary>
+    /// <summary>Platform group (Build.cs commonly uses it in IsInPlatformGroup checks; the real definition lives in the EpicGames.Build assembly).</summary>
     public enum UnrealPlatformGroup
     {
         Android,
@@ -170,7 +176,7 @@ namespace UnrealBuildTool
         Windows,
     }
 
-    /// <summary>暂存文件类型（与真实 UBT 同名同值）。</summary>
+    /// <summary>Staged file type (same name and value as real UBT).</summary>
     public enum StagedFileType
     {
         UFS,
@@ -178,7 +184,7 @@ namespace UnrealBuildTool
         DebugNonUFS,
     }
 
-    /// <summary>Windows 目标体系结构。</summary>
+    /// <summary>Windows target architecture.</summary>
     public enum WindowsArchitecture
     {
         x86,
@@ -187,7 +193,7 @@ namespace UnrealBuildTool
         ARM64EC,
     }
 
-    /// <summary>Windows 编译器。</summary>
+    /// <summary>Windows compiler.</summary>
     public enum WindowsCompiler
     {
         Default,
@@ -197,7 +203,7 @@ namespace UnrealBuildTool
         IntelOneAPI,
     }
 
-    /// <summary>Windows 静态分析模式。</summary>
+    /// <summary>Windows static analysis mode.</summary>
     public enum WindowsStaticAnalyzer
     {
         None,
@@ -207,21 +213,21 @@ namespace UnrealBuildTool
         PVSStudio,
     }
 
-    /// <summary>链接方式。</summary>
+    /// <summary>Link type.</summary>
     public enum TargetLinkType
     {
         Monolithic,
         Modular,
     }
 
-    /// <summary>目标构建环境。</summary>
+    /// <summary>Target build environment.</summary>
     public enum TargetBuildEnvironment
     {
         Shared,
         Exclusive,
     }
 
-    /// <summary>平台类别（Utils.GetPlatformsInClass 参数）。</summary>
+    /// <summary>Platform class (parameter of Utils.GetPlatformsInClass).</summary>
     public enum UnrealPlatformClass
     {
         All,
@@ -229,7 +235,7 @@ namespace UnrealBuildTool
         Editor,
     }
 
-    /// <summary>PhysX 库模式。</summary>
+    /// <summary>PhysX library mode.</summary>
     public enum PhysXLibraryMode
     {
         PhysX3,
@@ -237,19 +243,19 @@ namespace UnrealBuildTool
         Disabled,
     }
 
-    /// <summary>PhysXLibraryMode 后缀扩展（真实 UBT 中为扩展方法）。</summary>
+    /// <summary>PhysXLibraryMode suffix extension (an extension method in real UBT).</summary>
     public static class PhysXLibraryModeExtensions
     {
         public static string AsSuffix(this PhysXLibraryMode mode) => "";
     }
 
-    /// <summary>引擎级静态信息（RenderCore 等 Build.cs 引用 Unreal.EngineDirectory）。</summary>
+    /// <summary>Engine-level static info (Build.cs files such as RenderCore reference Unreal.EngineDirectory).</summary>
     public static class Unreal
     {
         public static string EngineDirectory = "";
     }
 
-    /// <summary>构建宿主平台信息（宽松版）。</summary>
+    /// <summary>Build host platform info (lenient version).</summary>
     public class BuildHostPlatform
     {
         public static BuildHostPlatform Current { get; } = new();
@@ -259,7 +265,7 @@ namespace UnrealBuildTool
         public TargetType Type => TargetType.Editor;
     }
 
-    /// <summary>UBT 日志（宽松版：只吞参数）。</summary>
+    /// <summary>UBT log (lenient version: swallows arguments).</summary>
     public static class Log
     {
         public static void TraceInformation(string format, params object?[] args)
@@ -291,7 +297,7 @@ namespace UnrealBuildTool
         }
     }
 
-    /// <summary>UBT 规则编译异常：Build.cs 中可能 throw，仅需可构造。</summary>
+    /// <summary>UBT rule compile exception: Build.cs may throw this; only needs to be constructible.</summary>
     public class BuildException : Exception
     {
         public BuildException()
@@ -319,7 +325,7 @@ namespace UnrealBuildTool
         }
     }
 
-    /// <summary>UBT 工具方法（Build.cs 常用静态帮助器的宽松版：直接透传输入）。</summary>
+    /// <summary>UBT utility methods (lenient version of commonly-used static helpers in Build.cs: passes input through).</summary>
     public static class Utils
     {
         public static string MakePathRelativeTo(string path, string directory) => path;
@@ -331,7 +337,7 @@ namespace UnrealBuildTool
         public static string[] GetPlatformsInClass(UnrealPlatformClass platformClass) => [];
     }
 
-    /// <summary>平台支持标注：Build.cs 顶层 [SupportedPlatforms(...)]（真实用法为字符串或枚举值，宽松收下）。</summary>
+    /// <summary>Platform support attribute: top-level [SupportedPlatforms(...)] on Build.cs (real usage takes strings or enum values; lenient version accepts both).</summary>
     [AttributeUsage(AttributeTargets.All, AllowMultiple = true)]
     public class SupportedPlatformsAttribute : Attribute
     {
@@ -341,9 +347,11 @@ namespace UnrealBuildTool
     }
 
     /// <summary>
-    /// 动态兜底对象：一切成员访问 / 方法调用 / 索引 / 转换都成功并返回宽松默认值。
-    /// 数据收集视角下，未知成员的真实值并不重要，重要的是不让 Build.cs 执行中断。
-    /// 静态隐式转换运算符兜住 DLR 不走 TryConvert 的转换路径（bool / string / int / 比较 / 取反）。
+    /// Dynamic fallback object: every member access / method call / index / conversion
+    /// succeeds and returns a lenient default. From the data-collection perspective,
+    /// the true value of an unknown member does not matter; the key is to not let
+    /// Build.cs execution abort. Static implicit conversion operators cover the DLR
+    /// paths that bypass TryConvert (bool / string / int / comparison / negation).
     /// </summary>
     public class DynamicStubObject : DynamicObject, System.Collections.IEnumerable
     {
@@ -394,7 +402,7 @@ namespace UnrealBuildTool
             return true;
         }
 
-        /// <summary>按期望类型给宽松默认值；未知引用类型给可继续链式访问的动态存根。</summary>
+        /// <summary>Returns a lenient default for the expected type; unknown reference types get a chainable dynamic stub.</summary>
         internal static object? StubValue(Type expected)
         {
             if (expected == typeof(void))
@@ -414,8 +422,9 @@ namespace UnrealBuildTool
     }
 
     /// <summary>
-    /// 平台值包装：dynamic 派发找不到扩展方法，IsInGroup 必须是实例方法；
-    /// 隐式转换保证 == / != / ToString 等与真实枚举互通。
+    /// Platform value wrapper: dynamic dispatch cannot find extension methods, so
+    /// IsInGroup must be an instance method. Implicit conversions ensure == / != /
+    /// ToString interoperate with the real enum.
     /// </summary>
     public class UnrealPlatformValue : DynamicStubObject
     {
@@ -441,7 +450,7 @@ namespace UnrealBuildTool
         public override int GetHashCode() => (int)_value;
     }
 
-    /// <summary>Windows 平台设置存根：高频成员给真实类型值，未知成员仍走动态兜底。</summary>
+    /// <summary>Windows platform settings stub: high-frequency members get real-typed values; unknown members still fall back to dynamic.</summary>
     public class WindowsPlatformRules : DynamicStubObject
     {
         public string WindowsSdkVersion { get; set; } = "10.0.0.0";
@@ -458,14 +467,14 @@ namespace UnrealBuildTool
     }
 
     /// <summary>
-    /// 目标规则存根：Build.cs 通过构造参数只读访问目标信息。
-    /// 已知常用成员给出真实值；其余一切成员经 DynamicStubObject 兜底。
-    /// TargetType 结构与真实 UBT 一致：命名空间级枚举 + 本类内嵌静态别名类
-    /// （Build.cs 同时存在 TargetRules.TargetType.Server 与裸名 TargetType.Editor 两种用法）。
+    /// Target rules stub: Build.cs accesses target info read-only via the constructor parameter.
+    /// Known commonly-used members return real values; everything else falls back through DynamicStubObject.
+    /// TargetType mirrors real UBT structure: namespace-level enum + nested static alias class
+    /// (Build.cs uses both TargetRules.TargetType.Server and the bare name TargetType.Editor).
     /// </summary>
     public class TargetRules : DynamicStubObject
     {
-        /// <summary>静态别名类：使 TargetRules.TargetType.Server 这类限定用法可绑定。</summary>
+        /// <summary>Static alias class: enables qualified usage like TargetRules.TargetType.Server to bind.</summary>
         public static class TargetType
         {
             public const global::UnrealBuildTool.TargetType Game = global::UnrealBuildTool.TargetType.Game;
@@ -481,40 +490,40 @@ namespace UnrealBuildTool
 
         public global::UnrealBuildTool.TargetType Type { get; set; } = global::UnrealBuildTool.TargetType.Editor;
 
-        /// <summary>引擎目录。</summary>
+        /// <summary>Engine directory.</summary>
         public string EngineDir { get; set; } = "";
 
-        /// <summary>项目文件路径（无项目时为 null）。</summary>
+        /// <summary>Project file path (null when no project).</summary>
         public string? ProjectFile { get; set; }
 
         public bool bBuildEditor { get; set; } = true;
 
         public int VersionBuildNumber { get; set; }
 
-        /// <summary>引擎相对路径（真实 UBT 语义为相对路径；此处给引擎目录，字符串场景可用）。</summary>
+        /// <summary>Engine-relative path (real UBT semantics are relative; here we give the engine dir for string scenarios).</summary>
         public string RelativeEnginePath { get; set; } = "";
 
-        /// <summary>第三方源码目录。</summary>
+        /// <summary>Third-party source directory.</summary>
         public string UEThirdPartySourceDirectory { get; set; } = "";
 
-        /// <summary>第三方二进制目录。</summary>
+        /// <summary>Third-party binaries directory.</summary>
         public string UEThirdPartyBinariesDirectory { get; set; } = "";
 
-        /// <summary>目标体系结构。</summary>
+        /// <summary>Target architecture.</summary>
         public string Architecture { get; set; } = "";
 
         public bool bDebugBuildsActuallyUseDebugCRT { get; set; }
 
-        /// <summary>Windows 平台专属设置（高频成员真实类型，未知成员动态兜底）。</summary>
+        /// <summary>Windows platform-specific settings (high-frequency members real-typed, unknown members dynamically backed).</summary>
         public WindowsPlatformRules WindowsPlatform { get; } = new();
 
         public bool IsInPlatformGroup(UnrealPlatformGroup group) => false;
 
-        /// <summary>返回 dynamic：调用方可能继续链式调用真实 UBT 的扩展方法（如 AsSuffix）。</summary>
+        /// <summary>Returns dynamic: the caller may chain further calls to real UBT extension methods (e.g. AsSuffix).</summary>
         public dynamic GetPhysXLibraryMode(params object[] args) => new DynamicStubObject();
     }
 
-    /// <summary>只读目标规则（5.x 的 Build.cs 构造签名使用它）。</summary>
+    /// <summary>Read-only target rules (the Build.cs constructor signature in 5.x uses this).</summary>
     public class ReadOnlyTargetRules : TargetRules
     {
         public ReadOnlyTargetRules()
@@ -539,23 +548,23 @@ namespace UnrealBuildTool
 
         public bool bUseCheckedPhysXLibraries { get; set; }
 
-        /// <summary>编辑器目标语义下默认 true（CookedEditor / ApplicationCore 等模块的守卫条件）。</summary>
+        /// <summary>Defaults to true under editor target semantics (guard condition for CookedEditor / ApplicationCore, etc.).</summary>
         public bool bCompileAgainstEngine { get; set; } = true;
 
         public bool bCompileAgainstApplicationCore { get; set; } = true;
     }
 
-    /// <summary>UnrealTargetPlatform 分组扩展（真实 UBT 中为扩展方法，Build.cs 直接调用）。</summary>
+    /// <summary>UnrealTargetPlatform group extensions (extension methods in real UBT; Build.cs calls them directly).</summary>
     public static class UnrealTargetPlatformExtensions
     {
         public static bool IsInGroup(this UnrealTargetPlatform platform, UnrealPlatformGroup group) => false;
     }
 
     /// <summary>
-    /// 模块规则存根：*.Build.cs 的基类。
+    /// Module rules stub: the base class of *.Build.cs.
     /// <para>
-    /// PCHUsageMode / PackageOverrideType / PrecompileTargetsType 与真实 UBT 一致嵌套在本类内
-    /// （Build.cs 存在 ModuleRules.PCHUsageMode 这样的限定用法）。
+    /// PCHUsageMode / PackageOverrideType / PrecompileTargetsType mirror real UBT by being nested in this class
+    /// (Build.cs uses qualified forms like ModuleRules.PCHUsageMode).
     /// </para>
     /// </summary>
     public abstract class ModuleRules
@@ -597,7 +606,7 @@ namespace UnrealBuildTool
             VisibileForDll,
         }
 
-        /// <summary>Apple 框架依赖（宽松版：只收条目）。</summary>
+        /// <summary>Apple framework dependency (lenient version: only collects entries).</summary>
         public class Framework
         {
             public Framework(params object[] args)
@@ -605,7 +614,7 @@ namespace UnrealBuildTool
             }
         }
 
-        /// <summary>打包附加资源（宽松版：只收条目）。</summary>
+        /// <summary>Packaged additional resource (lenient version: only collects entries).</summary>
         public class BundleResource
         {
             public BundleResource(params object[] args)
@@ -617,7 +626,7 @@ namespace UnrealBuildTool
             }
         }
 
-        /// <summary>类型库引用（宽松版：只收条目）。</summary>
+        /// <summary>Type library reference (lenient version: only collects entries).</summary>
         public class TypeLibrary
         {
             public TypeLibrary(params object[] args)
@@ -625,7 +634,7 @@ namespace UnrealBuildTool
             }
         }
 
-        /// <summary>运行时依赖列表（宽松版：只收条目，不做任何处理）。</summary>
+        /// <summary>Runtime dependency list (lenient version: only collects entries, does no processing).</summary>
         public class RuntimeDependencyList
         {
             public void Add(string path)
@@ -645,7 +654,7 @@ namespace UnrealBuildTool
             }
         }
 
-        /// <summary>Receipt 属性列表（宽松版：只收条目）。</summary>
+        /// <summary>Receipt property list (lenient version: only collects entries).</summary>
         public class ReceiptPropertyList
         {
             public void Add(string key)
@@ -659,22 +668,22 @@ namespace UnrealBuildTool
 
         protected ModuleRules(object target)
         {
-            // 参数用 object：Build.cs 的 base(Target) 在构造初始化器里不允许动态派发（CS1975），
-            // object 可以静态绑定 dynamic 实参；运行时真实对象就是 ReadOnlyTargetRules。
+            // Parameter is object: Build.cs base(Target) in a constructor initializer forbids dynamic dispatch (CS1975);
+            // object statically binds to a dynamic argument; the runtime real object is ReadOnlyTargetRules.
             Target = target as ReadOnlyTargetRules ?? new ReadOnlyTargetRules();
-            Name = Target.GetType().Name; // 占位：真实模块名由扫描器按目录名覆盖
+            Name = Target.GetType().Name; // Placeholder: the real module name is overwritten by the scanner per directory name
         }
 
-        /// <summary>目标规则（只读）。</summary>
+        /// <summary>Target rules (read-only).</summary>
         public ReadOnlyTargetRules Target { get; }
 
-        /// <summary>模块名（多数 Build.cs 不显式赋值，扫描器以 .Build.cs 文件名推断）。</summary>
+        /// <summary>Module name (most Build.cs files do not assign it explicitly; the scanner infers it from the .Build.cs file name).</summary>
         public string Name { get; set; }
 
-        /// <summary>模块目录（规则编译器按 .Build.cs 所在目录填入）。</summary>
+        /// <summary>Module directory (the rule compiler fills it from the .Build.cs directory).</summary>
         public string ModuleDirectory { get; set; } = "";
 
-        /// <summary>模块类型（引擎模块 / 第三方 External）。</summary>
+        /// <summary>Module type (engine module / third-party External).</summary>
         public ModuleType Type { get; set; } = ModuleType.CPlusPlus;
 
         public PCHUsageMode PCHUsage { get; set; } = PCHUsageMode.UseExplicitOrSharedPCHs;
@@ -703,13 +712,13 @@ namespace UnrealBuildTool
 
         public string ShortName { get; set; } = "";
 
-        // ---- include 路径 ----
+        // ---- include paths ----
         public List<string> PublicIncludePaths { get; } = [];
         public List<string> PrivateIncludePaths { get; } = [];
         public List<string> PublicSystemIncludePaths { get; } = [];
         public List<string> PrivateSystemIncludePaths { get; } = [];
 
-        // ---- 模块依赖 ----
+        // ---- module dependencies ----
         public List<string> PublicDependencyModuleNames { get; } = [];
         public List<string> PrivateDependencyModuleNames { get; } = [];
         public List<string> PublicIncludePathModuleNames { get; } = [];
@@ -717,7 +726,7 @@ namespace UnrealBuildTool
         public List<string> DynamicallyLoadedModuleNames { get; } = [];
         public List<string> CircularlyReferencedDependentModules { get; } = [];
 
-        // ---- 定义与第三方库 ----
+        // ---- defines and third-party libs ----
         public List<string> PublicDefinitions { get; } = [];
         public List<string> PrivateDefinitions { get; } = [];
         public List<string> PublicAdditionalLibraries { get; } = [];
@@ -734,7 +743,7 @@ namespace UnrealBuildTool
         public List<BundleResource> AdditionalBundleResources { get; } = [];
         public List<TypeLibrary> TypeLibraries { get; } = [];
 
-        // ---- 常见开关（按测试反馈持续补齐）----
+        // ---- common switches (continuously added per test feedback) ----
         public bool bUsePrecompiled { get; set; }
         public bool bTreatAsEngineModule { get; set; }
         public bool bEnableUndefinedIdentifierWarnings { get; set; }
@@ -750,10 +759,10 @@ namespace UnrealBuildTool
         public string? SharedPCHHeaderFile { get; set; }
         public List<string> AllowedRestrictedFolders { get; } = [];
 
-        /// <summary>引擎目录（裸名字使用的宽松别名，取自目标规则）。</summary>
+        /// <summary>Engine directory (lenient alias used by bare names, sourced from the target rules).</summary>
         public string EngineDirectory => Target.EngineDir;
 
-        /// <summary>AutoSDK 目录（裸名字使用的宽松别名）。</summary>
+        /// <summary>AutoSDK directory (lenient alias used by bare names).</summary>
         public string AutoSdkDirectory => "";
 
         public bool IsVcPackageSupported { get; set; }
@@ -762,17 +771,17 @@ namespace UnrealBuildTool
         {
         }
 
-        /// <summary>真实 UBT 签名：把引擎第三方模块加入私有静态依赖（宽松版：只收参数）。</summary>
+        /// <summary>Real UBT signature: adds engine third-party modules to private static dependencies (lenient version: only collects arguments).</summary>
         public void AddEngineThirdPartyPrivateStaticDependencies(ReadOnlyTargetRules target, params string[] moduleNames)
         {
         }
 
-        /// <summary>无 Target 变体（个别 Build.cs 直接传模块名）。</summary>
+        /// <summary>Target-less variant (some Build.cs pass module names directly).</summary>
         public void AddEngineThirdPartyPrivateStaticDependencies(params string[] moduleNames)
         {
         }
 
-        /// <summary>真实 UBT 签名：物理支持模块的公共设置（宽松版：空操作）。</summary>
+        /// <summary>Real UBT signature: public settings for physics-support modules (lenient version: no-op).</summary>
         public void SetupModulePhysicsSupport(ReadOnlyTargetRules target)
         {
         }

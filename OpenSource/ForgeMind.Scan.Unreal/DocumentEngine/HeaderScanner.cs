@@ -6,36 +6,36 @@ using System.Text.RegularExpressions;
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// C++ 头文件扫描器：提取 UE 反射类型与成员（正则版，后续可按需增强为完整词法分析）。
+/// C++ header scanner: extracts UE reflection types and members (regex-based; can be upgraded to full lexical analysis later).
 /// <para>
-/// 提取内容：UCLASS / USTRUCT / UENUM / UINTERFACE / UDELEGATE（含 Specifiers 与 Metadata）、
-/// 继承基类、UFUNCTION（含参数名 / 类型 / 默认值——参数名即引脚名）、UPROPERTY。
-/// 只提取扫描事实，不做任何推导。
+/// Extracts: UCLASS / USTRUCT / UENUM / UINTERFACE / UDELEGATE (with Specifiers and Metadata),
+/// base classes, UFUNCTION (with param name / type / default — param name is the pin name), UPROPERTY.
+/// Only extracts scan facts, no inference.
 /// </para>
 /// </summary>
 internal static partial class HeaderScanner
 {
-    // ---- 正则（source-generated）----
+    // ---- Regex (source-generated) ----
 
     /// <summary>
-    /// 宏参数表内容（UCLASS/USTRUCT/UENUM/UINTERFACE/UFUNCTION/UPROPERTY 括号内的
-    /// 全部内容）。三处宏正则共用本常量——此前各自内联一份
-    /// <c>(?:[^()]|\([^()]*\))*</c>，"新增一种形态"要改三处才不漏（规范第 8 点收束为唯一入口）。
+    /// Macro parameter table content (everything inside parens of UCLASS/USTRUCT/UENUM/UINTERFACE/UFUNCTION/UPROPERTY).
+    /// Three macro regexes share this constant — previously each inlined its own copy of
+    /// <c>(?:[^()]|\([^()]*\))*</c>; "adding a new form" required changing all three places to not miss (Rule #8 converges to a single entry point).
     /// <para>
-    /// 关键：必须把<b>字符串字面量当整体消费</b>。纯括号配对的写法遇到
-    /// <c>DisplayName = "Load Stream Level (by Name)"</c> 这类<b>引号内含括号</b>的
-    /// meta 时，会在 <c>(by Name)</c> 处配对失败、退不出参数表，于是整个 UFUNCTION
-    /// 宏匹配不上、函数被整条漏扫。实测 5.0 索引因此缺 LoadStreamLevel /
-    /// UnloadStreamLevel / OpenLevel（三条 DisplayName 都带 "(by Name)"），
-    /// 而同文件 GetStreamingLevel / SetGamePaused 正常收录——DSL catalog 遂报
-    /// FM1002「扫描索引无同名引擎函数」。
-    /// 字符串分支排在最前优先于单字符分支；括号分支内部同样允许字符串，
-    /// 覆盖 <c>meta=(...)</c> 这一层嵌套（引擎头文件的实际深度）。
-    /// 单字符分支必须<b>排除引号</b>（<c>[^()"]</c>）：否则同一位置的引号既可被字符串
-    /// 分支整体消费、又可被单字符分支逐字消费，两条路径并存；一旦宏之后的部分匹配失败
-    /// （典型：<c>UENUM(meta=(ScriptName="..."))</c> 后跟的是 <c>namespace</c> 而不是
-    /// class/struct/enum），回溯呈指数级——实测在 EditorTutorial.h 上直接把
-    /// TypeDeclRegex 卡死。排除引号后两条分支互斥，回溯消失，行为不变。
+    /// Key: must <b>consume string literals as a whole</b>. Pure paren-pairing approaches fail on
+    /// <c>DisplayName = "Load Stream Level (by Name)"</c> style metas with <b>parens inside quotes</b> —
+    /// at <c>(by Name)</c> pairing fails and the parameter table never exits, so the entire UFUNCTION
+    /// macro never matches and the function is entirely missed. Verified: 5.0 index therefore lacks LoadStreamLevel /
+    /// UnloadStreamLevel / OpenLevel (all three DisplayNames carry "(by Name)"),
+    /// while same-file GetStreamingLevel / SetGamePaused are normally indexed — DSL catalog then reports
+    /// FM1002 "no matching engine function name in scan index".
+    /// String branch is first, priority over single-char branch; paren branch also allows strings inside,
+    /// covering the <c>meta=(...)</c> nesting level (actual depth in engine headers).
+    /// Single-char branch must <b>exclude quotes</b> (<c>[^()"]</c>): otherwise the same quote can be either fully
+    /// consumed by the string branch or char-by-char by the single-char branch, two paths coexisting; once post-macro matching fails
+    /// (typical: <c>UENUM(meta=(ScriptName="..."))</c> is followed by <c>namespace</c> not
+    /// class/struct/enum), backtracking goes exponential — verified it hangs TypeDeclRegex on EditorTutorial.h.
+    /// Excluding quotes makes the two branches mutually exclusive, backtracking disappears, behavior unchanged.
     /// </para>
     /// </summary>
     private const string MacroSpecPattern = @"""[^""]*""|[^()""]|\((?:""[^""]*""|[^()""])*\)";
@@ -46,7 +46,7 @@ internal static partial class HeaderScanner
     [GeneratedRegex(@"//[^\n]*")]
     private static partial Regex LineCommentRegex();
 
-    /// <summary>UCLASS / USTRUCT / UENUM / UINTERFACE 宏 + 紧随的类型声明。</summary>
+    /// <summary>UCLASS / USTRUCT / UENUM / UINTERFACE macro + immediately following type declaration.</summary>
     [GeneratedRegex(
         @"\b(?<macro>UCLASS|USTRUCT|UENUM|UINTERFACE)\s*\((?<spec>(?>(?:" + MacroSpecPattern + @")*))\)" +
         @"\s*(?:class|struct|enum)\s+(?:[A-Z][A-Z_0-9]*\s+)*(?:(?:class|struct)\s+)?(?<name>\w+)(?<base>[^;{]*)[;{]",
@@ -54,38 +54,38 @@ internal static partial class HeaderScanner
     private static partial Regex TypeDeclRegex();
 
     /// <summary>
-    /// 委托声明宏 DECLARE_*DELEGATE*（非 _RetVal 变体）：委托名是<b>第一个</b>宏参数。
+    /// Delegate declaration macro DECLARE_*DELEGATE* (non-_RetVal variant): delegate name is the <b>first</b> macro parameter.
     /// <para>
-    /// 此前一律按"第二个宏参数"取名：带参变体
-    /// （<c>DECLARE_DELEGATE_TwoParams(FExtensionHandlerDelegateInternal, AActor*, FName)</c>）
-    /// 的第二个宏参数是<b>形参类型</b>，于是索引里塞进名为 AActor / FName 的伪委托条目
-    /// （无基类、无成员）。实测 5.0 索引里 "AActor" 共 43 条，前 42 条都是这类伪条目，
-    /// 真身（baseClasses=["UObject"]）排在第 39 ——同名查找被伪条目遮蔽，派生链判定被掐断。
-    /// _RetVal 变体的第一个宏参数是返回类型，委托名仍是第二个，走
-    /// <see cref="DelegateRetValDeclRegex"/>（用否定前瞻把它从本正则里排除）。
+    /// Previously always used the "second macro parameter" for naming: parameterized variants
+    /// (<c>DECLARE_DELEGATE_TwoParams(FExtensionHandlerDelegateInternal, AActor*, FName)</c>)
+    /// have the second macro parameter as the <b>parameter type</b>, so the index got fake delegate entries
+    /// named AActor / FName (no base class, no members). Verified: 5.0 index has "AAActor" 43 times, first 42 are such fake entries,
+    /// the real one (baseClasses=["UObject"]) at #39 — same-name lookup is shadowed by fake entries, derivation chain judgment blocked.
+    /// _RetVal variant has return type as first macro parameter; delegate name is still the second, handled by
+    /// <see cref="DelegateRetValDeclRegex"/> (excluded from this regex via negative lookahead).
     /// </para>
     /// </summary>
     [GeneratedRegex(@"\bDECLARE_(?!\w*_RetVal)\w*DELEGATE\w*\s*\(\s*(?<name>\w+)")]
     private static partial Regex DelegateDeclRegex();
 
-    /// <summary>DECLARE_*DELEGATE*_RetVal* 变体：第一个宏参数是返回类型，委托名是第二个宏参数。</summary>
+    /// <summary>DECLARE_*DELEGATE*_RetVal* variant: first macro parameter is return type, delegate name is second macro parameter.</summary>
     [GeneratedRegex(@"\bDECLARE_\w*DELEGATE\w*_RetVal\w*\s*\(\s*[^,()<>]+\s*,\s*(?<name>\w+)")]
     private static partial Regex DelegateRetValDeclRegex();
 
     /// <summary>
-    /// UFUNCTION 宏 + 紧随的函数声明（签名到分号 **或** 函数体左花括号）。
+    /// UFUNCTION macro + immediately following function declaration (signature up to semicolon **or** opening brace of function body).
     /// <para>
-    /// 收尾字符集必须是 <c>[;{]</c>：此前只认 <c>;</c>，而 body 的取字符分支
-    /// <c>[^;{}]</c> 排除了 <c>{</c>——**头文件内联定义**的 UFUNCTION
-    /// （<c>UFUNCTION(...) void Foo(...){ ... }</c>）永远匹配不到，整条函数漏扫。
-    /// 实测 UE 5.0 SceneComponent.h:897-898 的
+    /// The closing character set must be <c>[;{]</c>: previously only <c>;</c> was recognized; the body char branch
+    /// <c>[^;{}]</c> excluded <c>{</c> — UFUNCTIONs with **inline definitions in headers**
+    /// (<c>UFUNCTION(...) void Foo(...){ ... }</c>) never matched, the entire function was missed.
+    /// Verified: UE 5.0 SceneComponent.h:897-898 has
     /// <c>UFUNCTION(BlueprintCallable, Category="Rendering") void SetVisibility(
     /// bool bNewVisibility, bool bPropagateToChildren=false){ ... }</c>
-    /// 即此形态：索引里 SetVisibility 只有 Datasmith / MovieScene / UMG /
-    /// VREditor 四条，SceneComponent 那条为 0（而该文件另有 91 条条目），
-    /// 于是 DSL catalog 报 FM1102「不存在函数 SetVisibility」。
-    /// 改成 <c>[;{]</c> 后两种形态都能收尾；随后 FunctionSignatureRegex 只取
-    /// 签名部分，尾部 <c>{</c> 不参与匹配。
+    /// which is this form: the index had only four SetVisibility entries from Datasmith / MovieScene / UMG /
+    /// VREditor; the SceneComponent one was 0 (while the file had 91 other entries).
+    /// The DSL catalog then reported FM1102 "function SetVisibility does not exist".
+    /// Changing to <c>[;{]</c> covers both forms; FunctionSignatureRegex then takes only
+    /// the signature part; the trailing <c>{</c> does not participate in the match.
     /// </para>
     /// </summary>
     [GeneratedRegex(
@@ -94,7 +94,7 @@ internal static partial class HeaderScanner
         RegexOptions.Singleline)]
     private static partial Regex FunctionDeclRegex();
 
-    /// <summary>UPROPERTY 宏 + 紧随的属性声明（到分号）。</summary>
+    /// <summary>UPROPERTY macro + immediately following property declaration (up to semicolon).</summary>
     [GeneratedRegex(
         @"\bUPROPERTY\s*\((?<spec>(?:" + MacroSpecPattern + @")*)\)" +
         @"(?<body>(?:[^;{}]|\([^()]*\))*?;)",
@@ -102,53 +102,54 @@ internal static partial class HeaderScanner
     private static partial Regex PropertyDeclRegex();
 
     /// <summary>
-    /// 函数签名：修饰符 + 返回类型 + 名字 + 参数表。
+    /// Function signature: modifiers + return type + name + parameter list.
     /// <para>
-    /// 参数表必须按<b>括号配对</b>取到收尾的右括号——此前用 <c>[^)]*</c> 会停在
-    /// 第一个右括号上：默认值里只要出现圆括号（<c>FString(TEXT("Hello"))</c>、
-    /// <c>FLinearColor(0.0, 0.66, 1.0)</c>），参数表就在此截断，后续参数全部丢失
-    /// （PrintString 曾只剩 WorldContextObject / InString 两个参数）。
-    /// 这里用"非括号字符 | 成对括号"的交替式（支持三层嵌套，覆盖引擎头文件实际深度），
-    /// 两个分支首字符集互斥，无回溯爆炸风险。
+    /// Parameter list must be taken via <b>paren pairing</b> up to the closing right paren — previously used <c>[^)]*</c> which stopped
+    /// at the first right paren: as long as a default value contains parens (<c>FString(TEXT("Hello"))</c>,
+    /// <c>FLinearColor(0.0, 0.66, 1.0)</c>), the parameter list was truncated there, all subsequent params lost
+    /// (PrintString once only had WorldContextObject / InString).
+    /// Using a "non-paren char | paired parens" alternation (supports 3-level nesting, covering actual engine header depth),
+    /// the two branch initial character sets are mutually exclusive, no backtracking explosion risk.
     /// </para>
     /// </summary>
     [GeneratedRegex(@"(?<static>\bstatic\s+)?(?:virtual\s+)?(?:[A-Z][A-Z_0-9]*\s+)?(?<ret>[\w:<>&*\s]+?)\s+(?<name>\w+)\s*\((?<params>(?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*)\)")]
     private static partial Regex FunctionSignatureRegex();
 
-    /// <summary>属性声明：类型 + 名字（+ 可选位域 / 初始化）。</summary>
+    /// <summary>Property declaration: type + name (+ optional bitfield / initializer).</summary>
     [GeneratedRegex(@"^(?<type>[\w:<>&*\s]+?)\s+(?<name>\w+)\s*(?::\s*\d+)?(?:=[^;]*)?;?\s*$")]
     private static partial Regex PropertySignatureRegex();
 
-    /// <summary>扫描目录下全部 .h / .hpp 头文件。</summary>
+    /// <summary>Scan all .h / .hpp headers in a directory.</summary>
     public static List<UeClassInfo> ScanAllHeaders(string directory, ScopeLevel scope)
     {
         var classes = new List<UeClassInfo>();
         if (!Directory.Exists(directory))
             return classes;
 
-        // 单次目录遍历（此前 *.h / *.hpp 各做一次 AllDirectories 递归，
-        // 文件系统开销翻倍），一次收集完再解析。
+        // Single directory traversal (previously *.h / *.hpp each did their own AllDirectories recursion,
+        // doubling filesystem cost). Collect all at once, then parse.
         List<string> files = Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories)
             .Where(static file =>
                 file.EndsWith(".h", StringComparison.OrdinalIgnoreCase) ||
                 file.EndsWith(".hpp", StringComparison.OrdinalIgnoreCase))
-            // 稳定排序：.h 在前、.hpp 在后，组内保持枚举顺序——与原"先 *.h 再 *.hpp"
-            // 的产出顺序完全一致（同名类的候选顺序不变）。
+        // Stable sort: .h first, .hpp after, within-group preserves enumeration order — identical
+        // output order to the old "first *.h then *.hpp" approach (candidate order for same-name classes unchanged).
             .OrderBy(static file => file.EndsWith(".hpp", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         if (files.Count == 0)
             return classes;
 
-        // 逐文件串行解析。曾改为 AsParallel 并行，但在个别模块上出现长尾停顿
-        // （整个模块迟迟不返回），先退回串行——瓶径在单文件解析成本，不在并发度。
+        // Per-file serial parse. Was changed to AsParallel parallel, but suffered long-tail stalls
+        // on certain modules (entire module slow to return). Reverted to serial — bottleneck is
+        // single-file parsing cost, not concurrency level.
         foreach (string file in files)
             ScanHeader(file, scope, classes);
 
         return classes;
     }
 
-    /// <summary>扫描单个头文件。</summary>
+    /// <summary>Scan a single header file.</summary>
     public static void ScanHeader(string filePath, ScopeLevel scope, List<UeClassInfo> output)
     {
         string text;
@@ -158,16 +159,16 @@ internal static partial class HeaderScanner
         }
         catch
         {
-            return; // 读取失败的头文件静默跳过（索引不因此中断）
+            return; // Read failed header silently skipped (index does not abort)
         }
 
-        // 预处理：去注释（块注释内容替换为空格但保留换行以维持行号；行注释直接删）
+        // Preprocessing: strip comments (block comments: content replaced with spaces but newlines preserved to maintain line numbers; line comments: removed entirely)
         text = BlockCommentRegex().Replace(text, static m => BlankOutKeepNewlines(m.Value));
         text = LineCommentRegex().Replace(text, string.Empty);
 
-        // 行号游标：按位置单调推进，整体成本 O(文件长度)。
-        // 此前每个匹配都从头数一遍换行（O(匹配数 × 文件长度)），
-        // 大头文件上呈平方增长——这是单版本扫描耗时的主要来源。
+        // Line number cursor: monotonically advances by position, total cost O(file length).
+        // Previously each match counted newlines from the start (O(match count × file length)),
+        // quadratic on large headers — this was the main cost of single-version scanning.
         int cursorIndex = 0;
         int cursorLine = 1;
 
@@ -175,7 +176,7 @@ internal static partial class HeaderScanner
         {
             if (index < cursorIndex)
             {
-                // 位置回退（换了一个匹配循环）：重置重来；一个文件内最多回退常数次
+                // Position rewind (switched to a different matching loop): reset to start; at most a constant number of rewinds per file
                 cursorIndex = 0;
                 cursorLine = 1;
             }
@@ -190,8 +191,8 @@ internal static partial class HeaderScanner
             return cursorLine;
         }
 
-        // 收集全部匹配（类型 / 委托 / 函数 / 属性），按出现位置排序后顺序处理，
-        // 成员归属 = 最近声明的宿主类型（C++ 成员总是位于宿主声明之后）
+        // Collect all matches (types / delegates / functions / properties), sort by occurrence position, process in order.
+        // Member ownership = most recently declared host type (C++ members always appear after host declaration)
         var entries = new List<(int Index, Action<UeClassInfo?> Apply, bool isHost)>();
 
         foreach (Match match in TypeDeclRegex().Matches(text))
@@ -223,8 +224,9 @@ internal static partial class HeaderScanner
             }, isHost: true));
         }
 
-        // 委托宏：普通变体（委托名 = 第一个宏参数）与 _RetVal 变体（= 第二个宏参数）
-        // 分开匹配，两条正则互斥（普通变体用否定前瞻排除 _RetVal）。
+        // Delegate macros: normal variant (delegate name = first macro param) and _RetVal variant
+        // (= second macro param) matched separately, two regexes mutually exclusive
+        // (normal variant uses negative lookahead to exclude _RetVal).
         foreach (Regex delegateRegex in new[] { DelegateDeclRegex(), DelegateRetValDeclRegex() })
         {
             foreach (Match match in delegateRegex.Matches(text))
@@ -292,7 +294,7 @@ internal static partial class HeaderScanner
             }, isHost: false));
         }
 
-        // 按位置顺序处理：类型成为当前宿主（加入 output）；成员挂到当前宿主
+        // Process in position order: type becomes current host (added to output); members attach to current host
         UeClassInfo? currentHost = null;
         foreach (var entry in entries.OrderBy(e => e.Index))
         {
@@ -308,16 +310,16 @@ internal static partial class HeaderScanner
         }
     }
 
-    // ---- 内部辅助 ----
+    // ---- Internal helpers ----
 
     private readonly record struct SignatureMatch(string Name, bool IsStatic, string? ReturnType, string Parameters);
 
     private static SignatureMatch? MatchFunctionSignature(string body)
     {
-        // body 以 UFUNCTION 宏后的换行 / 缩进开头：不裁掉的话正则从串首起匹配，
-        // 可选的 static 组匹配不上空位，"static" 被返回类型组（含 \s）吞掉——
-        // IsStatic 全部落 false，ret 也带上 "static" 前缀。Trim 后 static
-        // 位于串首，static / 返回类型各归各组。
+        // body starts with newline / indentation after UFUNCTION macro head: if not trimmed, the regex matching from
+        // string start can't find the optional static group at its empty position, so "static" gets swallowed by the
+        // return type group (which includes \s) — IsStatic always false, and ret carries the "static" prefix.
+        // After trimming, static is at string start, static / return type each land in their own group.
         Match match = FunctionSignatureRegex().Match(body.TrimStart());
         if (!match.Success)
             return null;
@@ -330,7 +332,7 @@ internal static partial class HeaderScanner
             match.Groups["ret"].Value.Trim(), match.Groups["params"].Value);
     }
 
-    /// <summary>解析参数表：按顶层逗号分段（考虑尖括号 / 圆括号 / 方括号嵌套），每段提取 类型 + 名字 + 默认值。</summary>
+    /// <summary>Parse parameter list: split by top-level commas (considering angle / round / square bracket nesting), extract type + name + default value per segment.</summary>
     private static List<UeParameterInfo> ParseParameters(string parameters)
     {
         var result = new List<UeParameterInfo>();
@@ -348,7 +350,7 @@ internal static partial class HeaderScanner
                 trimmed = trimmed[..eq].Trim();
             }
 
-            // 取最后一个标识符作参数名，其余为类型
+            // Take last identifier as parameter name, rest as type
             Match nameMatch = Regex.Match(trimmed, @"(?<name>[A-Za-z_]\w*)\s*$");
             if (!nameMatch.Success)
                 continue;
@@ -411,7 +413,7 @@ internal static partial class HeaderScanner
         return -1;
     }
 
-    /// <summary>把宏括号内容拆成 Specifier 列表与 Metadata 键值对（meta=(Key="Value")）。</summary>
+    /// <summary>Split macro bracket contents into Specifier list and Metadata key-value pairs (meta=(Key="Value")).</summary>
     private static void FillSpecifiers(string content, List<string> specifiers, Dictionary<string, string> metadata)
     {
         foreach (string segment in SplitTopLevel(content))
@@ -433,7 +435,7 @@ internal static partial class HeaderScanner
         }
     }
 
-    /// <summary>从继承子句提取基类名（扫出什么记什么，不做推导）。</summary>
+    /// <summary>Extract base class names from inheritance clause (record whatever is found, no inference).</summary>
     private static void FillBaseClasses(string baseClause, List<string> output)
     {
         string trimmed = baseClause.Trim();
@@ -444,7 +446,7 @@ internal static partial class HeaderScanner
         foreach (string segment in trimmed.Split(','))
         {
             string item = segment.Trim();
-            // 去 access 修饰符与 virtual
+            // Strip access modifier and virtual prefix
             item = Regex.Replace(item, @"^(public|protected|private)\s+", "");
             item = Regex.Replace(item, @"^virtual\s+", "");
             item = item.Trim();
@@ -454,9 +456,9 @@ internal static partial class HeaderScanner
     }
 
     /// <summary>
-    /// 把一段文本的非换行字符全部替换为空格（换行原样保留，以维持行号）。
-    /// 用于块注释的"清空但占位"——此前对每个注释都跑一次 Regex.Replace，
-    /// 引擎头文件里块注释动辄上百个，全是白花的开销。
+    /// Replace all non-newline characters in a text segment with spaces (newlines preserved to maintain line numbers).
+    /// Used for block comment "clear but occupy position" — previously ran Regex.Replace for each comment,
+    /// engine headers have hundreds of block comments, all wasted cost.
     /// </summary>
     private static string BlankOutKeepNewlines(string value)
     {

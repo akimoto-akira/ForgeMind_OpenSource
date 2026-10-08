@@ -24,7 +24,7 @@ Tok volání: klient `tools/call` → host identifikuje `ITool` → validace par
 ## 3. Bridge protokol (host ↔ adaptér enginu)
 
 - Transport: lokální TCP. Formát rámce = 4bajtový prefix délky + JSON obálka (`BridgeMessage`, viz `Bridge\BridgeMessage.cs` / `FrameCodec.cs`).
-- Objev a autentizace: adaptér čte `%USERPROFILE%\.forgemind\bridge.json` (obsahuje hostitele, port a pověření), dokončí připojení → handshake → smyčku zpráv.
+- Objev a autentizace: adaptér čte `%USERPROFILE%\.forgemind\bridge.json` (obsahuje host, port a pověření), dokončí připojení → handshake → smyčku zpráv.
 - Sémantika příkazů: požadavek obsahuje název příkazu a parametry. Server směruje příkaz do implementace adaptéru; odpověď obsahuje stavový kód, zprávu a data. Příkazy na straně enginu se provádějí v hlavním vlákně enginu (UE herní vlákno).
 - Životní cyklus: host začne naslouchat bridge při spuštění. Adaptér se při odpojení znovu připojuje s exponenciálním backoffem.
 

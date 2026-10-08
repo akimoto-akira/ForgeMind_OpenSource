@@ -27,6 +27,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "HAL/FileManager.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_Message.h"
 #include "K2Node_CallParentFunction.h"
 #include "K2Node_CallArrayFunction.h"
 #include "K2Node_ComponentBoundEvent.h"
@@ -606,42 +607,35 @@ namespace
 	 */
 	UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName, FString& OutReason)
 	{
+		// Single lookup entry point (ForgeMindBlueprintUtils): ubergraph pages,
+		// function graphs, macro graphs and interface implementation graphs. The
+		// last group matters here -- a blueprint that implements an interface
+		// already owns a graph per message, and it must be found, not created.
+		TArray<UEdGraph*> Graphs;
+		CollectTargetableGraphs(Blueprint, Graphs);
+
 		TArray<FString> Available;
-		auto Match = [&GraphName, &Available](const TArray<TObjectPtr<UEdGraph>>& Graphs) -> UEdGraph*
+		UEdGraph* Found = nullptr;
+		for (UEdGraph* Graph : Graphs)
 		{
-			for (UEdGraph* Graph : Graphs)
+			if (Graph == nullptr) { continue; }
+			Available.Add(Graph->GetName());
+			if (!GraphName.IsEmpty() && Graph->GetName() == GraphName)
 			{
-				if (Graph == nullptr) { continue; }
-				Available.Add(Graph->GetName());
-				if (!GraphName.IsEmpty() && Graph->GetName() == GraphName)
-				{
-					return Graph;
-				}
+				Found = Graph;
+				break;
 			}
-			return nullptr;
-		};
+		}
 
 		if (!GraphName.IsEmpty())
 		{
-			UEdGraph* Graph = Match(Blueprint->UbergraphPages);
-			if (Graph == nullptr) { Graph = Match(Blueprint->FunctionGraphs); }
-			// Macro graphs are valid node targets too (their tunnels accept
-			// logic nodes between entry and exit).
-			if (Graph == nullptr) { Graph = Match(Blueprint->MacroGraphs); }
-			if (Graph == nullptr)
+			if (Found == nullptr)
 			{
 				OutReason = FString::Printf(TEXT("No graph named '%s'; available graphs: %s"), *GraphName, *JoinStrings(Available, TEXT(", ")));
 			}
-			return Graph;
+			return Found;
 		}
-		for (UEdGraph* Graph : Blueprint->UbergraphPages)
-		{
-			if (Graph != nullptr)
-			{
-				return Graph;
-			}
-		}
-		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+		for (UEdGraph* Graph : Graphs)
 		{
 			if (Graph != nullptr)
 			{
@@ -860,6 +854,16 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleListBlueprintGraph(const T
 	for (const UEdGraph* Graph : Blueprint->MacroGraphs)
 	{
 		AppendGraph(Graph, TEXT("macro"));
+	}
+	// Interface implementation graphs: registered on ImplementedInterfaces[].Graphs
+	// only, so they never show up in the three loops above even though the blueprint
+	// already owns them (implemented messages must be found, not created).
+	for (auto& Desc : Blueprint->ImplementedInterfaces)
+	{
+		for (const UEdGraph* Graph : Desc.Graphs)
+		{
+			AppendGraph(Graph, TEXT("function"));
+		}
 	}
 
 	if (bHasGraphName && GraphEntries.Num() == 0)
@@ -1155,13 +1159,21 @@ const bool bCallParentFunction = Kind == TEXT("callparentfunction");
 // Level Actor literal reference (Blueprint "Create Reference to Actor" node,
 // UK2Node_Literal): name = Actor name placed in the current level.
 const bool bLevelLiteral = Kind == TEXT("levelliteral");
-if (!Kind.IsEmpty() && !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && Kind != TEXT("function") && Kind != TEXT("event"))
+// Interface message call node (UK2Node_Message): calls a function on an
+// interface-typed object. 'class' = interface generated class path, 'name' =
+// message function name. The node's self pin is PC_Object (engine internally
+// casts to interface at compile time via ExpandNode).
+const bool bMessage = Kind == TEXT("message");
+if (!Kind.IsEmpty() && !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && Kind != TEXT("function") && Kind != TEXT("event"))
 {
 Result->SetBoolField(TEXT("added"), false);
-Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown kind '%s'; supported kinds: function (default), getter, setter, macro, customevent, inputAxis, inputAction, subsystem, self, callDelegate, addDelegate, removeDelegate, componentBoundEvent, temporaryVariable, assignment, callParentFunction, levelLiteral"), *Kind));
+Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown kind '%s'; supported kinds: function (default), getter, setter, macro, customevent, inputAxis, inputAction, subsystem, self, callDelegate, addDelegate, removeDelegate, componentBoundEvent, temporaryVariable, assignment, callParentFunction, levelLiteral, message"), *Kind));
 return Result;
 }
-const bool bFunctionKind = !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral;
+const bool bFunctionKind = !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage;
+// Set when a function-call target resolves to a UInterface — create UK2Node_Message
+// instead of K2Node_CallFunction (DSL d.ApplyDamage(5) where d is interface-typed).
+bool bInterfaceMessage = false;
 
 // Native flow nodes (Branch, ...) are resolved by name alone - they are
 // not UFunctions, so the reflection lookup below must not run for them.
@@ -1202,6 +1214,15 @@ bool bExternalMember = false;
 				return Result;
 			}
 			LookupClass = ExtraClass;
+			// Interface message call disguised as a function call (DSL d.ApplyDamage(5)
+			// where d is interface-typed): LookupClass is a UInterface — create a
+			// UK2Node_Message instead of K2Node_CallFunction (message self pin is
+			// PC_Object, CallFunction would create a self-context pin and fail to
+			// compile against the interface signature).
+			if (LookupClass->IsChildOf(UInterface::StaticClass()))
+			{
+				bInterfaceMessage = true;
+			}
 		}
 		else
 		{
@@ -1288,7 +1309,67 @@ bool bExternalMember = false;
 	}
 
 	UEdGraphNode* NewNode = nullptr;
-	if (bGetter || bSetter)
+	if (bMessage || bInterfaceMessage)
+	{
+		// Interface message call: 'class' = interface generated class path,
+		// 'name' = message function name. Resolve the interface class, find
+		// the message UFunction, then create a UK2Node_Message (inherits
+		// UK2Node_CallFunction — same setup sequence, but CreateSelfPin
+		// produces a PC_Object pin instead of a self-context pin).
+		UClass* InterfaceClass = nullptr;
+		const UFunction* MessageFunction = nullptr;
+		if (bInterfaceMessage)
+		{
+			// Function-call branch already resolved LookupClass (a UInterface)
+			// and Function — reuse them directly (no payload re-read needed).
+			InterfaceClass = const_cast<UClass*>(LookupClass);
+			MessageFunction = Function;
+		}
+		else
+		{
+			FString InterfaceClassPath;
+			if (!Payload->TryGetStringField(TEXT("class"), InterfaceClassPath) || InterfaceClassPath.IsEmpty())
+			{
+				Result->SetBoolField(TEXT("added"), false);
+				Result->SetStringField(TEXT("reason"), TEXT("kind 'message' requires 'class' (interface generated class path, e.g. /Game/Tests/IDamageable.IDamageable_C)"));
+				return Result;
+			}
+			InterfaceClass = LoadObject<UClass>(nullptr, *InterfaceClassPath);
+			if (InterfaceClass == nullptr)
+			{
+				// Try ResolveBlueprint -> GeneratedClass for asset paths without _C suffix.
+				UBlueprint* InterfaceBP = ResolveBlueprint(InterfaceClassPath);
+				if (InterfaceBP != nullptr)
+				{
+					InterfaceClass = InterfaceBP->GeneratedClass;
+				}
+			}
+			if (InterfaceClass == nullptr)
+			{
+				Result->SetBoolField(TEXT("added"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("No interface class found at '%s'"), *InterfaceClassPath));
+				return Result;
+			}
+			MessageFunction = InterfaceClass->FindFunctionByName(FName(*MemberName));
+			if (MessageFunction == nullptr)
+			{
+				Result->SetBoolField(TEXT("added"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Interface '%s' has no message named '%s'"), *InterfaceClass->GetName(), *MemberName));
+				return Result;
+			}
+		}
+		UK2Node_Message* MessageNode = NewObject<UK2Node_Message>(Graph);
+		MessageNode->CreateNewGuid();
+		MessageNode->PostPlacedNewNode();
+		MessageNode->SetFromFunction(MessageFunction);
+		MessageNode->SetFlags(RF_Transactional);
+		MessageNode->AllocateDefaultPins();
+		MessageNode->NodePosX = PosX;
+		MessageNode->NodePosY = PosY;
+		Graph->AddNode(MessageNode);
+		NewNode = MessageNode;
+	}
+	else if (bGetter || bSetter)
 	{
 		// Variable access node: the skeleton class carries every visible
 		// member variable (own + inherited), which is exactly the self
@@ -2518,6 +2599,19 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectBlueprintPins(const
 	}
 	if (FromPin == nullptr)
 	{
+		// DisplayName fallback for UserDefinedStruct member pins
+		// (see set_pin_default_value for full rationale).
+		for (UEdGraphPin* CandidatePin : FromNode->Pins)
+		{
+			if (CandidatePin && CandidatePin->GetDisplayName().ToString() == FromPinName)
+			{
+				FromPin = CandidatePin;
+				break;
+			}
+		}
+	}
+	if (FromPin == nullptr)
+	{
 		Result->SetBoolField(TEXT("connected"), false);
 		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Node '%s' has no pin named '%s'; its pins are: %s"), *FromNode->GetNodeTitle(ENodeTitleType::FullTitle).ToString(), *FromPinName, *PinNamesOf(FromNode)));
 		return Result;
@@ -2539,6 +2633,19 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectBlueprintPins(const
 	if (ToPin == nullptr)
 	{
 		ToPin = FindEnumCasePin(ToNode, ToPinName);
+	}
+	if (ToPin == nullptr)
+	{
+		// DisplayName fallback for UserDefinedStruct member pins
+		// (see set_pin_default_value for full rationale).
+		for (UEdGraphPin* CandidatePin : ToNode->Pins)
+		{
+			if (CandidatePin && CandidatePin->GetDisplayName().ToString() == ToPinName)
+			{
+				ToPin = CandidatePin;
+				break;
+			}
+		}
 	}
 	if (ToPin == nullptr)
 	{
@@ -2816,6 +2923,23 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleSetPinDefaultValue(const T
 	{
 		// Fallback: try positional resolution for __argN / __target names
 		Pin = FindPinByIndex(Node, PinName);
+	}
+	if (Pin == nullptr)
+	{
+		// Fallback: UserDefinedStruct member pins carry an internal name with
+		// a GUID suffix (e.g. "Cur_2A4B6C8D...") assigned by
+		// FMemberVariableNameHelper::Generate, while the user-facing name
+		// lives in the pin's DisplayName. Match by DisplayName so callers
+		// can use the friendly name (e.g. "Cur") directly. This affects
+		// K2Node_MakeStruct / BreakStruct pins for user-defined structs.
+		for (UEdGraphPin* CandidatePin : Node->Pins)
+		{
+			if (CandidatePin && CandidatePin->GetDisplayName().ToString() == PinName)
+			{
+				Pin = CandidatePin;
+				break;
+			}
+		}
 	}
 	if (Pin == nullptr)
 	{

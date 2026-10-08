@@ -24,7 +24,7 @@ Flux d'appel : client `tools/call` → l'hôte identifie `ITool` → validation 
 ## 3. Protocole bridge (hôte ↔ adaptateur moteur)
 
 - Transport : TCP local. Format de trame = préfixe de longueur 4 octets + enveloppe JSON (`BridgeMessage`, voir `Bridge\BridgeMessage.cs` / `FrameCodec.cs`).
-- Découverte et authentification : l'adaptateur lit `%USERPROFILE%\.forgemind\bridge.json` (contient hôte, port et informations d'identification), effectue connexion → handshake → boucle de messages.
+- Découverte et authentification : l'adaptateur lit `%USERPROFILE%\.forgemind\bridge.json` (contient hôte, port et informations d'identification), effectue la connexion → la poignée de main → la boucle de messages.
 - Sémantique des commandes : une requête contient le nom de la commande et ses paramètres. Le serveur route la commande vers l'implémentation de l'adaptateur ; la réponse contient le code d'état, le message et les données. Les commandes côté moteur s'exécutent dans le thread principal du moteur (thread de jeu UE).
 - Cycle de vie : l'hôte commence à écouter le bridge au démarrage. L'adaptateur se reconnecte avec backoff exponentiel en cas de déconnexion.
 

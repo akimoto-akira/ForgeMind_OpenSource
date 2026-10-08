@@ -24,13 +24,13 @@ public enum UPropertyValueKind
     Object,
     Struct,
     Array,
-    /// <summary>FSoftObjectPath / FSoftClassPath（SoftObject/SoftClass/AssetObject/AssetClass Property）。</summary>
+    /// <summary>FSoftObjectPath / FSoftClassPath (SoftObject/SoftClass/AssetObject/AssetClass Property).</summary>
     SoftObject,
-    /// <summary>FScriptDelegate: (object index, function FName) 对。</summary>
+    /// <summary>FScriptDelegate: (object index, function FName) pair.</summary>
     Delegate,
-    /// <summary>MapProperty 值体：逐条目的 key/value tagged properties。</summary>
+    /// <summary>MapProperty value body: per-entry key/value tagged properties.</summary>
     Map,
-    /// <summary>SetProperty 值体：逐条目的 tagged properties。</summary>
+    /// <summary>SetProperty value body: per-entry tagged properties.</summary>
     Set,
 }
 

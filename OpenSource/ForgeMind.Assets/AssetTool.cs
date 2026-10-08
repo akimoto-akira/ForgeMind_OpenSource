@@ -212,8 +212,8 @@ public class AssetTool : ITool
     // ===== action: graph =====
 
     /// <summary>
-    /// 离线还原蓝图图表的节点与连线（不经编辑器）：解析 UEdGraphNode 的 Pins
-    /// 内联序列化，见 <see cref="BlueprintGraphReader"/>。按引擎版本分派。
+    /// Offline restore blueprint graph nodes and links (no editor): parse UEdGraphNode Pins
+    /// via inline serialization, see <see cref="BlueprintGraphReader"/>. Dispatched by engine version.
     /// </summary>
     private static ToolResult ReadGraph(Dictionary<string, object> parameters, UAssetPackage package)
     {
@@ -242,8 +242,8 @@ public class AssetTool : ITool
     // ===== action: read_ir =====
 
     /// <summary>
-    /// 离线读取蓝图 IR，输出与桥端 get_asset_ir 完全一致的 JSON 结构。
-    /// 支持 level 参数（summary/graph/full），用于字节级精确比对。
+    /// Offline read blueprint IR, output JSON structure identical to bridge get_asset_ir.
+    /// Supports level parameter (summary/graph/full) for byte-level exact comparison.
     /// </summary>
     private static ToolResult ReadIR(Dictionary<string, object> parameters, UAssetPackage package)
     {
@@ -268,7 +268,7 @@ public class AssetTool : ITool
         try
         {
             object definition = BlueprintGraphReader.Read(package, graphName, level);
-            // 输出与桥端 get_asset_ir 完全一致的结构，使字节比对可行。
+            // Output structure identical to bridge get_asset_ir to make byte comparison feasible.
             var (major, minor, _, _, _) = package.Summary.SavedByEngineVersion;
             var result = new Dictionary<string, object?>
             {
@@ -472,7 +472,7 @@ public class AssetTool : ITool
     // ===== helpers =====
 
     /// <summary>
-    /// 将 <see cref="FPackageIndex"/> 解析为导入表或导出表中的类名字面量。
+    /// Resolve <see cref="FPackageIndex"/> to class name literal in import or export table.
     /// </summary>
     private static string ResolveClassName(UAssetPackage package, FPackageIndex index)
     {
@@ -496,7 +496,7 @@ public class AssetTool : ITool
     }
 
     /// <summary>
-    /// 将 <see cref="FPackageIndex"/> 解析为导入表或导出表中的对象名字面量。
+    /// Resolve <see cref="FPackageIndex"/> to object name literal in import or export table.
     /// </summary>
     private static string ResolveObjectName(UAssetPackage package, FPackageIndex index)
     {
@@ -520,7 +520,7 @@ public class AssetTool : ITool
     }
 
     /// <summary>
-    /// 将一个标记属性序列化为 JSON 友好的字典结构。
+    /// Serialize a tagged property into a JSON-friendly dictionary structure.
     /// </summary>
     private static object SerializeProperty(UPropertyTag tag, UAssetPackage package)
     {
@@ -552,7 +552,7 @@ public class AssetTool : ITool
     }
 
     /// <summary>
-    /// 将 <see cref="UPropertyValue"/> 递归序列化为 JSON 友好的结构。
+    /// Recursively serialize <see cref="UPropertyValue"/> into a JSON-friendly structure.
     /// </summary>
     private static object? SerializeValue(UPropertyValue? value, UAssetPackage package)
     {

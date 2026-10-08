@@ -109,7 +109,7 @@ public sealed class SpeedyPack : IPackWriter, IDisposable
             {
                 newWal = new WriteAheadLog(filePath + ".wal");
                 newWal.Open();
-                newWal.Truncate(); // 清理任何残留
+                newWal.Truncate(); // Clean up any leftovers
                 newQueue = new WriteQueue(newWriter, directoryMap, entryCache, newWal);
             }
             return new SpeedyPack(filePath, options, directoryMap, entryCache,
@@ -155,7 +155,7 @@ public sealed class SpeedyPack : IPackWriter, IDisposable
                     writeQueue.EnqueueBatch(batch);
             }
             try { writeQueue.FlushAsync().Wait(TimeSpan.FromSeconds(30)); }
-            catch { /* 忽略超时 —— 下次启动会继续恢复 */ }
+            catch { /* Ignore timeout — next startup will continue recovery */ }
         }
         else
         {

@@ -694,6 +694,13 @@ namespace ForgeMindBlueprintUtils
 		{
 			OutConflicts.Add(FString::Printf(TEXT("deprecatedMessage=%s"), *DeprecatedMessage));
 		}
+		FString Tooltip;
+		if (Payload->TryGetStringField(TEXT("tooltip"), Tooltip)
+			&& !Tooltip.IsEmpty()
+			&& !Property->GetMetaData(FBlueprintMetadata::MD_Tooltip).Equals(Tooltip, ESearchCase::IgnoreCase))
+		{
+			OutConflicts.Add(FString::Printf(TEXT("tooltip=%s"), *Tooltip));
+		}
 
 		// The replication condition lives on the variable declaration, not on
 		// the compiled property, so there is nothing to compare against - any
@@ -929,6 +936,43 @@ namespace ForgeMindBlueprintUtils
 
 		// Non-struct, non-container variables take scalar defaults only.
 		return ScalarDefaultFromJsonValue(DefaultJson, PinType, OutDefault, OutReason);
+	}
+
+	EExposeOnSpawnCheck CheckExposeOnSpawnInstanceEditable(const TSharedPtr<FJsonObject>& Payload,
+		FString& OutReason)
+	{
+		OutReason.Reset();
+		if (!Payload.IsValid())
+		{
+			return EExposeOnSpawnCheck::Ok;
+		}
+
+		bool bExposeOnSpawn = false;
+		if (!Payload->TryGetBoolField(TEXT("exposeOnSpawn"), bExposeOnSpawn) || !bExposeOnSpawn)
+		{
+			return EExposeOnSpawnCheck::Ok;
+		}
+
+		bool bInstanceEditable = false;
+		if (!Payload->TryGetBoolField(TEXT("instanceEditable"), bInstanceEditable))
+		{
+			// Key absent: apply exposeOnSpawn exactly as asked and let the caller
+			// know the engine will nudge about instance editability. Ticking it
+			// here would change a flag nobody asked for.
+			return EExposeOnSpawnCheck::MissingInstanceEditable;
+		}
+
+		if (!bInstanceEditable)
+		{
+			OutReason = TEXT("exposeOnSpawn:true contradicts instanceEditable:false - "
+				"'Expose on Spawn' and 'Instance Editable' are independent switches, but asking for "
+				"the first while explicitly refusing the second is contradictory. Pass "
+				"instanceEditable:true, or drop exposeOnSpawn (omit instanceEditable entirely to keep "
+				"the variable instance-editable-neutral and see the engine's own advice).");
+			return EExposeOnSpawnCheck::Contradictory;
+		}
+
+		return EExposeOnSpawnCheck::Ok;
 	}
 
 	// Surfaces non-fatal warnings (unknown struct members) in the response and
@@ -1249,6 +1293,33 @@ namespace ForgeMindBlueprintUtils
 		return LoadObject<UEnum>(nullptr, **AliasPath);
 	}
 
+	// Object-typed pin assignment shared by the asset-path and short-name branches.
+	//
+	// Interface classes (UInterface derivatives) are modelled the way UE itself models
+	// an interface-typed variable or parameter: PC_Interface with the interface class
+	// as the sub-category object, so the blueprint shows the real interface type
+	// instead of a plain Object reference.
+	//
+	// Two wrong forms to avoid:
+	// - PC_Object + <interface class>: UE's CanCreateConnection refuses it outright
+	//   ("X interface is incompatible with {category}").
+	// - PC_Object + UObject (the previous downgrade): connects, but the parameter
+	//   displays as Object in the editor, losing the interface type.
+	// PC_Interface -> PC_Object is fine when the target is exactly UObject: the engine
+	// supplies its own Conv_InterfaceToObject autocast (EdGraphSchema_K2.cpp
+	// L2502-2513), which is what lets entry.d feed a message node's self pin.
+	static void SetObjectPinType(UClass* ClassAsset, FEdGraphPinType& OutPinType)
+	{
+		if (ClassAsset->IsChildOf(UInterface::StaticClass()))
+		{
+			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Interface;
+			OutPinType.PinSubCategoryObject = ClassAsset;
+			return;
+		}
+		OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+		OutPinType.PinSubCategoryObject = ClassAsset;
+	}
+
 	// One base type of the vocabulary PinTypeToText emits. Keywords cover the
 	// common primitives and math structs; anything else is treated as a UClass
 	// name and becomes an object reference. Containers never appear here -
@@ -1345,8 +1416,7 @@ namespace ForgeMindBlueprintUtils
 		UClass* ClassAsset = LoadObject<UClass>(nullptr, *InText);
 		if (ClassAsset != nullptr)
 		{
-			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
-			OutPinType.PinSubCategoryObject = ClassAsset;
+			SetObjectPinType(ClassAsset, OutPinType);
 			return true;
 		}
 	}
@@ -1511,8 +1581,11 @@ namespace ForgeMindBlueprintUtils
 		OutReason = FString::Printf(TEXT("'%s' is neither a known variable type keyword nor a loaded UClass/UEnum/UScriptStruct name"), *InText);
 		return false;
 	}
-	OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
-	OutPinType.PinSubCategoryObject = ObjectClass;
+	// Same interface handling as the asset-path branch: a bare interface name (e.g.
+	// DSL Deal(d: IDamageable) resolving to IDamageable_C through the blueprint name
+	// cache) becomes PC_Interface + IDamageable_C, so the parameter keeps its
+	// interface type rather than degrading to a plain Object reference.
+	SetObjectPinType(ObjectClass, OutPinType);
 	return true;
 }
 
@@ -1844,19 +1917,12 @@ if (Found == nullptr && Node->NodeGuid == Guid)
 Found = const_cast<UEdGraphNode*>(Node);
 }
 };
-for (UEdGraph* Graph : Blueprint->UbergraphPages)
+// Single lookup entry point: also reaches interface implementation graphs, which
+// live on ImplementedInterfaces[].Graphs and never on FunctionGraphs.
+TArray<UEdGraph*> Graphs;
+CollectTargetableGraphs(Blueprint, Graphs);
+for (UEdGraph* Graph : Graphs)
 {
-if (Graph == nullptr) { continue; }
-ForEachNodeInGraph(Graph, Visit);
-}
-for (UEdGraph* Graph : Blueprint->FunctionGraphs)
-{
-if (Graph == nullptr) { continue; }
-ForEachNodeInGraph(Graph, Visit);
-}
-for (UEdGraph* Graph : Blueprint->MacroGraphs)
-{
-if (Graph == nullptr) { continue; }
 ForEachNodeInGraph(Graph, Visit);
 }
 return Found;
@@ -2467,17 +2533,54 @@ return nullptr;
 		}
 	}
 
+	void CollectFunctionLikeGraphs(UBlueprint* Blueprint, TArray<UEdGraph*>& Out)
+	{
+		Out.Reset();
+		if (Blueprint == nullptr)
+		{
+			return;
+		}
+		for (UEdGraph* G : Blueprint->FunctionGraphs)
+		{
+			if (G != nullptr) { Out.Add(G); }
+		}
+		// Interface implementation graphs compile into real functions but are registered on
+		// the FBPInterfaceDescription only (ImplementNewInterface, BlueprintEditorUtils.cpp
+		// L6490-6492); they never appear on FunctionGraphs, so they need this extra scan.
+		for (auto& Desc : Blueprint->ImplementedInterfaces)
+		{
+			for (UEdGraph* G : Desc.Graphs)
+			{
+				if (G != nullptr) { Out.Add(G); }
+			}
+		}
+	}
+
+	void CollectTargetableGraphs(UBlueprint* Blueprint, TArray<UEdGraph*>& Out)
+	{
+		Out.Reset();
+		if (Blueprint == nullptr)
+		{
+			return;
+		}
+		for (UEdGraph* G : Blueprint->UbergraphPages)
+		{
+			if (G != nullptr) { Out.Add(G); }
+		}
+		TArray<UEdGraph*> FunctionLike;
+		CollectFunctionLikeGraphs(Blueprint, FunctionLike);
+		Out.Append(FunctionLike);
+		for (UEdGraph* G : Blueprint->MacroGraphs)
+		{
+			if (G != nullptr) { Out.Add(G); }
+		}
+	}
+
 	bool GraphNameExists(UBlueprint* Blueprint, const FString& Name)
 	{
-		for (const UEdGraph* G : Blueprint->UbergraphPages)
-		{
-			if (G != nullptr && G->GetName() == Name) { return true; }
-		}
-		for (const UEdGraph* G : Blueprint->FunctionGraphs)
-		{
-			if (G != nullptr && G->GetName() == Name) { return true; }
-		}
-		for (const UEdGraph* G : Blueprint->MacroGraphs)
+		TArray<UEdGraph*> Graphs;
+		CollectTargetableGraphs(Blueprint, Graphs);
+		for (const UEdGraph* G : Graphs)
 		{
 			if (G != nullptr && G->GetName() == Name) { return true; }
 		}

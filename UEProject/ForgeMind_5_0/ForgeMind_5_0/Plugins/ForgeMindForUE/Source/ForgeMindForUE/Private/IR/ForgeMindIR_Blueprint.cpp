@@ -286,29 +286,22 @@ namespace
 		return false;
 	}
 
-	bool FindFunctionGraph(UBlueprint* Blueprint, const FString& Name)
-	{
-		if (Blueprint == nullptr)
-		{
-			return false;
-		}
-		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
-		{
-			if (Graph != nullptr && Graph->GetName().Equals(Name, ESearchCase::IgnoreCase))
-			{
-				return true;
-			}
-		}
-		return false;
-	}
-
 	UEdGraph* FindFunctionGraphPtr(UBlueprint* Blueprint, const FString& Name)
 	{
 		if (Blueprint == nullptr)
 		{
 			return nullptr;
 		}
-		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+		// Function-like lookup (FunctionGraphs + interface implementation graphs, which
+		// live on ImplementedInterfaces[].Graphs and never on FunctionGraphs). A graph for
+		// an implemented message already exists and must be found here -- otherwise its
+		// nodes land nowhere and every connection fails with "connection references an
+		// unresolved node".
+		// Must NOT include macro graphs: callers probe this first and fall through to
+		// FindMacroGraphPtr, which is what maps a macro body onto its tunnel nodes.
+		TArray<UEdGraph*> Graphs;
+		ForgeMindBlueprintUtils::CollectFunctionLikeGraphs(Blueprint, Graphs);
+		for (UEdGraph* Graph : Graphs)
 		{
 			if (Graph != nullptr && Graph->GetName().Equals(Name, ESearchCase::IgnoreCase))
 			{
@@ -316,6 +309,11 @@ namespace
 			}
 		}
 		return nullptr;
+	}
+
+	bool FindFunctionGraph(UBlueprint* Blueprint, const FString& Name)
+	{
+		return FindFunctionGraphPtr(Blueprint, Name) != nullptr;
 	}
 
 	UEdGraph* FindMacroGraphPtr(UBlueprint* Blueprint, const FString& Name)
@@ -559,6 +557,15 @@ if (NodeType == TEXT("LevelLiteral")) return TEXT("levelliteral");
 		{
 			Payload->SetStringField(TEXT("enum"), EnumFieldName);
 		}
+		// MakeStruct / BreakStruct: 'struct' specifies the struct type (short name
+		// or asset path, e.g. Vector, /Game/.../FHealth_B), driving pin creation
+		// in ConfigureNativeFlowNode. Without it the node has no struct type and
+		// no member pins.
+		FString StructName;
+		if (Node->TryGetStringField(TEXT("struct"), StructName) && !StructName.IsEmpty())
+		{
+			Payload->SetStringField(TEXT("struct"), StructName);
+		}
 
 		TSharedPtr<FJsonObject> Result = Client->HandleAddBlueprintNode(Payload);
 		FString RealNodeId;
@@ -760,7 +767,7 @@ class FBlueprintIRHandler : public IIRHandler
 public:
 void GetAssetTypes(TArray<FString>& OutAssetTypes) const override
 	{
-		OutAssetTypes = { TEXT("blueprint"), TEXT("user_defined_struct"), TEXT("user_defined_enum"), TEXT("level_blueprint"), TEXT("blueprint_function_library"), TEXT("blueprint_macro_library") };
+		OutAssetTypes = { TEXT("blueprint"), TEXT("blueprint_interface"), TEXT("user_defined_struct"), TEXT("user_defined_enum"), TEXT("level_blueprint"), TEXT("blueprint_function_library"), TEXT("blueprint_macro_library") };
 	}
 
 	UObject* Create(FIRApplyContext& Ctx) override;
@@ -771,6 +778,7 @@ void GetAssetTypes(TArray<FString>& OutAssetTypes) const override
 
 private:
 	UObject* CreateBlueprintAsset(FIRApplyContext& Ctx);
+	UObject* CreateInterfaceAsset(FIRApplyContext& Ctx);
 	UObject* CreateStructAsset(FIRApplyContext& Ctx);
 	UObject* CreateEnumAsset(FIRApplyContext& Ctx);
 	void ApplyBlueprintDefinition(UBlueprint* Blueprint, FIRApplyContext& Ctx);
@@ -786,7 +794,60 @@ UObject* FBlueprintIRHandler::Create(FIRApplyContext& Ctx)
 	{
 		return CreateEnumAsset(Ctx);
 	}
+	if (Ctx.AssetType == TEXT("blueprint_interface"))
+	{
+		return CreateInterfaceAsset(Ctx);
+	}
 	return CreateBlueprintAsset(Ctx);
+}
+
+// ---------------------------------------------------------------------------
+// Blueprint Interface asset creation (assetType "blueprint_interface").
+//
+// IR definition.messages → HandleCreateBlueprintInterface payload.messages.
+// Each message = { name, params:[{name,type}] }; the bridge creates a function
+// graph per message (signature only, no body — interface functions have no
+// implementation). Reuses the proven HandleCreateBlueprintInterface path that
+// MCP-side create_blueprint_interface also walks, so IR and MCP share one code
+// path (same rationale as CreateBlueprintAsset delegating to HandleCreateBlueprint).
+// ---------------------------------------------------------------------------
+UObject* FBlueprintIRHandler::CreateInterfaceAsset(FIRApplyContext& Ctx)
+{
+	FForgeMindBridgeClient* Client = Bridge();
+	if (Client == nullptr)
+	{
+		Ctx.Fail(TEXT("BP_CLASS_NOT_FOUND"), TEXT("bridge client is not available"));
+		return nullptr;
+	}
+
+	TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
+
+	// definition.messages → Payload.messages (interface message signatures)
+	const TArray<TSharedPtr<FJsonValue>>* Messages = nullptr;
+	if (Ctx.Definition.IsValid()
+		&& Ctx.Definition->TryGetArrayField(TEXT("messages"), Messages)
+		&& Messages != nullptr)
+	{
+		Payload->SetArrayField(TEXT("messages"), *Messages);
+	}
+
+	const TSharedPtr<FJsonObject> Result = Client->HandleCreateBlueprintInterface(Payload);
+	if (!BridgeBool(Result, TEXT("created")))
+	{
+		Ctx.Fail(TEXT("BP_CLASS_NOT_FOUND"),
+			FString::Printf(TEXT("failed to create interface blueprint: %s"), *BridgeReason(Result)));
+		return nullptr;
+	}
+
+	UBlueprint* Blueprint = ForgeMindBlueprintUtils::ResolveBlueprint(Ctx.Path);
+	if (Blueprint == nullptr)
+	{
+		Ctx.Fail(TEXT("BP_CLASS_NOT_FOUND"),
+			FString::Printf(TEXT("interface blueprint created but not loadable at %s"), *Ctx.Path));
+		return nullptr;
+	}
+
+	return Blueprint;
 }
 
 UObject* FBlueprintIRHandler::CreateBlueprintAsset(FIRApplyContext& Ctx)
@@ -823,6 +884,17 @@ UObject* FBlueprintIRHandler::CreateBlueprintAsset(FIRApplyContext& Ctx)
 
 	TSharedPtr<FJsonObject> Payload = MakePayload(Ctx.Path);
 	Payload->SetStringField(TEXT("parentClass"), ParentClass);
+
+	// definition.implements → Payload.implements (interface asset paths).
+	// HandleCreateBlueprint attaches each interface via ImplementNewInterface and
+	// auto-builds implementation graphs for void messages (see its implements block).
+	const TArray<TSharedPtr<FJsonValue>>* Implements = nullptr;
+	if (Ctx.Definition.IsValid()
+		&& Ctx.Definition->TryGetArrayField(TEXT("implements"), Implements)
+		&& Implements != nullptr)
+	{
+		Payload->SetArrayField(TEXT("implements"), *Implements);
+	}
 
 	TSharedPtr<FJsonObject> Result = Client->HandleCreateBlueprint(Payload);
 	if (!BridgeBool(Result, TEXT("created")))
@@ -884,10 +956,19 @@ void FBlueprintIRHandler::ApplyBlueprintDefinition(UBlueprint* Blueprint, FIRApp
 			{
 				Payload->SetStringField(TEXT("category"), Category);
 			}
+			FString Tooltip;
+			if (Member->TryGetStringField(TEXT("tooltip"), Tooltip))
+			{
+				Payload->SetStringField(TEXT("tooltip"), Tooltip);
+			}
 			bool bFlag = false;
 			if (Member->TryGetBoolField(TEXT("editAnywhere"), bFlag))
 			{
 				Payload->SetBoolField(TEXT("instanceEditable"), bFlag);
+			}
+			if (Member->TryGetBoolField(TEXT("exposeOnSpawn"), bFlag) && bFlag)
+			{
+				Payload->SetBoolField(TEXT("exposeOnSpawn"), true);
 			}
 			if (Member->TryGetBoolField(TEXT("replicated"), bFlag) && bFlag)
 			{
@@ -1345,6 +1426,43 @@ UObject* FBlueprintIRHandler::CreateStructAsset(FIRApplyContext& Ctx)
 			}
 		}
 	}
+	// Remove the leftover default boolean member that CreateUserDefinedStruct
+	// always inserts.  We did not pass members to HandleCreateBlueprintStruct
+	// (it would have removed the default itself when Members.Num() > 0), so
+	// the default survives.  After adding the caller's members, scan for any
+	// member whose internal VarName starts with "MemberVar_" (the engine's
+	// auto-generated name for unnamed members) and remove it.
+	if (MemberCount > 0)
+	{
+		UUserDefinedStruct* Struct = LoadObject<UUserDefinedStruct>(nullptr, *Ctx.Path);
+		if (Struct != nullptr)
+		{
+			TArray<FGuid> DefaultGuids;
+			{
+				const TArray<FStructVariableDescription>& VarDescs = FStructureEditorUtils::GetVarDesc(Struct);
+				for (const FStructVariableDescription& Desc : VarDescs)
+				{
+					if (Desc.VarName.ToString().StartsWith(TEXT("MemberVar_")))
+					{
+						DefaultGuids.Add(Desc.VarGuid);
+					}
+				}
+			}
+			for (const FGuid& DefaultGuid : DefaultGuids)
+			{
+				FStructureEditorUtils::RemoveVariable(Struct, DefaultGuid);
+			}
+			if (DefaultGuids.Num() > 0)
+			{
+				FStructureEditorUtils::OnStructureChanged(Struct, FStructureEditorUtils::EStructureEditorChangeInfo::RemovedVariable);
+				FStructureEditorUtils::CompileStructure(Struct);
+				Struct->MarkPackageDirty();
+				Ctx.Warn(TEXT("DEFAULT_MEMBER_REMOVED"),
+					FString::Printf(TEXT("Removed %d leftover default member(s) from struct '%s'"), DefaultGuids.Num(), *Ctx.Path));
+			}
+		}
+	}
+
 	Ctx.Extra->SetNumberField(TEXT("memberCount"), MemberCount);
 	return ForgeMindIR::LoadAsset(Ctx.Path);
 }
@@ -1469,6 +1587,28 @@ bool FBlueprintIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 				if (Patch->TryGetStringField(TEXT("category"), Category))
 				{
 					Payload->SetStringField(TEXT("category"), Category);
+				}
+				// Same flag vocabulary as the create-mode members loop above:
+				// editAnywhere -> instanceEditable, exposeOnSpawn / replicated /
+				// tooltip go through unchanged. Without these the update path
+				// silently dropped every variable setting the DSL can express.
+				FString Tooltip;
+				if (Patch->TryGetStringField(TEXT("tooltip"), Tooltip))
+				{
+					Payload->SetStringField(TEXT("tooltip"), Tooltip);
+				}
+				bool bPatchFlag = false;
+				if (Patch->TryGetBoolField(TEXT("editAnywhere"), bPatchFlag))
+				{
+					Payload->SetBoolField(TEXT("instanceEditable"), bPatchFlag);
+				}
+				if (Patch->TryGetBoolField(TEXT("exposeOnSpawn"), bPatchFlag) && bPatchFlag)
+				{
+					Payload->SetBoolField(TEXT("exposeOnSpawn"), true);
+				}
+				if (Patch->TryGetBoolField(TEXT("replicated"), bPatchFlag) && bPatchFlag)
+				{
+					Payload->SetStringField(TEXT("replication"), TEXT("replicated"));
 				}
 				if (Patch->HasField(TEXT("defaultValue")))
 				{
@@ -1799,6 +1939,33 @@ TSharedPtr<FJsonObject> FBlueprintIRHandler::Read(UObject* Asset, FIRApplyContex
 		}
 
 		Functions.Add(MakeShared<FJsonValueObject>(Entry));
+	}
+	// Interface implementation graphs compile into real functions but live on
+	// ImplementedInterfaces[].Graphs, never on FunctionGraphs (ImplementNewInterface
+	// registers them there), so the loop above cannot see them. Append them so IR --
+	// and therefore snapshot comparison -- covers implemented interface messages.
+	for (auto& Desc : Blueprint->ImplementedInterfaces)
+	{
+		for (UEdGraph* Graph : Desc.Graphs)
+		{
+			if (Graph == nullptr) { continue; }
+			TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("name"), Graph->GetName());
+			Entry->SetStringField(TEXT("type"), TEXT("function"));
+
+			TArray<TSharedPtr<FJsonValue>> Inputs;
+			TArray<TSharedPtr<FJsonValue>> Outputs;
+			ExtractFunctionSignature(Graph, Inputs, Outputs);
+			Entry->SetArrayField(TEXT("inputs"), Inputs);
+			Entry->SetArrayField(TEXT("outputs"), Outputs);
+
+			if (Ctx.Level == TEXT("graph") || Ctx.Level == TEXT("full"))
+			{
+				Entry->SetObjectField(TEXT("graph"), GraphToIR(Graph, Graph->GetName(), TEXT("function"), Ctx.Level));
+			}
+
+			Functions.Add(MakeShared<FJsonValueObject>(Entry));
+		}
 	}
 	Definition->SetArrayField(TEXT("functions"), Functions);
 

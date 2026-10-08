@@ -37,7 +37,21 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 		|| !Payload->TryGetStringField(TEXT("type"), TypeName) || TypeName.IsEmpty())
 	{
 		Result->SetBoolField(TEXT("added"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path, e.g. /Game/Blueprints/BP_Thing), name (variable name), type (bool, byte, int, int64, float, double, name, string, text, vector, rotator, transform, or a UClass name for an object reference; append '[]' or wrap in array<>/set<>/map<KeyType,ValueType> for container variables); optional category (variable category, default 'Default'), instanceEditable (bool) and exposeOnSpawn (bool)"));
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path, e.g. /Game/Blueprints/BP_Thing), name (variable name), type (bool, byte, int, int64, float, double, name, string, text, vector, rotator, transform, or a UClass name for an object reference; append '[]' or wrap in array<>/set<>/map<KeyType,ValueType> for container variables); optional category (variable category, default 'Default'), instanceEditable (bool), exposeOnSpawn (bool) and tooltip (string, the hover hint in the details panel)"));
+		return Result;
+	}
+
+	// 'exposeOnSpawn' and 'instanceEditable' are independent switches - see
+	// CheckExposeOnSpawnInstanceEditable. Only an explicit contradiction is
+	// refused here, before anything is mutated; a missing instanceEditable key
+	// is applied exactly as asked and reported back as a hint.
+	FString ExposeOnSpawnReason;
+	const EExposeOnSpawnCheck ExposeCheck = CheckExposeOnSpawnInstanceEditable(Payload, ExposeOnSpawnReason);
+	if (ExposeCheck == EExposeOnSpawnCheck::Contradictory)
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("errorCode"), TEXT("INVALID_VALUE"));
+		Result->SetStringField(TEXT("reason"), ExposeOnSpawnReason);
 		return Result;
 	}
 
@@ -167,18 +181,22 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 		return Result;
 	}
 
-	// Optional category, instance-editability and expose-on-spawn tweak the
-	// description/metadata before the compile below: the compiler copies
+	// Optional category, instance-editability, expose-on-spawn and tooltip tweak
+	// the description/metadata before the compile below: the compiler copies
 	// Category onto the property and derives CPF_ExposeOnSpawn from the
-	// MD_ExposeOnSpawn metadata entry (KismetCompiler.cpp). AddMemberVariable
-	// defaults to CPF_DisableEditOnInstance, so instanceEditable:true clears it.
+	// MD_ExposeOnSpawn metadata entry (KismetCompiler.cpp), while the tooltip is
+	// the MD_Tooltip metadata entry the details panel shows on hover.
+	// AddMemberVariable defaults to CPF_DisableEditOnInstance, so
+	// instanceEditable:true clears it.
 	FString CategoryText;
 	bool bExposeOnSpawn = false;
 	bool bInstanceEditable = false;
+	FString TooltipText;
 	const bool bHasCategory = Payload->TryGetStringField(TEXT("category"), CategoryText);
 	const bool bHasExposeOnSpawn = Payload->TryGetBoolField(TEXT("exposeOnSpawn"), bExposeOnSpawn);
 	const bool bHasInstanceEditable = Payload->TryGetBoolField(TEXT("instanceEditable"), bInstanceEditable);
-	if (bHasCategory || bHasInstanceEditable || (bHasExposeOnSpawn && bExposeOnSpawn))
+	const bool bHasTooltip = Payload->TryGetStringField(TEXT("tooltip"), TooltipText);
+	if (bHasCategory || bHasInstanceEditable || (bHasExposeOnSpawn && bExposeOnSpawn) || bHasTooltip)
 	{
 		FBPVariableDescription* Variable = Blueprint->NewVariables.FindByPredicate(
 			[&VarName](const FBPVariableDescription& Desc) { return Desc.VarName == FName(*VarName); });
@@ -202,6 +220,19 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 			if (bHasExposeOnSpawn && bExposeOnSpawn)
 			{
 				Variable->SetMetaData(FBlueprintMetadata::MD_ExposeOnSpawn, TEXT("true"));
+			}
+			if (bHasTooltip)
+			{
+				// Empty string clears the hint - SetMetaData with an empty value
+				// would leave a blank tooltip entry behind.
+				if (TooltipText.IsEmpty())
+				{
+					Variable->RemoveMetaData(FBlueprintMetadata::MD_Tooltip);
+				}
+				else
+				{
+					Variable->SetMetaData(FBlueprintMetadata::MD_Tooltip, TooltipText);
+				}
 			}
 		}
 	}
@@ -228,6 +259,16 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 	Result->SetStringField(TEXT("variable"), VarName);
 	Result->SetStringField(TEXT("type"), TypeName);
 	Result->SetStringField(TEXT("path"), ObjectPath);
+	if (ExposeCheck == EExposeOnSpawnCheck::MissingInstanceEditable)
+	{
+		// AddMemberVariable gives a new variable CPF_DisableEditOnInstance, so
+		// the variable now really is instance-editable-neutral and the engine
+		// will nudge about that at compile time. Say so here instead of letting
+		// it surface as an unexplained compile warning.
+		TArray<TSharedPtr<FJsonValue>> Hints;
+		Hints.Add(MakeShared<FJsonValueString>(TEXT("exposeOnSpawnWithoutInstanceEditable")));
+		Result->SetArrayField(TEXT("hints"), Hints);
+	}
 	AppendWarningsToResult(Result, DefaultWarnings);
 	return Result;
 }
@@ -246,7 +287,21 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		|| !Payload->TryGetStringField(TEXT("name"), VarName) || VarName.IsEmpty())
 	{
 		Result->SetBoolField(TEXT("updated"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path), name (variable name); optional settings: category (string), instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, exposeOnSpawn, exposeToCinematics (booleans), deprecatedMessage (string), replication ('none' or 'replicated'), replicationCondition (e.g. none, initialOnly, ownerOnly)"));
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path), name (variable name); optional settings: category (string), instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, exposeOnSpawn, exposeToCinematics (booleans), deprecatedMessage (string), tooltip (string), replication ('none' or 'replicated'), replicationCondition (e.g. none, initialOnly, ownerOnly)"));
+		return Result;
+	}
+
+	// 'exposeOnSpawn' and 'instanceEditable' are independent switches - see
+	// CheckExposeOnSpawnInstanceEditable. Refuse an explicit contradiction
+	// before touching the variable; a missing instanceEditable key leaves the
+	// flag exactly as it is and only reports a hint.
+	FString ExposeOnSpawnReason;
+	const EExposeOnSpawnCheck ExposeCheck = CheckExposeOnSpawnInstanceEditable(Payload, ExposeOnSpawnReason);
+	if (ExposeCheck == EExposeOnSpawnCheck::Contradictory)
+	{
+		Result->SetBoolField(TEXT("updated"), false);
+		Result->SetStringField(TEXT("errorCode"), TEXT("INVALID_VALUE"));
+		Result->SetStringField(TEXT("reason"), ExposeOnSpawnReason);
 		return Result;
 	}
 
@@ -303,15 +358,12 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 					return Result;
 				}
 
-				TArray<TSharedPtr<FJsonValue>> ChangedValues;
-				ChangedValues.Add(MakeShared<FJsonValueString>(TEXT("default")));
 				Result->SetBoolField(TEXT("updated"), true);
-				Result->SetBoolField(TEXT("dirty"), Blueprint->GetPackage()->IsDirty());
-				Result->SetStringField(TEXT("variable"), VarName);
-				Result->SetStringField(TEXT("default"), AppliedText);
-				Result->SetStringField(TEXT("inheritedFrom"), Lookup.OwnerClass->GetName());
-				Result->SetArrayField(TEXT("changed"), ChangedValues);
-				Result->SetStringField(TEXT("path"), ObjectPath);
+							Result->SetBoolField(TEXT("dirty"), Blueprint->GetPackage()->IsDirty());
+							Result->SetStringField(TEXT("variable"), VarName);
+							Result->SetStringField(TEXT("default"), AppliedText);
+							Result->SetStringField(TEXT("inheritedFrom"), Lookup.OwnerClass->GetName());
+							Result->SetStringField(TEXT("path"), ObjectPath);
 				AppendWarningsToResult(Result, InheritedWarnings);
 				return Result;
 			}
@@ -324,6 +376,25 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		return Result;
 	}
 	FBPVariableDescription& Variable = Blueprint->NewVariables[VarIndex];
+
+	// A new default arrives as JSON and is normalized to the engine's text form
+	// for this variable's pin type (structs need special handling, see
+	// BlueprintDefaultFromJsonValue) - the same two steps add_blueprint_variable
+	// and set_blueprint_variable_default go through. Normalizing up front keeps a
+	// bad default from half-applying the other settings.
+	FString NewDefaultValue;
+	FString DefaultReason;
+	TArray<FString> DefaultWarnings;
+	const TSharedPtr<FJsonValue> DefaultJson = Payload->TryGetField(TEXT("default"));
+	const bool bDefaultPresent = DefaultJson.IsValid();
+	if (bDefaultPresent
+		&& !BlueprintDefaultFromJsonValue(DefaultJson, Variable.VarType, NewDefaultValue, DefaultReason, DefaultWarnings))
+	{
+		Result->SetBoolField(TEXT("updated"), false);
+		Result->SetStringField(TEXT("reason"), DefaultReason);
+		AppendWarningsToResult(Result, DefaultWarnings);
+		return Result;
+	}
 
 	// Read the optional settings first so a malformed payload changes nothing.
 	FString KeyReason;
@@ -338,6 +409,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 	bool bExposeToCinematics = false, bExposeToCinematicsPresent = false;
 	FString CategoryText; bool bCategoryPresent = false;
 	FString DeprecatedMessage; bool bDeprecatedMessagePresent = false;
+	FString TooltipText; bool bTooltipPresent = false;
 	FString ReplicationMode; bool bReplicationPresent = false;
 	FString ConditionText; bool bConditionPresent = false;
 	if (!TryGetOptionalBool(Payload, TEXT("instanceEditable"), bInstanceEditable, bInstanceEditablePresent, KeyReason)
@@ -351,6 +423,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		|| !TryGetOptionalBool(Payload, TEXT("exposeToCinematics"), bExposeToCinematics, bExposeToCinematicsPresent, KeyReason)
 		|| !TryGetOptionalString(Payload, TEXT("category"), CategoryText, bCategoryPresent, KeyReason)
 		|| !TryGetOptionalString(Payload, TEXT("deprecatedMessage"), DeprecatedMessage, bDeprecatedMessagePresent, KeyReason)
+		|| !TryGetOptionalString(Payload, TEXT("tooltip"), TooltipText, bTooltipPresent, KeyReason)
 		|| !TryGetOptionalString(Payload, TEXT("replication"), ReplicationMode, bReplicationPresent, KeyReason)
 		|| !TryGetOptionalString(Payload, TEXT("replicationCondition"), ConditionText, bConditionPresent, KeyReason))
 	{
@@ -359,13 +432,13 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		return Result;
 	}
 
-	const bool bAnyKeyPresent = bInstanceEditablePresent || bPrivatePresent || bConfigPresent || bTransientPresent
+	const bool bAnyKeyPresent = bDefaultPresent || bInstanceEditablePresent || bPrivatePresent || bConfigPresent || bTransientPresent
 		|| bSaveGamePresent || bAdvancedDisplayPresent || bDeprecatedPresent || bExposeOnSpawnPresent
-		|| bExposeToCinematicsPresent || bCategoryPresent || bDeprecatedMessagePresent || bReplicationPresent || bConditionPresent;
+		|| bExposeToCinematicsPresent || bCategoryPresent || bDeprecatedMessagePresent || bTooltipPresent || bReplicationPresent || bConditionPresent;
 	if (!bAnyKeyPresent)
 	{
 		Result->SetBoolField(TEXT("updated"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("No optional settings provided - pass at least one of category, instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, deprecatedMessage, exposeOnSpawn, exposeToCinematics, replication, replicationCondition"));
+		Result->SetStringField(TEXT("reason"), TEXT("Nothing to change - pass at least one of default, category, instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, deprecatedMessage, exposeOnSpawn, exposeToCinematics, tooltip, replication, replicationCondition"));
 		return Result;
 	}
 
@@ -385,40 +458,19 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		return Result;
 	}
 
-	TArray<FString> Changed;
-
 	// Property flags follow the editor's variable details panel semantics
 	// (BlueprintDetailsCustomization / BlueprintEditorUtils flag setters):
 	// 'instanceEditable' clears CPF_DisableEditOnInstance, 'exposeToCinematics'
 	// is CPF_Interp, the rest map 1:1. ('private' is metadata, see below.)
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_DisableEditOnInstance, !bInstanceEditable, bInstanceEditablePresent))
-	{
-		Changed.Add(TEXT("instanceEditable"));
-	}
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_Config, bConfig, bConfigPresent))
-	{
-		Changed.Add(TEXT("config"));
-	}
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_Transient, bTransient, bTransientPresent))
-	{
-		Changed.Add(TEXT("transient"));
-	}
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_SaveGame, bSaveGame, bSaveGamePresent))
-	{
-		Changed.Add(TEXT("saveGame"));
-	}
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_AdvancedDisplay, bAdvancedDisplay, bAdvancedDisplayPresent))
-	{
-		Changed.Add(TEXT("advancedDisplay"));
-	}
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_Deprecated, bDeprecated, bDeprecatedPresent))
-	{
-		Changed.Add(TEXT("deprecated"));
-	}
-	if (ApplyBoolFlag(Variable.PropertyFlags, CPF_Interp, bExposeToCinematics, bExposeToCinematicsPresent))
-	{
-		Changed.Add(TEXT("exposeToCinematics"));
-	}
+	// The response reports 'updated' only - whether one given key really moved
+	// the value is deliberately not part of the contract.
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_DisableEditOnInstance, !bInstanceEditable, bInstanceEditablePresent);
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_Config, bConfig, bConfigPresent);
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_Transient, bTransient, bTransientPresent);
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_SaveGame, bSaveGame, bSaveGamePresent);
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_AdvancedDisplay, bAdvancedDisplay, bAdvancedDisplayPresent);
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_Deprecated, bDeprecated, bDeprecatedPresent);
+	ApplyBoolFlag(Variable.PropertyFlags, CPF_Interp, bExposeToCinematics, bExposeToCinematicsPresent);
 
 	// Replication mirrors OnChangeReplication: 'none' clears CPF_Net, the
 	// rep-notify function and the condition; 'replicated' sets CPF_Net.
@@ -436,17 +488,14 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 			Variable.PropertyFlags &= ~CPF_RepNotify;
 			Variable.RepNotifyFunc = NAME_None;
 		}
-		Changed.Add(TEXT("replication"));
 	}
 	if (bConditionPresent)
 	{
 		Variable.ReplicationCondition = NewCondition;
-		Changed.Add(TEXT("replicationCondition"));
 	}
 	if (bCategoryPresent)
 	{
 		Variable.Category = FText::FromString(CategoryText);
-		Changed.Add(TEXT("category"));
 	}
 
 	// Metadata-backed settings go through the editor utilities so they fire
@@ -464,7 +513,6 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		{
 			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_Private);
 		}
-		Changed.Add(TEXT("private"));
 	}
 	if (bExposeOnSpawnPresent)
 	{
@@ -476,7 +524,17 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		{
 			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_ExposeOnSpawn);
 		}
-		Changed.Add(TEXT("exposeOnSpawn"));
+	}
+	if (bTooltipPresent)
+	{
+		if (TooltipText.IsEmpty())
+		{
+			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_Tooltip);
+		}
+		else
+		{
+			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_Tooltip, TooltipText);
+		}
 	}
 	if (bDeprecatedMessagePresent)
 	{
@@ -488,7 +546,13 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		{
 			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_DeprecationMessage, DeprecatedMessage);
 		}
-		Changed.Add(TEXT("deprecatedMessage"));
+	}
+	if (bDefaultPresent)
+	{
+		// Defaults live on the variable description and feed the generated
+		// class, so they are applied with the settings above, before the single
+		// recompile below.
+		Variable.DefaultValue = NewDefaultValue;
 	}
 
 	// Flags feed the generated class, so treat this as a structural change,
@@ -498,18 +562,42 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
 	Blueprint->MarkPackageDirty();
 
-	TArray<TSharedPtr<FJsonValue>> ChangedValues;
-	for (const FString& Key : Changed)
+	// Verify the new default really landed in the compiled CDO, the same way
+	// add_blueprint_variable does - a value the compiler could not apply must
+	// not report success.
+	if (bDefaultPresent)
 	{
-		ChangedValues.Add(MakeShared<FJsonValueString>(Key));
+		FString VerifyReason;
+		if (!EnsureCompiledVariableDefault(Blueprint, VarName, NewDefaultValue, VerifyReason))
+		{
+			Result->SetBoolField(TEXT("updated"), false);
+			Result->SetStringField(TEXT("reason"), VerifyReason);
+			AppendWarningsToResult(Result, DefaultWarnings);
+			return Result;
+		}
 	}
+
 	Result->SetBoolField(TEXT("updated"), true);
-	Result->SetBoolField(TEXT("dirty"), Blueprint->GetPackage()->IsDirty());
-	Result->SetStringField(TEXT("variable"), VarName);
-	Result->SetArrayField(TEXT("changed"), ChangedValues);
-	Result->SetStringField(TEXT("path"), ObjectPath);
-	return Result;
-}
+		Result->SetBoolField(TEXT("dirty"), Blueprint->GetPackage()->IsDirty());
+		Result->SetStringField(TEXT("variable"), VarName);
+		if (bDefaultPresent)
+		{
+			Result->SetStringField(TEXT("default"), NewDefaultValue);
+		}
+		Result->SetStringField(TEXT("path"), ObjectPath);
+		if (ExposeCheck == EExposeOnSpawnCheck::MissingInstanceEditable)
+		{
+			// The flag was left untouched, so the variable keeps whatever
+			// instance-editability it had - if that is CPF_DisableEditOnInstance,
+			// the engine nudges about 'Expose on Spawn' at compile time. Report it
+			// here rather than letting it look like an unexplained warning.
+			TArray<TSharedPtr<FJsonValue>> Hints;
+			Hints.Add(MakeShared<FJsonValueString>(TEXT("exposeOnSpawnWithoutInstanceEditable")));
+			Result->SetArrayField(TEXT("hints"), Hints);
+		}
+		AppendWarningsToResult(Result, DefaultWarnings);
+		return Result;
+	}
 
 TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleListBlueprintVariables(const TSharedPtr<FJsonObject>& Payload)
 {

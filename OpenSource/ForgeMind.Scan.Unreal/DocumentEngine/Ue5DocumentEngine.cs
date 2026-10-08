@@ -4,11 +4,11 @@
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// UE5 基线扫描器：实现四路独立扫描——引擎代码 / 引擎资产 / 项目代码 / 项目资产。
+/// UE5 baseline scanner: implements four independent scan paths — engine code / engine assets / project code / project assets.
 /// <para>
-/// 版本策略（测试驱动，不靠版本号推测）：本扫描器对某版本源码测试通过后，
-/// 若对更高版本也通过则共用；报错则为该版本单开子类。编译 / 实例化错误记录在
-/// <see cref="UeDocumentEngine.ScanDiagnostics"/>，是补齐存根的依据。
+/// Version strategy (test-driven, not version-number-guessed): once this scanner passes on some version's source,
+/// it is shared with higher versions that also pass; on failure, a version-specific subclass is opened.
+/// Compile / instantiation errors are recorded in <see cref="UeDocumentEngine.ScanDiagnostics"/> and guide stub gap-filling.
 /// </para>
 /// </summary>
 public sealed class Ue5DocumentEngine : UeDocumentEngine
@@ -18,7 +18,7 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
     {
     }
 
-    // ── 四路独立扫描 ──
+    // ── Four independent scans ──
 
     /// <inheritdoc/>
     public override IReadOnlyList<ScanRoot> ScanEngineCode()
@@ -31,8 +31,8 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
     /// <inheritdoc/>
     public override IReadOnlyList<ScanRoot> ScanEngineAssets()
     {
-        return [];//临时屏蔽功能
-        // RootPath 用安装目录 + ":assets" 后缀，与代码根区分（避免 ReplaceRange 覆盖）
+        return [];// temporarily disabled
+        // RootPath uses install dir + ":assets" suffix to distinguish from code root (avoids ReplaceRange overwrite)
         var root = BuildAssetRoot(InstallDir.FullName + ":assets", InstallDir.FullName,
             ScopeLevel.EngineAsset, isEngine: true);
         return root is null ? [] : [root];
@@ -55,15 +55,15 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
         if (ProjectDir is null)
             return [];
 
-        // RootPath 用项目目录 + ":assets" 后缀，与代码根区分
+        // RootPath uses project dir + ":assets" suffix to distinguish from code root
         var root = BuildAssetRoot(ProjectDir.FullName + ":assets", ProjectDir.FullName,
             ScopeLevel.ProjectAsset, isEngine: false);
         return root is null ? [] : [root];
     }
 
-    // ── 代码扫描（插件发现 + 模块编译 + 头文件扫描；不含资产）──
+    // ── Code scan (plugin discovery + module compile + header scanning; no assets) ──
 
-    /// <summary>组装代码根：插件发现 → 直属模块编译 → 头文件扫描。</summary>
+    /// <summary>Assemble code root: plugin discovery → direct-module compilation → header scanning.</summary>
     private ScanRoot? BuildCodeRoot(
         string rootPath,
         ScopeLevel rootScope,
@@ -77,7 +77,7 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
             Version = EngineVersion,
         };
 
-        // ---- 1. 插件发现 ----
+        // ---- 1. Plugin discovery ----
         foreach ((string pluginDir, string? descriptor) in RulesFileScanner.FindPlugins(rootPath))
         {
             var plugin = new PluginInfo
@@ -94,7 +94,7 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
             root.Plugins.Add(plugin);
         }
 
-        // ---- 2. 直属模块编译 ----
+        // ---- 2. Direct-module compilation ----
         List<string> sourceRoots = isEngine
             ? RulesFileScanner.GetEngineSourceRoots(rootPath)
             : RulesFileScanner.GetProjectSourceRoots(rootPath);
@@ -104,7 +104,7 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
             rulesFiles, rootScope, isEngine ? rootPath : null);
 
         foreach (string error in compile.Errors)
-            ScanDiagnostics.Add($"[{rootScope}] 规则编译: {error}");
+            ScanDiagnostics.Add($"[{rootScope}] Rules compile: {error}");
 
         foreach (ModuleInfo module in compile.Modules.Values)
         {
@@ -112,7 +112,7 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
             root.Modules.Add(module);
         }
 
-        // ---- 3. 头文件扫描 ----
+        // ---- 3. Header scanning ----
         foreach (ModuleInfo module in EnumerateAllModules(root))
         {
             foreach (UeClassInfo info in HeaderScanner.ScanAllHeaders(module.Directory, module.Scope))
@@ -122,9 +122,9 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
         return root;
     }
 
-    // ── 资产扫描（仅遍历 .uasset；不含代码）──
+    // ── Asset scan (only walks .uasset; no code) ──
 
-    /// <summary>组装资产根：仅扫描 .uasset 文件。</summary>
+    /// <summary>Assemble asset root: scans only .uasset files.</summary>
     private ScanRoot? BuildAssetRoot(
         string rootPath,
         string assetDir,
@@ -140,12 +140,12 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
 
         root.Assets.AddRange(UAssetScanner.Scan(assetDir, assetScope, out int failed));
         if (failed > 0)
-            ScanDiagnostics.Add($"[{assetScope}] 资产扫描: {failed} 个 uasset 解析失败（已跳过）");
+            ScanDiagnostics.Add($"[{assetScope}] Asset scan: {failed} .uasset(s) failed to parse (skipped)");
 
         return root;
     }
 
-    // ── 辅助 ──
+    // ── Helpers ──
 
     private static ModuleInfo CreateModule(string rulesFile, ScopeLevel scope)
     {
@@ -159,7 +159,7 @@ public sealed class Ue5DocumentEngine : UeDocumentEngine
         };
     }
 
-    /// <summary>模块名 = .build.cs 文件名去掉 ".Build.cs"（UBT 惯例）。</summary>
+    /// <summary>Module name = .build.cs file name minus ".Build.cs" (UBT convention).</summary>
     private static string ModuleNameFrom(string rulesFile)
     {
         string fileName = Path.GetFileName(rulesFile);

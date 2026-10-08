@@ -1,6 +1,6 @@
 ﻿# Guide de contribution ForgeMind
 
-Merci de votre intérêt pour ForgeMind. Le dépôt public correspond au slice de publication OpenSource de ForgeMind et ne contient que les projets open source publiés, les tests et les projets d'exemple. Les modules commerciaux (traducteurs de domaine DSL, système d'autorisation, etc.) ne sont pas dans le dépôt public ; veuillez d'abord comprendre la répartition avant de contribuer.
+Merci de votre intérêt pour ForgeMind. Le dépôt public correspond au slice de publication OpenSource de ForgeMind et ne contient que les projets open source publiés, les tests et les projets d'exemple. Les modules commerciaux (traducteurs de domaine DSL, systèmes de licence, etc.) ne sont pas dans le dépôt public ; veuillez d'abord comprendre la répartition avant de contribuer.
 
 ## 1. Structure du dépôt public
 

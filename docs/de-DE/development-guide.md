@@ -57,7 +57,7 @@ ForgeMind nutzt „Adapter“ für engine-spezifische Logik; neue Engines folgen
 3. Engine-seitige Fähigkeiten implementieren (Asset-Lesen/-Schreiben, Projektoperationen usw.) und auf Server-Tool-Rückgaben abbilden.
 4. Testfälle und Dokumentation für diese Engine ergänzen.
 
-Die erste Implementierung ist der UE-Adapter `UEProject\ForgeMind_5_0\ForgeMind_5_0\Plugins\ForgeMindForUE\` (Editor-Modul-Plugin, Bridge-Client + IR-Anwender).
+Die erste Implementierung ist der UE-Adapter `UEProject\ForgeMind_5_0\ForgeMind_5_0\Plugins\ForgeMindForUE\` (Editor-Modul-Plugin, Bridge-Client + IR-Applikator).
 
 ## 5. Engine-seitige Bridge-Befehle (aktuelle UE-Implementierung)
 

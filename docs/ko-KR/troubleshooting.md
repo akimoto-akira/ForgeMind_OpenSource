@@ -6,7 +6,7 @@
 
 **`ForgeMind.sln` 직접 빌드 시 'Commercial\... 프로젝트를 찾을 수 없음'**
 원인: `ForgeMind.sln`은 상용 프로젝트 참조 항목(`Commercial\ForgeMindLicenseGenerator`, `Commercial\ForgeMindLicenseServer`)을 포함하지만 상용 디렉터리는 오픈소스 슬라이스에 포함되지 않습니다.
-해결: 각 프로젝트를 개별 빌드(`contributing.md` §3). sln 전체를 빌드하지 마세요. 또는 배포자의 빌드 스크립트 사용.
+해결: 각 프로젝트를 개별 빌드(`contributing.md` §3). sln 전체를 빌드하지 마세요. 또는 배포자의 빌드 스크립트를 사용하세요.
 
 **플러그인을 빌드해도 호스트에 도구가 안 보임**
 - 플러그인 DLL과 동일 이름 `.manifest.json`이 호스트 `plugins\<플러그인 이름>\`(또는 `FORGEMIND_PLUGINS_DIR` 지정 디렉터리)에 배치되었는지 확인;

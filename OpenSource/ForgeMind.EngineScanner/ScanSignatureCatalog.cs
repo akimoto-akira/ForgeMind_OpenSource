@@ -9,17 +9,17 @@ using ForgeMindServer.Abstractions;
 namespace ForgeMind.EngineScanner;
 
 /// <summary>
-/// 扫描索引目录数据源：把文档引擎的扫描索引（ScanIndexStore）接入
-/// <see cref="DomainCatalogProvider"/>，翻译器的签名 / 引脚查询由此落地。
+/// Scan index catalog data source: connects the documentation engine's scan index (ScanIndexStore)
+/// into <see cref="DomainCatalogProvider"/>; translator signature / pin queries are resolved here.
 /// <para>
-/// 函数查询走<b>继承聚合</b>（子类同名优先；查不到的父类塌陷，不报错）；
-/// 索引为空（尚未扫描 / 未接入）时 <see cref="TryLoad"/> 返回 false，翻译器回退宽松模式。
-/// <see cref="TryLoad"/> 同时是查询行为的扫描触发点：项目路径入扫描队列（幂等，异步处理）。
+/// Function queries use <b>inheritance aggregation</b> (subclass same-name wins; unresolved parent class collapses, no error);
+/// when the index is empty (not scanned / not connected), <see cref="TryLoad"/> returns false and the translator falls back to relaxed mode.
+/// <see cref="TryLoad"/> is also the scan trigger point for query behavior: project paths enter the scan queue (idempotent, async processing).
 /// </para>
 /// </summary>
 internal class ScanSignatureCatalog
 {
-    /// <summary>单例。</summary>
+    /// <summary>Singleton.</summary>
     public static ScanSignatureCatalog Instance { get; } = new();
 
     private static IScanDataProvider Self => ScanIndexDataProvider.Instance!;
@@ -40,9 +40,9 @@ internal class ScanSignatureCatalog
         if (string.IsNullOrWhiteSpace(owner) || string.IsNullOrWhiteSpace(method))
             return false;
 
-        // 类查找（含 U / A / F / I / E 前缀兼容）+ 继承聚合成员中定位函数。
-        // 函数名未命中时重试 "K2_" 前缀（引擎惯例：K2_GetActorLocation 等蓝图
-        // 包装函数的真实 FName 带 K2_ 前缀，编辑器显示名不带）。
+        // Class lookup (with U / A / F / I / E prefix compatibility) + locate function in inherited aggregated members.
+        // When function name misses, retry with "K2_" prefix (engine convention: K2_GetActorLocation etc.
+        // blueprint wrapper functions have K2_ prefix in real FName; editor display name omits it).
         foreach (ScanClassView cls in ScanDataProvider.Current
                      .FindClassesFlexible(owner))
         {
@@ -55,7 +55,7 @@ internal class ScanSignatureCatalog
             if (function is null)
                 continue;
 
-            // 匹配规则：位置实参不超参数总数（省略尾部默认参数）；具名实参名必须存在
+            // Match rules: positional arg count must not exceed total param count (trailing default params omitted); named arg names must exist
             if (positionalCount > function.Parameters.Count)
                 continue;
 
@@ -73,10 +73,10 @@ internal class ScanSignatureCatalog
                     .Select(p => new ScanParameterSignature(p.Name, p.Type))
                     .ToList())
             {
-                // BlueprintPure = 蓝图纯函数（无 exec 引脚，不占执行链）——
-                // 翻译器据此决定调用节点是否串入执行链（VInterpTo 纯 vs
-                // CreateSaveGameObject impure，Save_Create_B 的 entry → create
-                // 执行链即此判定）。
+                // BlueprintPure = pure function (no exec pin, not on execution chain) —
+                // the translator decides based on this whether to chain the call node into the execution flow
+                // (VInterpTo is pure vs CreateSaveGameObject is impure; Save_Create_B's entry → create
+                // execution chain is determined by this).
                 IsPure = function.IsPure,
             };
             return true;
@@ -94,24 +94,25 @@ internal class ScanSignatureCatalog
         if (string.IsNullOrWhiteSpace(method))
             return ScanOwnerLookup.NoDeclaration;
 
-        // 精确反查全部声明处；函数名未命中时重试 "K2_" 前缀（引擎蓝图包装函数惯例）。
+        // Precise reverse lookup of all declaration sites; retry with "K2_" prefix when function name misses (engine blueprint wrapper function convention).
         var declarations = Self.FindFunctionDeclarations(method);
         if (declarations.Count == 0)
             declarations = Self.FindFunctionDeclarations("K2_" + method);
         if (declarations.Count == 0)
         {
-            // 索引里没有同名声明：不是引擎/库函数——宽松回退（本蓝图自有函数，
-            // 如无引擎对应的占位方法 GetCurrent）；与"有声明但不匹配"严格区分。
+            // No matching declaration in index: not an engine/library function — relaxed fallback (local blueprint function,
+            // e.g. GetCurrent has no corresponding engine placeholder method); strictly differentiated from "declared but no match".
             return ScanOwnerLookup.NoDeclaration;
         }
 
-        // 调用点类型匹配（先定调用点类型，再过滤同名声明）：
-        // 位置实参数不超参数总数（省略尾部默认参数）；已知实参类型逐一兼容；
-        // 期望返回类型兼容。未知类型（null）作通配。
-        // 静态库首参 WorldContextObject 由引擎自动连 self，不占位置实参——
-        // 与翻译器的引脚对位（ExtractLiteralProperties / ExpectedArgType）同一约定：
-        // 位置实参从它之后开始对位（PrintString("x") 的 FString 对 InString，
-        // 不对 WorldContextObject）。逐声明判定（同名声明的首参未必都是 WorldContext）。
+        // Call-site type matching (determine call-site type first, then filter same-name declarations):
+        // positional arg count must not exceed total param count (trailing default params omitted);
+        // each known arg type must be compatible; expected return type must be compatible.
+        // Unknown type (null) acts as wildcard.
+        // Static library first param WorldContextObject is auto-connected by engine to self, not counted as positional arg —
+        // same convention as translator pin alignment (ExtractLiteralProperties / ExpectedArgType):
+        // positional args start aligning after it (PrintString("x")'s FString aligns with InString,
+        // not WorldContextObject). Per-declaration judgment (first param of same-name declarations may not all be WorldContext).
         int argCount = argumentTypes?.Count ?? 0;
         var candidates = declarations.Where(d =>
         {
@@ -133,8 +134,8 @@ internal class ScanSignatureCatalog
         if (candidates.Count == 0)
             return ScanOwnerLookup.NoTypeMatch;
 
-        // 多候选裁决：层级降序（引擎直属模块最优先）。OrderByDescending 稳定——
-        // 同层保持索引序，不再依赖 List.Sort（同 Scope 并列时结果任意）。
+        // Multi-candidate arbitration: level descending (engine-direct modules first). OrderByDescending is stable —
+        // same-level entries preserve index order; no longer depends on List.Sort (results arbitrary for same Scope ties).
         ownerClass = candidates
             .OrderByDescending(d => (int)d.Class.Scope)
             .First().Class.Name;
@@ -142,21 +143,21 @@ internal class ScanSignatureCatalog
     }
 
 /// <summary>
-/// UE 语义的类型兼容判定（实参 → 形参 / 声明返回值 → 期望返回值）：
-/// 任一侧未知（null / 空）通放；基名一致即兼容（const T&amp; 接受 T 值）。
-/// 基名不同时按以下顺序裁决：
+/// UE-semantic type compatibility judgment (argument → parameter / declared return → expected return):
+/// either side unknown (null / empty) passes through; base name match means compatible (const T&amp; accepts T value).
+/// When base names differ, decide in this order:
 /// <list type="number">
-/// <item>引擎蓝图自动转换（编辑器连线时自动插 Conv_ 节点，均带 BlueprintAutocast
-/// 标记）：数值族内部互转、数值 → FString（实测 int / float 连到 InString 时编辑器
-/// 自动插"转换为字符串（整型）/（浮点）"）、FString → FName（Conv_StringToName，
-/// KismetStringLibrary.h:85 "To Name (String)"——关卡流送
-/// LoadStreamLevel("Sub", ...) 的 LevelName(FName) 即此场景）。</item>
-/// <item>模板 / 容器类型（TArray&lt;...&gt; 等）要求基名一致，不做派生推断。</item>
-/// <item>任一侧是判定不认识的类型（DSL 类型名、索引未收录的结构）通放——
-/// 不认识就无法裁决，不猜测、不阻断。</item>
-/// <item>两侧都认识时按扫描索引基类链上溯判定派生兼容（AActor* → const UObject*）；
-/// FString / FText / FName 等已知值类型族互不兼容——蓝图引脚间无隐式转换
-///（唯一例外：上一条的 FString → FName 引擎自动转换）。</item>
+/// <item>Engine blueprint auto-conversion (Conv_ node auto-inserted by editor on wire, all with BlueprintAutocast
+/// mark): numeric family internal inter conversion, numeric → FString (verified: when int / float wired to InString, editor
+/// auto-inserts "Convert to (Integer)/(Float) String"), FString → FName (Conv_StringToName,
+/// KismetStringLibrary.h:85 "To Name (String)" — level streaming
+/// LoadStreamLevel("Sub", ...)'s LevelName(FName) is exactly this scenario).</item>
+/// <item>Template / container types (TArray&lt;...&gt; etc.) require base name match; no derived inference.</item>
+/// <item>Either side is a type the judgment does not recognize (DSL type name, index-not-included struct) passes through —
+/// unrecognized types cannot be judged, no guessing, no blocking.</item>
+/// <item>Both sides recognized: walk scan index base class chain to judge derived compatibility (AActor* → const UObject*);
+/// FString / FText / FName and other known value-type families are mutually incompatible — no implicit conversion between blueprint pins
+/// (only exception: the previous FString → FName engine auto-conversion).</item>
 /// </list>
 /// </summary>
 private static bool IsTypeCompatible(string? from, string? to)
@@ -177,8 +178,8 @@ private static bool IsTypeCompatible(string? from, string? to)
         (IsNumericType(toBase) || toBase.Equals("FString", StringComparison.Ordinal)))
         return true;
 
-    // FString → FName：引擎 BlueprintAutocast 自动转换（Conv_StringToName）。
-    // 单向豁免——FName → FString 虽有 Conv_NameToString 但未有调用点暴露，不放行。
+    // FString → FName: engine BlueprintAutocast auto-conversion (Conv_StringToName).
+    // One-way exemption — FName → FString has Conv_NameToString but no call site exposed, not allowed.
     if (fromBase.Equals("FString", StringComparison.Ordinal) &&
         toBase.Equals("FName", StringComparison.Ordinal))
         return true;
@@ -192,7 +193,7 @@ private static bool IsTypeCompatible(string? from, string? to)
         return IsClassDerivedFrom(fromBase, toBase);
     }
 
-    /// <summary>DSL / 蓝图显示类型名 → 引擎类型名（位置实参类型来自 DSL 声明文本，如 Vector / string）。</summary>
+    /// <summary>DSL / blueprint display type name → engine type name (positional arg types come from DSL declaration text, e.g. Vector / string).</summary>
     private static readonly Dictionary<string, string> TypeAliases = new(StringComparer.Ordinal)
     {
         ["Vector"] = "FVector",
@@ -209,7 +210,7 @@ private static bool IsTypeCompatible(string? from, string? to)
         ["byte"] = "uint8",
     };
 
-    /// <summary>数值族（引擎自动转换互通：byte / int / int64 / float / double）。</summary>
+    /// <summary>Numeric family (engine auto-conversion interop: byte / int / int64 / float / double).</summary>
     private static readonly HashSet<string> NumericTypes = new(StringComparer.Ordinal)
     {
         "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64",
@@ -217,8 +218,8 @@ private static bool IsTypeCompatible(string? from, string? to)
     };
 
     /// <summary>
-    /// 已知非 UObject 值类型族（蓝图引脚间无隐式转换，基名一致才兼容）。
-    /// 判定"认不认识"用——未收录其中的类型按"未知"通放。
+    /// Known non-UObject value-type families (no implicit conversion between blueprint pins, base name match needed).
+    /// Used for "do we recognize it" judgment — types not in this set pass through as "unknown".
     /// </summary>
     private static readonly HashSet<string> ValueTypes = new(StringComparer.Ordinal)
     {
@@ -232,13 +233,13 @@ private static bool IsTypeCompatible(string? from, string? to)
 
     private static bool IsNumericType(string baseName) => NumericTypes.Contains(baseName);
 
-    /// <summary>该基名是否为判定认识的类型：数值族 / 已知值类型族 / 扫描索引收录的类（含结构）。</summary>
+    /// <summary>Whether this base name is a type the judgment recognizes: numeric family / known value-type family / scan-indexed classes (incl. structs).</summary>
     private static bool IsKnownType(string baseName)
         => IsNumericType(baseName)
            || ValueTypes.Contains(baseName)
            || Self.FindClassesFlexible(baseName).Count > 0;
 
-    /// <summary>拆类型串 → (基名, 是否指针, 是否引用)：去尾部 * / &amp; 标记与 const 修饰，压缩空白。</summary>
+    /// <summary>Decompose type string → (base name, is pointer, is ref): strip trailing * / &amp; markers and const modifier, compress whitespace.</summary>
     private static (string Base, bool IsPointer, bool IsRef) DecomposeType(string type)
     {
         string t = type.Trim();
@@ -260,15 +261,18 @@ private static bool IsTypeCompatible(string? from, string? to)
     }
 
     /// <summary>
-    /// from 类是否沿基类链派生自 to 类（扫描索引；U/A/F/I/E 前缀灵活定位起点，
-    /// 基类子句截掉模板参数后逐级上溯，已访问集合防环）。
+    /// Whether from class derives from to class along base class chain (scan index;
+    /// U/A/F/I/E prefix flexibly locates the starting point, base clause strips template params and walks up,
+    /// visited set prevents cycles).
     /// </summary>
     private static bool IsClassDerivedFrom(string from, string to)
     {
         var store = ScanDataProvider.Current;
-        // 已访问集合按<b>条目本身</b>（引用身份）去重，不能按类名：索引里同名条目可能有多条
-        // （跨模块的重复声明等），按名去重时第一条会把其余全部吃掉——该条若是无基类的空条目，
-        // 派生链就地断掉（AActor 曾因索引里排在前头的伪条目被判"不派生自 UObject"）。
+        // Visited set deduplicates by <b>entry itself</b> (reference identity), not by class name:
+        // the index may contain multiple entries with the same name
+        // (cross-module duplicate declarations, etc.). Dedup by name lets the first swallow all others —
+        // if that entry is a baseless empty entry, the derivation chain breaks right there
+        // (AActor was once judged "not derived from UObject" due to a leading pseudo-entry in the index).
         var visited = new HashSet<ScanClassView>();
         var queue = new Queue<ScanClassView>(store.FindClassesFlexible(from));
         while (queue.Count > 0)

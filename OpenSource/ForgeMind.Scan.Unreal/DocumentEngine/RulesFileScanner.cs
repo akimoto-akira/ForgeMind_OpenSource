@@ -4,10 +4,10 @@
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// UBT 规则文件定位（复刻 UBT 的 FindRulesFiles 语义）：
-/// <para>- 某目录一旦出现 .build.cs，即视为模块目录，不再深入其子目录；</para>
-/// <para>- 跳过 Binaries / Intermediate / Saved / DerivedDataCache / .git / node_modules；</para>
-/// <para>- 引擎直属根：Engine/Source 与 Engine/Platforms/*/Source（Plugins 子树另由插件发现收集）。</para>
+/// UBT rules file location (replicates UBT FindRulesFiles semantics):
+/// <para>- Once a directory contains .build.cs, it is treated as a module directory; does not descend into subdirs.</para>
+/// <para>- Skips Binaries / Intermediate / Saved / DerivedDataCache / .git / node_modules.</para>
+/// <para>- Engine-direct roots: Engine/Source and Engine/Platforms/*/Source (Plugins subtree collected separately via plugin discovery).</para>
 /// </summary>
 public static class RulesFileScanner
 {
@@ -16,7 +16,7 @@ public static class RulesFileScanner
         "Binaries", "Intermediate", "Saved", "DerivedDataCache", ".git", "node_modules",
     ];
 
-    /// <summary>引擎直属源码根（Engine/Source 与 Platforms/*/Source）。</summary>
+    /// <summary>Engine-direct source roots (Engine/Source and Platforms/*/Source).</summary>
     public static List<string> GetEngineSourceRoots(string engineDir)
     {
         var roots = new List<string>();
@@ -32,7 +32,7 @@ public static class RulesFileScanner
         return roots;
     }
 
-    /// <summary>项目直属源码根（Project/Source）。</summary>
+    /// <summary>Project-direct source roots (Project/Source).</summary>
     public static List<string> GetProjectSourceRoots(string projectDir)
     {
         var roots = new List<string>();
@@ -40,7 +40,7 @@ public static class RulesFileScanner
         return roots;
     }
 
-    /// <summary>在指定根下递归收集 .build.cs（命中模块目录即不再深入；自动跳过 Plugins 子树）。</summary>
+    /// <summary>Recursively collect .build.cs under a given root (stops descending on hitting module directory; auto-skips Plugins subtree).</summary>
     public static List<string> FindModuleRulesFiles(string directory)
     {
         var results = new List<string>();
@@ -50,8 +50,8 @@ public static class RulesFileScanner
     }
 
     /// <summary>
-    /// 枚举根目录下的插件（含 .uplugin 描述文件的直接子目录）。
-    /// 引擎侧：Engine/Plugins；项目侧：Project/Plugins。
+    /// Enumerate plugins under a root directory (direct subdirs containing a .uplugin descriptor file).
+    /// Engine side: Engine/Plugins; project side: Project/Plugins.
     /// </summary>
     public static List<(string PluginDir, string? DescriptorFile)> FindPlugins(string rootDir)
     {
@@ -86,7 +86,7 @@ public static class RulesFileScanner
             foundInThisDir = true;
         }
 
-        // 命中模块目录即不再深入（与 UBT 一致）
+        // Stop descending once module directory matches (consistent with UBT)
         if (foundInThisDir)
             return;
 
@@ -96,7 +96,7 @@ public static class RulesFileScanner
             if (SkippedDirNames.Contains(name, StringComparer.OrdinalIgnoreCase))
                 continue;
             if (name.Equals("Plugins", StringComparison.OrdinalIgnoreCase))
-                continue; // 插件内的模块由插件发现单独收集，保持归属唯一
+                continue; // Modules inside plugins collected separately via plugin discovery, keeping ownership unique
 
             FindRulesFilesRecursively(subDir, results);
         }

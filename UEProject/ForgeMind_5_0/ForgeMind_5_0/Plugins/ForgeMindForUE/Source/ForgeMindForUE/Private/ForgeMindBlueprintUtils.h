@@ -9,6 +9,7 @@
 #include "UObject/CoreNetTypes.h"
 
 class UBlueprint;
+class UEdGraph;
 class UEdGraphNode;
 class FProperty;
 class UClass;
@@ -100,6 +101,34 @@ namespace ForgeMindBlueprintUtils
 	 * silently.
 	 */
 	bool BlueprintDefaultFromJsonValue(const TSharedPtr<FJsonValue>& DefaultJson, const FEdGraphPinType& PinType, FString& OutDefault, FString& OutReason, TArray<FString>& OutWarnings);
+
+	/**
+	 * How an exposeOnSpawn request relates to instanceEditable. The two are
+	 * independent switches in the engine - the details panel does not couple
+	 * them either (FBlueprintEditorUtils::SetBlueprintOnlyEditableFlag only
+	 * ever touches CPF_DisableEditOnInstance) - and the SpawnActor pin is
+	 * decided by MD_ExposeOnSpawn / CPF_ExposeOnSpawn alone
+	 * (UEdGraphSchema_K2::IsPropertyExposedOnSpawn), so a lone ExposeOnSpawn
+	 * works. The compiler only nudges: "Variable {0} is marked as 'Expose on
+	 * Spawn' but not marked as 'Instance Editable'" (KismetCompiler.cpp,
+	 * MessageLog.Warning - advisory, not an error).
+	 *
+	 * So this never silently ticks instanceEditable for the caller. A missing
+	 * instanceEditable key is reported (the caller decides), while an explicit
+	 * instanceEditable:false together with exposeOnSpawn:true contradicts
+	 * itself and is refused.
+	 */
+	enum class EExposeOnSpawnCheck : uint8
+	{
+		/** No exposeOnSpawn request, or instanceEditable was also requested true. */
+		Ok,
+		/** exposeOnSpawn:true with no instanceEditable key - applied as asked, caller gets a hint. */
+		MissingInstanceEditable,
+		/** exposeOnSpawn:true plus instanceEditable:false - refused, OutReason explains. */
+		Contradictory
+	};
+	EExposeOnSpawnCheck CheckExposeOnSpawnInstanceEditable(const TSharedPtr<FJsonObject>& Payload,
+		FString& OutReason);
 
 	/** Attaches non-fatal warnings to a response object (and the editor log). */
 	void AppendWarningsToResult(const TSharedPtr<FJsonObject>& Result, const TArray<FString>& Warnings);
@@ -205,6 +234,27 @@ namespace ForgeMindBlueprintUtils
 
 	/** Checks whether a graph with the given name already exists (ubergraphs, functions, macros). */
 	bool GraphNameExists(UBlueprint* Blueprint, const FString& Name);
+
+	/** Single entry point for "which graphs does this blueprint expose", in lookup
+	 *  order: ubergraph pages, function graphs, macro graphs and interface
+	 *  implementation graphs.
+	 *
+	 *  Interface implementation graphs are registered by
+	 *  FBlueprintEditorUtils::ImplementNewInterface on
+	 *  ImplementedInterfaces[].Graphs only -- never on FunctionGraphs -- so any
+	 *  scan limited to the three plain arrays is blind to the graphs a blueprint
+	 *  gets for free by implementing an interface. Every graph lookup must go
+	 *  through here: those graphs already exist and must be found, not recreated
+	 *  (recreating them is what produced "found multiple functions with the same
+	 *  name X" on Iface_Impl_A / Iface_Impl_B). */
+	void CollectTargetableGraphs(UBlueprint* Blueprint, TArray<UEdGraph*>& Out);
+
+	/** Function-like graphs only: FunctionGraphs plus interface implementation graphs.
+	 *  Deliberately EXCLUDES macro graphs and ubergraph pages: callers such as
+	 *  FindFunctionGraphPtr probe this first and fall through to the macro lookup, so
+	 *  matching macros here would route a macro body down the function path and map
+	 *  DSL FunctionEntry/FunctionResult onto nodes that do not exist in it. */
+	void CollectFunctionLikeGraphs(UBlueprint* Blueprint, TArray<UEdGraph*>& Out);
 
 	/**
 	 * Scans a UserDefinedStruct for members whose internal VarName starts with

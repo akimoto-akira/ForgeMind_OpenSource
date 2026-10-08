@@ -8,7 +8,7 @@ ForgeMind je platforma pro správu herních enginů přes rozhraní MCP: poskytu
 
 - **Nativní integrace MCP**: standardní protokol MCP (HTTP / stdio), hlavní AI klienti se připojí a fungují okamžitě.
 - **Samostatně sestavitelný open source výřez**: veřejný repozitář obsahuje hosta, všechny open source pluginy, ukázkový projekt UE a testy; s Apache-2.0 je možné sestavit a rozšiřovat samostatně.
-- **Architektura adaptérů enginů**: host a engine jsou odděleny přes lokální TCP most, rozšiřitelné nad rámec UE.
+- **Architektura adaptérů enginů**: host a engine jsou odděleny přes lokální TCP bridge, rozšiřitelné nad rámec UE.
 - **Offline čtení assetů**: parsování struktury `.uasset` bez otevírání editoru, v kombinaci s indexem skenování (SPK) pro funkce vyhledávání znalostí.
 - **Rozšiřování funkcí pluginy**: host integruje pouze minimální sadu nástrojů; funkce rozšiřují pluginy, hranice jsou jasné a redukovatelné.
 
@@ -20,4 +20,4 @@ Komerční verze nabízí na bázi OpenSource generování assetů DSL, komerčn
 
 - Neslibujte nevydané funkce; plán je závazný podle `roadmap.md`.
 - Nehanobte podobné nástroje; neprozrazujte navenek vnitřní detaily komerčních modulů (algoritmy autorizace, interní IR pravidla DSL atd.).
-- U chování souvisejícího se zdrojovým kódem vždy odkazujte na veřejný výřez; nejisté prvky označujte jako «čeká na potvrzení».
+- U chování souvisejícího se zdrojovým kódem vždy odkazujte na veřejný výřez; nejisté prvky označujte jako „čeká na potvrzení".

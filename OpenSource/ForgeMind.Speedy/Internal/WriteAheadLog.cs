@@ -47,7 +47,7 @@ internal sealed class WriteAheadLog : IDisposable
     private const byte TypeDelete = 2;
     private const byte TypeCommit = 0xFF;
 
-    private const int MaxSaneDataLength = 256 * 1024 * 1024; // 256MB 单条上限，防止坏数据导致天量分配
+    private const int MaxSaneDataLength = 256 * 1024 * 1024; // 256MB per-record cap to prevent massive allocation on corrupt data
 
     private readonly string _filePath;
     private FileStream? _stream;
@@ -143,7 +143,7 @@ internal sealed class WriteAheadLog : IDisposable
             {
                 var record = TryReadRecord(_stream);
                 if (record == null)
-                    break; // 遇到损坏 / 截断即停止，剩余视为未提交
+                    break; // Stop on corruption / truncation; remaining bytes treated as uncommitted
 
                 var (type, batchId, op) = record.Value;
 

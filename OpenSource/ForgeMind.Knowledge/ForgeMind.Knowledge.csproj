@@ -9,22 +9,22 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 唯一的代码依赖：Speedy 数据打包库（仅 Release 阶段的 .spk 后端使用） -->
+    <!-- Sole code dependency: Speedy data packaging library (used only by Release-stage .spk backend) -->
     <ProjectReference Include="..\ForgeMind.Speedy\ForgeMind.Speedy.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 宿主运行时公共面（Compat / Plugins / Engine / Authorization）：
-         以 ProjectReference 引用，Private=false 不随插件输出复制（由宿主在运行时提供），
-          同时建立正确构建顺序（宿主先于插件编译）。宿主为 exe 工程，
-          其输出作为引用程序集被插件消费，且不会被复制到插件输出目录。 -->
+    <!-- Host runtime public surface (Compat / Plugins / Engine / Authorization):
+         Referenced via ProjectReference, Private=false so it is not copied with plugin output (provided by host at runtime),
+         while establishing correct build order (host builds before plugin). Host is an exe project,
+         its output serves as referenced assembly consumed by the plugin and is not copied to the plugin output directory. -->
     <ProjectReference Include="..\ForgeMindServer\ForgeMindServer.csproj">
       <Private>false</Private>
     </ProjectReference>
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 教材数据：仓库根的 Knowledge\ 复制到输出目录，运行时由 UeKnowledgeStore 读取 -->
+    <!-- Textbook data: Knowledge\ at repo root copied to output directory, read at runtime by UeKnowledgeStore -->
     <None Include="..\..\Knowledge\**" Link="Knowledge\%(RecursiveDir)%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

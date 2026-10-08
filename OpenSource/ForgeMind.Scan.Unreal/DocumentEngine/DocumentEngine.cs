@@ -4,17 +4,17 @@
 namespace ForgeMind.Scan.Unreal;
 
 /// <summary>
-/// 文档引擎抽象基类（分层顶点）：触发一次扫描，产出按根组织的索引数据。
+/// Documentation engine abstract base class (layered vertex): triggers a scan, produces index data organized by root.
 /// <para>
-/// 分层沿用：DocumentEngine → UeDocumentEngine → Ue5_x。
-/// 一条根路径就是一个扫描范围；扫描结果由调用方持有到进程结束（不落盘、不缓存）。
+/// Layered hierarchy: DocumentEngine → UeDocumentEngine → Ue5_x.
+/// One root path = one scan scope; scan results are held by the caller until process exit (not persisted, not cached).
 /// </para>
 /// </summary>
 public abstract class DocumentEngine
 {
     /// <summary>
-    /// 触发一次完整扫描，产出扫描范围内所有根的数据
-    /// （引擎侧根 + 项目侧根；无项目时只含引擎侧根）。
+    /// Triggers a complete scan, producing data for all roots within the scan scope
+    /// (engine-side roots + project-side roots; if no project, only engine-side roots).
     /// </summary>
     public abstract IReadOnlyList<ScanRoot> Scan();
 }

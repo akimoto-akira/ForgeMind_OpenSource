@@ -8,45 +8,45 @@ using ForgeMindServer.Engine;
 
 namespace ForgeMind.Scan.Unreal;
 
-/// <summary>引擎构建形态（决定引擎侧索引的扫描触发规则）。</summary>
+/// <summary>Engine build form (determines engine-side index scan triggering rules).</summary>
 public enum EngineBuildKind
 {
-    /// <summary>安装版（Epic Launcher）：MCP 进程内仅首次编辑器启动时扫一次，之后沿用。</summary>
+    /// <summary>Installed build (Epic Launcher): within MCP process, only first editor launch triggers a scan; subsequent launches reuse.</summary>
     Installed,
 
-    /// <summary>源码版：每次启动编辑器都重扫（源码可能被改动）。</summary>
+    /// <summary>Source build: rescans on every editor launch (source code may have changed).</summary>
     Source,
 }
 
 /// <summary>
-/// 扫描索引存储（进程内唯一，<see cref="Current"/>）：内存持有到进程结束，<b>不落盘</b>。
+/// Scan index store (unique within process, <see cref="Current"/>): held in memory until process exit, <b>not persisted to disk</b>.
 /// <para>
-/// 触发模型：Tool 永不直接触发扫描——查询行为（DSL 查询等）与会话建立把项目路径
-/// 加入扫描队列（<see cref="EnqueueScan"/>，幂等），由专用线程（<see cref="ScanLoop"/>）逐条消费，
-/// 每条路径内部走 <see cref="OnEditorLaunched"/>（引擎定位 / 形态判定 / 重扫规则不变）；
-/// 调用方不等待——索引未就绪时查询走宽松回退。
-/// 重扫 = 一条根路径一个范围，整块丢弃 → 重建（非增量）。
+/// Trigger model: Tool never directly triggers a scan — query behavior (DSL queries, etc.) and session establishment
+/// add project paths to the scan queue (<see cref="EnqueueScan"/>, idempotent), consumed by a dedicated thread (<see cref="ScanLoop"/>),
+/// each path internally processing via <see cref="OnEditorLaunched"/> (engine location / build form determination / rescan rules unchanged);
+/// callers do not wait — queries fall back to relaxed mode when index is not ready.
+/// Rescan = one root path = one scope, whole block discarded → rebuilt (not incremental).
 /// </para>
 /// </summary>
 public sealed class ScanIndexStore
 {
-    /// <summary>进程内唯一实例（与 DomainCatalogStore&lt;T&gt;.Current 同一模式）。</summary>
+    /// <summary>Unique process-level instance (same pattern as DomainCatalogStore&lt;T&gt;.Current).</summary>
     public static ScanIndexStore Current { get; } = new();
 
     private readonly object _gate = new();
 
     private readonly ILogger _logger = LogManager.Instance.GetLogger<ScanIndexStore>();
 
-    /// <summary>根路径 → 索引数据（一条根路径 = 一个范围；key 不含版本——版本绝不作身份标识）。</summary>
+    /// <summary>Root path → index data (one root path = one scope; key does not contain version — version is never an identity).</summary>
     private readonly Dictionary<string, ScanRoot> _roots = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>类名 → 类记录（同名可能多条：多引擎 / 引擎与项目同名）；整范围替换后全量重建。</summary>
+    /// <summary>Class name → class records (multiple records possible for same name: multiple engines / engine and project same name); full rebuild after whole-scope replacement.</summary>
     private Dictionary<string, List<UeClassInfo>> _classesByName = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>最近一次扫描的完整诊断清单（规则编译错误 = 缺失存根清单；进程内持有，下次扫描覆盖）。</summary>
+    /// <summary>Full diagnostics list from last scan (rule compile errors = missing stub list; held in memory, overwritten on next scan).</summary>
     private List<string> _lastDiagnostics = [];
 
-    /// <summary>最近一次扫描的完整诊断清单快照。</summary>
+    /// <summary>Snapshot of the last scan's full diagnostics list.</summary>
     public IReadOnlyList<string> LastDiagnostics
     {
         get
@@ -56,7 +56,7 @@ public sealed class ScanIndexStore
         }
     }
 
-    /// <summary>最近一次扫描的诊断条数（未扫描过 = 0）。</summary>
+    /// <summary>Diagnostics count from last scan (0 if never scanned).</summary>
     public int LastDiagnosticsCount
     {
         get
@@ -66,18 +66,18 @@ public sealed class ScanIndexStore
         }
     }
 
-    // ---- 扫描队列（查询行为触发；专用线程消费）----
+    // ---- Scan queue (query behavior triggers; dedicated thread consumes) ----
 
     private readonly object _queueGate = new();
     private readonly Queue<string> _scanQueue = new();
 
-    /// <summary>排队中 / 扫描中的路径（扫描完成后移除，允许后续查询再次触发）。</summary>
+    /// <summary>Currently queued / scanning paths (removed after scan completes, allowing subsequent queries to re-trigger).</summary>
     private readonly HashSet<string> _queuedPaths = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>专用扫描线程（首次入队时惰性拉起；后台线程，随进程消亡）。</summary>
+    /// <summary>Dedicated scan thread (lazily started on first enqueue; background thread, dies with process).</summary>
     private Thread? _scanThread;
 
-    /// <summary>当前排队 / 扫描中的项目路径数（观察用）。</summary>
+    /// <summary>Count of currently queued / scanning project paths (observation only).</summary>
     public int PendingScanCount
     {
         get
@@ -92,7 +92,7 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// <summary>当前全部根的快照。</summary>
+    /// <summary>Snapshot of all current roots.</summary>
     public IReadOnlyList<ScanRoot> Roots
     {
         get
@@ -102,7 +102,7 @@ public sealed class ScanIndexStore
         }
     }
 
-    /// <summary>按根路径查索引。</summary>
+    /// <summary>Look up index by root path.</summary>
     public ScanRoot? FindRoot(string rootPath)
     {
         lock (_gate)
@@ -110,38 +110,38 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 扫描队列的处理函数（生产触发点经 <see cref="EnqueueScan"/> 入队，由专用线程调用）。
+    /// Scan queue processing function (production triggers enter queue via <see cref="EnqueueScan"/>, called by dedicated thread).
     /// <para>
-    /// 调用方只提供项目路径（.uproject 文件或项目目录）；其余全部内部推导：
-    /// 项目路径 → EngineAssociation → 引擎定位（Launcher 安装版 / 注册表源码构建）
-    /// → engineDir = {InstallLocation}\Engine（插件 / 源码 / 资产三段扫描的共同根）
-    /// → 形态判定（GUID 关联 = 源码版，版本号关联 = 安装版）。
+    /// Caller only provides project path (.uproject file or project directory); everything else is derived internally:
+    /// project path → EngineAssociation → engine location (Launcher installed / registry source build)
+    /// → engineDir = {InstallLocation}\Engine (common root for plugin/source/asset scan segments)
+    /// → form determination (GUID association = source build; version number association = installed build).
     /// </para>
     /// </summary>
-    /// <returns>扫描结果概要（含统计与诊断计数）；解析失败时不扫描，返回跳过原因。</returns>
+    /// <returns>Scan result summary (with stats and diagnostic count); if parsing fails, no scan and returns skip reason.</returns>
     public string OnEditorLaunched(string projectPath)
     {
-        // ---- 1. 解析项目 ----
+        // ---- 1. Resolve project ----
         FileInfo? projectFile = UeProjectFileManager.ResolveProjectFile(projectPath);
         if (projectFile is null)
-            return $"[ScanIndex] 未在 '{projectPath}' 解析到有效 .uproject，跳过扫描";
+            return $"[ScanIndex] No valid .uproject resolved at '{projectPath}', skipping scan";
 
-        // ---- 2. 引擎定位与形态判定 ----
+        // ---- 2. Engine location and form determination ----
         string association = UeProjectFileManager.GetEngineAssociation(projectFile.Directory!) ?? "";
         UnrealEngineInstallInfo? engineInfo = UnrealEngineLocator.FindUnrealEngine(association);
         if (engineInfo is null)
-            return $"[ScanIndex] EngineAssociation '{association}' 未能定位到本机引擎，跳过扫描";
+            return $"[ScanIndex] EngineAssociation '{association}' could not be resolved to a local engine, skipping scan";
 
         EngineBuildKind kind = Guid.TryParse(association, out _)
             ? EngineBuildKind.Source
             : EngineBuildKind.Installed;
 
-        // ---- 3. 扫描根：安装根下的 Engine 目录 ----
+        // ---- 3. Scan root: Engine dir under install root ----
         string engineDir = Path.Combine(engineInfo.Value.InstallLocation, "Engine");
         if (!Directory.Exists(engineDir))
-            return $"[ScanIndex] 引擎目录不存在（{engineDir}），跳过扫描";
+            return $"[ScanIndex] Engine directory does not exist ({engineDir}), skipping scan";
 
-        // 版本仅作数据属性，不作身份标识：安装版用关联版本号，源码版用 Build.version 全串
+        // Version is a data attribute, not an identity: installed build uses association version, source build uses full Build.version string
         string version = kind == EngineBuildKind.Source ? engineInfo.Value.AppVersion : association;
 
         var engine = new Ue5DocumentEngine(
@@ -154,9 +154,9 @@ public sealed class ScanIndexStore
         var diag = new List<string>();
         bool engineCodeFromSpk = false;
 
-        // ---- 4. 引擎代码扫描（优先级最高——签名查询依赖此数据）----
-        // 安装版引擎代码不变：进程内仅首次扫，后续沿用；
-        // 源码版每次都扫（源码可能被改动）。
+        // ---- 4. Engine code scan (highest priority — signature queries depend on this data) ----
+        // Installed build engine code unchanged: scanned only on first load within process, reused afterwards;
+        // source build scans every time (source code may have changed).
         // SPK data (pre-shipped) is loaded separately via SpkScanDataProvider; this live-scan
         // handles project-specific code not covered by SPK.
         bool needEngineCode = kind == EngineBuildKind.Source
@@ -165,7 +165,7 @@ public sealed class ScanIndexStore
         if (!needEngineCode)
         {
             engineCodeFromSpk = true;
-            _logger.Info(null, "[ScanIndex] 引擎代码索引已由 SPK 提供 (version={0})", version);
+            _logger.Info(null, "[ScanIndex] Engine code index already provided by SPK (version={0})", version);
         }
 
         if (needEngineCode)
@@ -173,17 +173,17 @@ public sealed class ScanIndexStore
             ReplaceRange(engine.ScanEngineCode());
         }
 
-        // ---- 5. 项目代码扫描（独立投递——不等引擎资产）----
+        // ---- 5. Project code scan (independent dispatch — does not wait for engine assets) ----
         ReplaceRange(engine.ScanProjectCode());
 
-        // ---- 6. 引擎资产扫描（耗时但不阻塞签名查询——代码已就绪）----
+        // ---- 6. Engine asset scan (time-consuming but non-blocking for signature queries — code already ready) ----
         string engineAssetKey = engine.InstallDir.FullName + ":assets";
         if (FindRoot(engineAssetKey) is null)
         {
             ReplaceRange(engine.ScanEngineAssets());
         }
 
-        // ---- 7. 项目资产扫描 ----
+        // ---- 7. Project asset scan ----
         if (projectFile.Directory is not null)
         {
             string projectAssetKey = projectFile.Directory.FullName + ":assets";
@@ -195,7 +195,7 @@ public sealed class ScanIndexStore
 
         clock.Stop();
 
-        // 记录本次扫描的完整诊断
+        // Record this scan's full diagnostics
         diag.AddRange(engine.ScanDiagnostics);
         lock (_gate)
             _lastDiagnostics = diag;
@@ -205,19 +205,19 @@ public sealed class ScanIndexStore
             root.Modules.Concat(root.Plugins.SelectMany(p => p.Modules)).Sum(m => m.Classes.Count));
         int assetCount = roots.Sum(root => root.Assets.Count);
 
-        return $"[ScanIndex] 扫描完成 {clock.Elapsed.TotalSeconds:F1}s " +
-               $"(引擎代码: {(engineCodeFromSpk ? "SPK" : needEngineCode ? "重扫" : "沿用")}) " +
+        return $"[ScanIndex] scan completed {clock.Elapsed.TotalSeconds:F1}s " +
+               $"(engine code: {(engineCodeFromSpk ? "SPK" : needEngineCode ? "rescan" : "reuse")}) " +
                $"roots={roots.Count} classes={classCount} assets={assetCount} " +
                $"diagnostics={diag.Count}";
     }
 
     /// <summary>
-    /// 查询行为触发的入队口（Tool 永不直接触发扫描）：把项目路径加入扫描队列，
-    /// 由专用线程异步处理——调用方不等待（索引未就绪时查询走宽松回退）。
+    /// Enqueue entry for query-triggered scanning (Tool never directly triggers scan): adds project path to scan queue,
+    /// processed asynchronously by a dedicated thread — callers do not wait (queries fall back to relaxed mode when index not ready).
     /// <para>
-    /// 幂等：同一路径排队 / 扫描中时重复入队无效；扫描完成后允许再次触发，
-    /// 是否重扫由 <see cref="OnEditorLaunched"/> 的既有规则决定
-    /// （安装版引擎仅首次、源码版每次、项目侧每次）。
+    /// Idempotent: repeated enqueue of same path already queued/scanning is no-op; allows re-trigger after scan completes;
+    /// whether to rescan is determined by existing rules in <see cref="OnEditorLaunched"/>
+    /// (installed engine only on first encounter, source build every time, project side every time).
     /// </para>
     /// </summary>
     public void EnqueueScan(string projectPath)
@@ -237,8 +237,8 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 专用扫描线程主循环：等待扫描指令 → 逐条消费队列 → <see cref="OnEditorLaunched"/>。
-    /// 单线程串行处理（扫描本身非线程安全，队列天然串行化）；异常不中断线程。
+    /// Dedicated scan thread main loop: wait for scan instruction → consume queue items one by one → <see cref="OnEditorLaunched"/>.
+    /// Single-thread serial processing (scan itself not thread-safe; queue is naturally serialized); exceptions do not terminate thread.
     /// </summary>
     private void ScanLoop()
     {
@@ -258,7 +258,7 @@ public sealed class ScanIndexStore
             }
             catch (Exception ex)
             {
-                _logger.Error(null, "[ScanIndex] 扫描队列处理 '{0}' 异常：{1}", projectPath, ex.Message);
+                _logger.Error(null, "[ScanIndex] Scan queue processing '{0}' exception: {1}", projectPath, ex.Message);
             }
             finally
             {
@@ -279,7 +279,7 @@ public sealed class ScanIndexStore
         return thread;
     }
 
-    /// <summary>整范围替换：一条根路径一个范围，整块丢弃 → 重建（非增量）。</summary>
+    /// <summary>Full-scope replacement: one root path = one scope, discard whole block → rebuild (not incremental).</summary>
     public void ReplaceRange(IEnumerable<ScanRoot> roots)
     {
         lock (_gate)
@@ -292,7 +292,7 @@ public sealed class ScanIndexStore
         }
     }
 
-    /// <summary>移除一个根范围（编辑器退出时可调用；数据本来也只持有到进程结束）。</summary>
+    /// <summary>Remove a root scope (callable on editor exit; data is only held until process exit anyway).</summary>
     public void RemoveRoot(string rootPath)
     {
         lock (_gate)
@@ -303,7 +303,7 @@ public sealed class ScanIndexStore
         }
     }
 
-    /// <summary>清空全部索引（进程内测试 / 重置用；正常生命周期靠进程退出消亡）。</summary>
+    /// <summary>Clear all indices (for in-process testing / reset; normal lifecycle relies on process exit).</summary>
     public void Clear()
     {
         lock (_gate)
@@ -314,9 +314,9 @@ public sealed class ScanIndexStore
         }
     }
 
-    // ---- 查询 ----
+    // ---- Queries ----
 
-    /// <summary>按名字查类（所有同名候选；多引擎同名时由调用方按需过滤）。</summary>
+    /// <summary>Find classes by name (all same-name candidates; callers filter as needed when multiple engines share names).</summary>
     public List<UeClassInfo> FindClasses(string name)
     {
         lock (_gate)
@@ -324,8 +324,8 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 灵活类名查找：先精确匹配，未命中再依次尝试 U / A / F / I / E 前缀
-    /// （DSL 侧常写「Actor」「KismetSystemLibrary」这类无前缀名）。
+    /// Flexible class name lookup: exact match first, then try U / A / F / I / E prefixes in order
+    /// (DSL side often writes unprefixed names like "Actor", "KismetSystemLibrary").
     /// </summary>
     public List<UeClassInfo> FindClassesFlexible(string name)
     {
@@ -343,19 +343,19 @@ public sealed class ScanIndexStore
         return [];
     }
 
-    // ---- 版本作用域查询 ----
-    // 契约：查询入口携带**项目路径**，版本由内部从项目推定；
-    // 版本永远不作为入参传入（避免调用方传错版本串）。
-    // 推定不出版本时不猜测、不中断——退回全局宽松查找，保持原有行为。
+    // ---- Version-scoped queries ----
+    // Contract: query entries carry **project path**; version is derived internally from the project;
+    // version is never passed as a parameter (avoids callers passing wrong version strings).
+    // When version cannot be derived, no guessing, no interruption — falls back to global relaxed lookup, preserving original behavior.
 
-    /// <summary>根集合变更代次；版本作用域索引据此判断是否失效。</summary>
+    /// <summary>Root set change generation; version-scoped index uses this to determine staleness.</summary>
     private int _generation;
 
-    /// <summary>版本 →（代次, 类名索引）。代次不符即重建。</summary>
+    /// <summary>Version → (generation, class name index). Rebuilds when generation mismatch.</summary>
     private readonly Dictionary<string, (int Generation, Dictionary<string, List<UeClassInfo>> Index)>
         _classIndexByScope = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>候选名序列：原名 + U/A/F/I/E 前缀（与既有灵活查找顺序一致）。</summary>
+    /// <summary>Candidate name sequence: original name + U/A/F/I/E prefixes (consistent with existing flexible lookup order).</summary>
     private static IEnumerable<string> FlexibleNameCandidates(string name)
     {
         yield return name;
@@ -364,12 +364,12 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 项目路径 → 作用域根路径集合（引擎根 + 项目根）。
-    /// 复用 OnEditorLaunched 的引擎定位链路：GetEngineAssociation →
-    /// FindUnrealEngine → InstallLocation/Engine。安装版与源码版走同一条
-    /// 路径逻辑（源码版靠 GUID 由 FindUnrealEngine 解析出源码引擎目录），
-    /// 全程不依赖版本串——根路径以安装/源码引擎目录为身份。
-    /// 定位失败时返回空集合，由调用方宽松回退。
+    /// Project path → set of scope root paths (engine root + project root).
+    /// Reuses OnEditorLaunched engine location chain: GetEngineAssociation →
+    /// FindUnrealEngine → InstallLocation/Engine. Installed and source builds share the same
+    /// path logic (source build resolves source engine dir via FindUnrealEngine using GUID),
+    /// never depends on version string — root paths use install/source engine dir as identity.
+    /// Returns empty collection on location failure; caller falls back to relaxed lookup.
     /// </summary>
     public List<string> ResolveScopePaths(string? projectPath)
     {
@@ -396,13 +396,13 @@ public sealed class ScanIndexStore
         }
         catch
         {
-            // 定位失败不阻断查询
+            // Location failure does not block query
         }
 
         return scope;
     }
 
-    /// <summary>作用域内的根（按根路径集合收窄——根路径是索引的唯一身份）。</summary>
+    /// <summary>Roots within scope (narrowed by root path set — root path is the unique identity of index).</summary>
     public List<ScanRoot> RootsForScope(IEnumerable<string> rootPaths)
     {
         var wanted = new HashSet<string>(rootPaths, StringComparer.OrdinalIgnoreCase);
@@ -410,7 +410,7 @@ public sealed class ScanIndexStore
             return _roots.Values.Where(r => wanted.Contains(r.RootPath)).ToList();
     }
 
-    /// <summary>作用域的「类名 → 类记录」索引（按代次缓存，键为排序后的根路径集合）。</summary>
+    /// <summary>Scope's class-name → class-records index (cached by generation; key is sorted root path set).</summary>
     private Dictionary<string, List<UeClassInfo>> ScopeClassIndex(IEnumerable<string> rootPaths)
     {
         var wanted = new HashSet<string>(rootPaths, StringComparer.OrdinalIgnoreCase);
@@ -446,22 +446,22 @@ public sealed class ScanIndexStore
         }
     }
 
-    /// <summary>作用域键 →（代次, 事件名索引）。键为排序后的根路径集合。</summary>
+    /// <summary>Scope key → (generation, event-name index). Key is sorted root path set.</summary>
     private readonly Dictionary<string, (int Generation, Dictionary<string, string> Index)>
         _eventIndexByScope = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>可蓝图重载事件的 UFUNCTION specifier（对应 FUNC_BlueprintEvent 家族）。</summary>
+    /// <summary>UFUNCTION specifiers for blueprint-overridable events (corresponding to FUNC_BlueprintEvent family).</summary>
     private static readonly string[] EventSpecifiers =
         ["BlueprintEvent", "BlueprintImplementableEvent", "BlueprintNativeEvent"];
 
-    /// <summary>同名别名不覆盖（先到先得，避免多类同名互相打翻）。</summary>
+    /// <summary>Same-name aliases do not overwrite (first-wins; avoids multiple same-name events overwriting each other).</summary>
     private static void AddEventAlias(Dictionary<string, string> index, string alias, string canonical)
     {
         if (!string.IsNullOrWhiteSpace(alias) && !index.ContainsKey(alias))
             index[alias] = canonical;
     }
 
-    /// <summary>作用域的「事件别名 → 引擎真名」索引（按代次缓存）。</summary>
+    /// <summary>Scope's event-alias → engine-canonical-name index (cached by generation).</summary>
     private Dictionary<string, string> ScopeEventIndex(IEnumerable<string> rootPaths)
     {
         var wanted = new HashSet<string>(rootPaths, StringComparer.OrdinalIgnoreCase);
@@ -489,10 +489,10 @@ public sealed class ScanIndexStore
                                 continue;
 
                             AddEventAlias(index, fn.Name, fn.Name);
-                            // Receive 前缀 → 显示名（BeginPlay ← ReceiveBeginPlay）
+                            // Receive prefix → display name (BeginPlay ← ReceiveBeginPlay)
                             if (fn.Name.StartsWith("Receive", StringComparison.OrdinalIgnoreCase))
                                 AddEventAlias(index, fn.Name["Receive".Length..], fn.Name);
-                            // K2_ 前缀 → 去前缀名
+                            // K2_ prefix → strip prefix name
                             if (fn.Name.StartsWith("K2_", StringComparison.OrdinalIgnoreCase))
                                 AddEventAlias(index, fn.Name["K2_".Length..], fn.Name);
                         }
@@ -506,15 +506,16 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 调用方/DSL 写的事件名（常是显示名，如 BeginPlay）→ 引擎真名
-    /// （ReceiveBeginPlay）。按项目路径确定的作用域查；查不到返回 null，
-    /// 由调用方原样放行（不猜测、不中断）。
+    /// Resolve caller/DSL written event name (often display name, e.g. BeginPlay) to engine canonical name
+    /// (ReceiveBeginPlay). Queries by project-path-derived scope; returns null if not found,
+    /// caller passes through as-is (no guessing, no interruption).
     /// <para>
-    /// 注意：这是**全引擎同名**查询——只要引擎里任意类有同名可重载事件就命中。
-    /// 判定"某个方法是不是本蓝图的可重载事件"时不能用它：`void Run()` 会被
-    /// EditorUtilityActor / EditorUtilityObject / EditorUtilityWidget 的
-    /// BlueprintImplementableEvent `Run()` 误判成可重载事件（For_Basic_B 回归）。
-    /// 那种场景请用带 <c>parentClassName</c> 的重载（限定在父类链内）。
+    /// Note: this is an **all-engine same-name** query — any class in the engine having a same-name
+    /// overridable event counts as a hit. Cannot be used to judge "whether a method is this blueprint's
+    /// overridable event": `void Run()` would be misjudged as an overridable event from
+    /// EditorUtilityActor / EditorUtilityObject / EditorUtilityWidget's BlueprintImplementableEvent
+    /// `Run()` (For_Basic_B regression).
+    /// For that scenario, use the overload with <c>parentClassName</c> (scoped to parent class chain).
     /// </para>
     /// </summary>
     public string? ResolveEventFunctionName(string? name, string? projectPath)
@@ -530,11 +531,11 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 同 <see cref="ResolveEventFunctionName(string?, string?)"/>，但**只在
-    /// parentClassName 的父类链（含该类自身）内**匹配可重载事件——避免把引擎里
-    /// 毫不相干的同名事件当成"本蓝图可重载事件"。
-    /// 父类链一个类都定位不到（索引未就绪 / 类名无法解析）时退回全引擎查询，
-    /// 防止"索引没准备好 → 事件节点退化成自定义事件"的回归。
+    /// Same as <see cref="ResolveEventFunctionName(string?, string?)"/>, but **only matches overridable
+    /// events within parentClassName's parent class chain (including the class itself)** — avoids treating
+    /// unrelated same-name events in the engine as "this blueprint's overridable event".
+    /// When parent chain cannot locate any class (index not ready / class name unresolvable),
+    /// falls back to all-engine query to prevent "index not ready → event node degrades to custom event" regression.
     /// </summary>
     public string? ResolveEventFunctionName(string? name, string? projectPath, string? parentClassName)
     {
@@ -545,7 +546,7 @@ public sealed class ScanIndexStore
         if (scope.Count == 0)
             return ResolveEventFunctionName(name, projectPath);
 
-        // 父类链（含自身）：起始类 → BaseClasses 逐级上溯；按条目去重防环
+        // Parent class chain (inclusive): starting class → BaseClasses walking up; entry dedup prevents cycles
         var visited = new HashSet<UeClassInfo>();
         var queue = new Queue<UeClassInfo>(FindClassesFlexible(parentClassName, projectPath));
         var chain = new List<UeClassInfo>();
@@ -571,9 +572,9 @@ public sealed class ScanIndexStore
         }
 
         if (chain.Count == 0)
-            return ResolveEventFunctionName(name, projectPath); // 索引未就绪 → 退回宽松
+            return ResolveEventFunctionName(name, projectPath); // Index not ready → fall back to relaxed
 
-        // 链内匹配：引擎真名 / Receive 去前缀（显示名）/ K2_ 去前缀
+        // In-chain matching: engine canonical name / Receive stripped (display name) / K2_ stripped
         foreach (UeClassInfo cls in chain)
         {
             foreach (UeFunctionInfo fn in cls.Functions)
@@ -589,7 +590,7 @@ public sealed class ScanIndexStore
         return null;
     }
 
-    /// <summary>可重载事件函数名是否等于该方法名，或其 Receive / K2_ 去前缀形式。</summary>
+    /// <summary>Whether the overridable event function name equals the method name, or its Receive / K2_ stripped form.</summary>
     private static bool MatchesEventAlias(string functionName, string wanted)
     {
         if (string.IsNullOrWhiteSpace(functionName))
@@ -607,8 +608,8 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 按<b>项目路径对应版本</b>查类——同名类在多引擎版本并存时结果确定。
-    /// 推定不出版本则退回全局查找（<see cref="FindClassesFlexible(string)"/>）保持原行为。
+    /// Find class by <b>project-path-derived version</b> — deterministic results when same-name classes coexist across engine versions.
+    /// Falls back to global lookup (<see cref="FindClassesFlexible(string)"/>) when version cannot be derived, preserving original behavior.
     /// </summary>
     public List<UeClassInfo> FindClassesFlexible(string name, string? projectPath)
     {
@@ -627,8 +628,8 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 父类查找：只在<b>同级或更大标号</b>的候选中找（以当前类的 <see cref="ScopeLevel"/> 为界）。
-    /// 多个命中时取遍历序第一个；查不到返回 null（由调用方塌陷，不报错——MCP 不是编译器）。
+    /// Find base class: only search among candidates with <b>same or higher scope level</b> (bounded by current class's <see cref="ScopeLevel"/>).
+    /// Take traversal-order first among multiple hits; return null if not found (caller collapses, no error — MCP is not a compiler).
     /// </summary>
     public UeClassInfo? FindBaseClass(string baseName, ScopeLevel selfScope)
     {
@@ -648,19 +649,19 @@ public sealed class ScanIndexStore
     }
 
     /// <summary>
-    /// 收集一个类的全部可用函数（<b>含继承</b>）：沿基类链向上聚合，
-    /// 子类同名优先；查不到的父类塌陷为 UObject（停止该支，不报错）。
-    /// 聚合在本存储内完成（返回前计算），调用方不算。
+    /// Collect all available functions of a class (<b>including inheritance</b>): aggregate up the base class chain,
+    /// subclass same-name takes priority; unresolved parent class collapses to UObject (stops that branch, no error).
+    /// Aggregation done within this store (computed before return), not by caller.
     /// </summary>
     public List<UeFunctionInfo> CollectFunctions(UeClassInfo start)
         => Collect(start, static c => c.Functions, static f => f.Name);
 
     /// <summary>
-    /// 函数名反查<b>全部声明处</b>（精确匹配，不查继承——声明在哪个类，宿主就是哪个类）。
-    /// 无接收者的 this 调用归属判定用（如 GetDisplayName 在引擎里有多处同名声明，
-    /// 宿主裁决按调用点参数 / 返回值类型过滤后进行，见 ScanIndexCatalogSource）。
-    /// 返回索引遍历序，不排序——多候选的层级裁决由调用方在类型过滤后做，此处排序
-    /// 只会把类型过滤前的顺序钉死。索引为空返回空列表（宽松回退，不报错）。
+    /// Reverse lookup function name to <b>all declaration sites</b> (exact match, no inheritance — which class declares it is the host).
+    /// Used for owner resolution of receiverless this-calls (e.g. GetDisplayName has multiple same-name declarations in engine;
+    /// host arbitration filters by call-site parameter / return value types, see ScanIndexCatalogSource).
+    /// Returns index traversal order, unsorted — multi-candidate level arbitration done by caller after type filtering; sorting here
+    /// would freeze the pre-type-filter order. Returns empty list when index is empty (relaxed fallback, no error).
     /// </summary>
     public List<(UeClassInfo Class, UeFunctionInfo Function)> FindFunctionDeclarations(string functionName)
     {
@@ -687,14 +688,14 @@ public sealed class ScanIndexStore
         return result;
     }
 
-    /// <summary>收集一个类的全部可用属性（含继承），规则同 <see cref="CollectFunctions"/>。</summary>
+    /// <summary>Collect all available properties of a class (including inheritance); rules same as <see cref="CollectFunctions"/>.</summary>
     public List<UePropertyInfo> CollectProperties(UeClassInfo start)
         => Collect(start, static c => c.Properties, static p => p.Name);
 
     /// <summary>
-    /// 关键词检索（与点查共用同一索引、同一份内存数据）：匹配类名、函数名、属性名、
-    /// 资产名与资产导出名；命中数量以 <paramref name="maxResults"/> 截断。
-    /// 消费方通用——不与任何域（蓝图 / 材质 / …）绑死。
+    /// Keyword search (shares same index and memory data as point queries): matches class names, function names, property names,
+    /// asset names and asset export names; hit count capped by <paramref name="maxResults"/>.
+    /// Consumer-generic — not bound to any domain (blueprint / material / …).
     /// </summary>
     public List<ScanSearchHit> Search(string keyword, int maxResults = 20)
     {
@@ -816,14 +817,14 @@ public sealed class ScanIndexStore
                 UeClassInfo? parent = FindBaseClass(baseName, current.Scope);
                 if (parent is not null)
                     queue.Enqueue(parent);
-                // 查不到 → 塌陷（该支停止；源码可编译则继承链合法，索引覆盖问题不归 MCP 报错）
+                // Not found → collapse (branch stops; source compiles means inheritance chain is valid; index coverage issues not MCP's to report)
             }
         }
 
         return result;
     }
 
-    // ---- 内部 ----
+    // ---- Internal ----
 
     private void RebuildNameIndex()
     {

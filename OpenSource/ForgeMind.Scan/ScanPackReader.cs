@@ -8,16 +8,16 @@ using ForgeMind.Speedy;
 namespace ForgeMind.Scan;
 
 /// <summary>
-/// 从 SPK 包里读扫描数据（refactor plan §16）。包内布局就是历史 ScanCache 的布局：
+/// Reads scan data from an SPK pack (refactor plan §16). The on-disk layout mirrors the historical ScanCache layout:
 /// <code>
-/// {version}/engine.json     — 引擎侧代码扫描的 ScanRoot 树
-/// {version}/assets.json     — 引擎侧资产扫描的 ScanRoot 树
+/// {version}/engine.json     — engine-side code scan ScanRoot tree
+/// {version}/assets.json     — engine-side asset scan ScanRoot tree
 /// </code>
 /// <para>
-/// 包里存的是<b>扫描算法原本产物的树</b>（含层级、属性、说明符、元数据）。这里在读取时把它
-/// 投影成契约视图 <see cref="ScanRootView"/> / <see cref="ScanClassView"/> /
-/// <see cref="ScanFunctionView"/> —— 对外契约不变，消费方（含
-/// <see cref="SpkScanDataProvider"/>）无感知，但底层数据不再被提前拍平丢失。</para>
+/// The pack stores the <b>raw product tree of the scan algorithm</b> (hierarchy, properties, specifiers, metadata). On read it is
+/// projected into the contract views <see cref="ScanRootView"/> / <see cref="ScanClassView"/> /
+/// <see cref="ScanFunctionView"/> — the public contract stays unchanged, consumers (including
+/// <see cref="SpkScanDataProvider"/>) are unaware, but the underlying data is no longer flattened prematurely and lost.</para>
 /// </summary>
 public sealed class ScanPackReader : IDisposable
 {
@@ -57,7 +57,7 @@ public sealed class ScanPackReader : IDisposable
     }
 
     /// <summary>
-    /// ScanCache 布局没有 manifest 条目——历史 ScanCache 里就没有这个文件，所以恒为 null。
+    /// ScanCache layout has no manifest entry — historical ScanCache never had this file, so always null.
     /// </summary>
     public ScanManifest? ReadManifest() => null;
 
@@ -185,9 +185,9 @@ public sealed class ScanPackReader : IDisposable
     /// <inheritdoc />
     public void Dispose() => _reader.Dispose();
 
-    // ── 树 → 视图 ──
+    // ── tree → view ──
 
-    /// <summary>root 自己的 modules，加上每个 plugin 下的 modules —— 与历史遍历一致。</summary>
+    /// <summary>The root's own modules plus the modules under each plugin — matches historical traversal.</summary>
     private static IEnumerable<DtoModule> EnumerateModules(DtoRoot root)
     {
         foreach (DtoModule module in root.Modules ?? [])
@@ -222,9 +222,9 @@ public sealed class ScanPackReader : IDisposable
         return _reader.ReadAt(entry.Offset, entry.Length);
     }
 
-    // ── ScanCache JSON 形状（只取投影需要的字段；未列出的字段仍存在于包内，不解析而已）──
+    // ── ScanCache JSON shape (only fields needed for the projection are listed; other fields still exist in the pack but are not parsed) ──
 
-    /// <summary><c>engine.json</c> 的根元素。</summary>
+    /// <summary>Root element of <c>engine.json</c>.</summary>
     public sealed class DtoRoot
     {
         public string RootPath { get; set; } = "";
@@ -234,21 +234,21 @@ public sealed class ScanPackReader : IDisposable
         public List<DtoModule>? Modules { get; set; }
     }
 
-    /// <summary><c>engine.json</c> 的插件节点。</summary>
+    /// <summary>Plugin node of <c>engine.json</c>.</summary>
     public sealed class DtoPlugin
     {
         public string Name { get; set; } = "";
         public List<DtoModule>? Modules { get; set; }
     }
 
-    /// <summary><c>engine.json</c> 的模块节点。</summary>
+    /// <summary>Module node of <c>engine.json</c>.</summary>
     public sealed class DtoModule
     {
         public string Name { get; set; } = "";
         public List<DtoClass>? Classes { get; set; }
     }
 
-    /// <summary><c>engine.json</c> 的类节点。</summary>
+    /// <summary>Class node of <c>engine.json</c>.</summary>
     public sealed class DtoClass
     {
         public string Name { get; set; } = "";
@@ -261,7 +261,7 @@ public sealed class ScanPackReader : IDisposable
         public List<DtoFunction>? Functions { get; set; }
     }
 
-    /// <summary><c>engine.json</c> 的函数节点。</summary>
+    /// <summary>Function node of <c>engine.json</c>.</summary>
     public sealed class DtoFunction
     {
         public string Name { get; set; } = "";
@@ -273,7 +273,7 @@ public sealed class ScanPackReader : IDisposable
         public List<DtoParameter>? Parameters { get; set; }
     }
 
-    /// <summary><c>engine.json</c> 的参数节点。</summary>
+    /// <summary>Parameter node of <c>engine.json</c>.</summary>
     public sealed class DtoParameter
     {
         public string Name { get; set; } = "";

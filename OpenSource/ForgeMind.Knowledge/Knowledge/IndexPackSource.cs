@@ -34,7 +34,7 @@ internal sealed class IndexPackSource : IKnowledgeSource
         {
             foreach (string dir in _pack.ListDirectories(""))
             {
-                // 桶标记即枚举值名（"UE_5_4"）或通用桶 "universal"
+                // Bucket tag is the enum value name ("UE_5_4") or the universal bucket "universal"
                 if (EngineVersions.IsValidBucketName(dir))
                     result.Add(dir);
             }

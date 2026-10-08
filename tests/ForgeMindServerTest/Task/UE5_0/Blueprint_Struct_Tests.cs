@@ -34,8 +34,8 @@ using Task = System.Threading.Tasks.Task;
 //   pending verification, test is spec.
 //   Task 1 / task 2 DSL copied from doc.
 //
-// Note: per collaboration spec point 9, "diff comparison" (VerifyIrSnapshot) not attached
-// when transwriting task docs.
+// Note: mis-touch comparison (VerifyIrSnapshot) inserted by user instruction, covering all
+// A-side and B-side assets (structs + blueprints) per collaboration spec point 9.
 // =========================================================================
 
 public sealed class Blueprint_Struct : ITestCase
@@ -94,9 +94,11 @@ public sealed class Blueprint_Struct : ITestCase
         BlueprintTestHelper.Connect(ctx, a1, make1, "Vector", f1.resultId, "ReturnValue");
         BlueprintTestHelper.Connect(ctx, a1, f1.entryId, "then", f1.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a1);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
 
         // DSL path (copied from task doc)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Struct_Make_B");
 
         // -- Subtask 2: Break Struct --
         // MCP steps: Struct_Break_A (Extends Actor) + function Show(v: Vector)
@@ -112,9 +114,11 @@ public sealed class Blueprint_Struct : ITestCase
         BlueprintTestHelper.Connect(ctx, a2, f2.entryId, "then", p2.nodeId, "execute");
         BlueprintTestHelper.Connect(ctx, a2, p2.nodeId, "then", f2.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a2);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
 
         // DSL path (copied from task doc)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Struct_Break_B");
 
         // -- Subtask 3: Custom Struct --
         // MCP steps: 1. Build struct asset FHealth_A (Cur : int, Max : int)
@@ -145,9 +149,13 @@ public sealed class Blueprint_Struct : ITestCase
         BlueprintTestHelper.Connect(ctx, a3, make3, "FHealth_A", f3.resultId, "ReturnValue");
         BlueprintTestHelper.Connect(ctx, a3, f3.entryId, "then", f3.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, healthA);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 
         // DSL path (copied from task doc, struct block as standalone [Struct] domain per file header notes)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/FHealth_B");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Struct_Custom_B");
 
         await Task.CompletedTask;
     }

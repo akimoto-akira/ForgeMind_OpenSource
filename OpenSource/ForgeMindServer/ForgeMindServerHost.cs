@@ -171,6 +171,7 @@ public static class ForgeMindServerHost
     /// <summary>Starts host services (the UE bridge).</summary>
     public static void Start()
     {
+
         // Open-source authorization: no license-file parsing, no trial-license generation.
         // AuthorizationService keeps its field-initial value OpenAuthorizationService (Community fixed capabilities).
         // Commercial authorization is introduced only by a ServiceOverride during plugin loading (see PluginLoader / ApplyServiceOverride).
@@ -303,6 +304,16 @@ public static class ForgeMindServerHost
                 }
             }
         }
+
+        // Bridge-reflection read provider (source 3): registered AFTER the engine is hooked up
+        // (plugins have run their OnLoad). Join order follows data readiness, and the chain
+        // asks last-joined first — so the query order becomes bridge reflection, then the live
+        // scan index, then the frozen engine index (freshness descending). The plugin-registered
+        // providers join earlier with their OnLoad; without this registration a chain over them
+        // ends in all-null and the parent-member shapes reported through the bridge (filled by
+        // ParentAssetPrefetcher) become unreachable. Registration is unconditional and idempotent:
+        // an empty bridge index answers null and the chain falls through harmlessly.
+        ScanDataProviderRegistry.Register(BridgeScanDataProvider.Instance);
     }
     /// <summary>Stops host services on shutdown.</summary>
     public static void Stop()
