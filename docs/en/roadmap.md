@@ -1,27 +1,27 @@
-# ForgeMind Development Roadmap
+﻿# ForgeMind Development Roadmap
 
-This roadmap reflects the development progress of ForgeMind asset generation capabilities, grouped by domain and status, and is continuously updated as development proceeds. Data source: latest asset collection snapshot (2026-10-08).
+This roadmap reflects the development progress of ForgeMind asset generation capabilities, grouped by domain and status, and is continuously updated as development proceeds. Data source: latest asset collection snapshot (2026-10-19).
 
 ## Overview
 
 | Status | Count |
 | --- | ---: |
-| Completed | 30 |
-| In Progress | 11 |
-| Planned | 118 |
+| Completed | 59 |
+| In Progress | 4 |
+| Planned | 96 |
 | Total | 159 |
 
 ## Browse by Domain
 
 | Domain | Completed | In Progress | Planned |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Other | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Completed (30)
+### Completed (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ This roadmap reflects the development progress of ForgeMind asset generation cap
 - Blueprint Bind Instance Event
 - Blueprint Debug Draw
 - Blueprint Switch Node
-
-### In Progress (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ This roadmap reflects the development progress of ForgeMind asset generation cap
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
-
-### Planned (43)
-
+- Blueprint ArrayOps
 - Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
+
+### In Progress (3)
+
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Planned (21)
+
 - Blueprint Vector
 - Blueprint Enhanced Input
-- Blueprint Delegate Binding
 - Blueprint Subsystem
-- Blueprint Container Map/Set
-- Blueprint Line Trace
 - Blueprint Delay
 - Blueprint Async Load
 - Blueprint Reference
 - Blueprint Shape Trace
-- Blueprint Math Library
-- Blueprint Math Expression
-- Blueprint Data Table
-- Blueprint Data Asset
-- Blueprint Array Operations
 - Blueprint Text Formatting
 - Blueprint Rotation
-- Blueprint Timeline
-- Blueprint Curve
-- Blueprint Enum
-- Blueprint Enum Iteration
 - Blueprint Spline
-- Blueprint Flow Control
 - Blueprint Physics
 - Blueprint Camera
-- Blueprint Collision Events
-- Blueprint Class Defaults
-- Blueprint Particles
 - Blueprint Components
-- Blueprint Network Replication
 - Blueprint Character Movement
 - Blueprint Conversion
-- Blueprint Soft References
-- Blueprint Input Events
 - Blueprint Operators
 - Blueprint Runtime Components
 - Blueprint Switch Node
 - Blueprint Destroy
-- Blueprint Gate
-- Blueprint Random
 - Blueprint Sound
 - Blueprint Predict Trajectory
 

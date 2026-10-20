@@ -57,6 +57,9 @@
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/UserWidget.h"
 #include "ForgeMindBlueprintUtils.h"
+// add_action_mapping / add_axis_mapping: UInputSettings + FInputActionKeyMapping / FInputAxisKeyMapping
+#include "GameFramework/InputSettings.h"
+#include "GameFramework/PlayerInput.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -234,7 +237,7 @@ FForgeMindBridgeClient::FForgeMindBridgeClient()
 {
 	ActiveInstance() = this;
 
-	AdvertisedCommands = { TEXT("ping"), TEXT("get_status"), TEXT("open_asset"), TEXT("exec_console"), TEXT("quit_editor"), TEXT("list_class_hierarchy"), TEXT("get_current_level"), TEXT("create_level"), TEXT("set_pie"), TEXT("list_level_actors"), TEXT("get_actor_details"), TEXT("delete_actor"), TEXT("spawn_actor"), TEXT("set_actor_property"), TEXT("create_blueprint"), TEXT("create_blueprint_struct"), TEXT("create_blueprint_enum"), TEXT("create_blueprint_interface"), TEXT("add_struct_member"), TEXT("update_struct_member"), TEXT("remove_struct_member"), TEXT("add_enum_entry"), TEXT("update_enum_entry"), TEXT("remove_enum_entry"), TEXT("scan_assets"), TEXT("list_assets"), TEXT("get_asset_info"), TEXT("add_blueprint_variable"), TEXT("add_event_dispatcher"), TEXT("set_blueprint_variable_default"), TEXT("update_blueprint_variable"), TEXT("list_blueprint_variables"), TEXT("remove_blueprint_variable"), TEXT("list_blueprint_graph"), TEXT("list_blueprint_catalog"), TEXT("add_blueprint_node"), TEXT("connect_blueprint_pins"), TEXT("set_pin_default_value"), TEXT("delete_blueprint_node"), TEXT("break_blueprint_pins"), TEXT("save_asset"), TEXT("delete_asset"), TEXT("create_function_graph"), TEXT("remove_function_graph"), TEXT("create_macro_graph"), TEXT("compile_blueprint"), TEXT("add_comment_box"), TEXT("move_nodes_to_comment"), TEXT("remove_nodes_from_comment"), TEXT("get_debug_output"), TEXT("get_screen_output"), TEXT("add_blueprint_component"), TEXT("list_blueprint_components"), TEXT("set_component_property"), TEXT("remove_blueprint_component"), TEXT("create_input_action"), TEXT("create_input_mapping_context"), TEXT("add_input_mapping"), TEXT("list_editor_settings"), TEXT("add_widget_child"), TEXT("list_widget_children"), TEXT("apply_asset_ir"), TEXT("get_asset_ir"), TEXT("take_screenshot"), TEXT("list_windows") };
+	AdvertisedCommands = { TEXT("ping"), TEXT("get_status"), TEXT("open_asset"), TEXT("exec_console"), TEXT("quit_editor"), TEXT("list_class_hierarchy"), TEXT("get_current_level"), TEXT("create_level"), TEXT("set_pie"), TEXT("list_level_actors"), TEXT("get_actor_details"), TEXT("delete_actor"), TEXT("spawn_actor"), TEXT("set_actor_property"), TEXT("create_blueprint"), TEXT("create_blueprint_struct"), TEXT("create_blueprint_enum"), TEXT("create_blueprint_interface"), TEXT("create_data_table"), TEXT("add_struct_member"), TEXT("update_struct_member"), TEXT("remove_struct_member"), TEXT("add_enum_entry"), TEXT("update_enum_entry"), TEXT("remove_enum_entry"), TEXT("scan_assets"), TEXT("list_assets"), TEXT("get_asset_info"), TEXT("add_blueprint_variable"), TEXT("add_event_dispatcher"), TEXT("set_blueprint_variable_default"), TEXT("update_blueprint_variable"), TEXT("list_blueprint_variables"), TEXT("remove_blueprint_variable"), TEXT("list_blueprint_graph"), TEXT("list_blueprint_catalog"), TEXT("add_blueprint_node"), TEXT("connect_blueprint_pins"), TEXT("set_pin_default_value"), TEXT("delete_blueprint_node"), TEXT("break_blueprint_pins"), TEXT("save_asset"), TEXT("delete_asset"), TEXT("create_function_graph"), TEXT("remove_function_graph"), TEXT("create_macro_graph"), TEXT("compile_blueprint"), TEXT("add_comment_box"), TEXT("move_nodes_to_comment"), TEXT("remove_nodes_from_comment"), TEXT("get_debug_output"), TEXT("get_screen_output"), TEXT("add_blueprint_component"), TEXT("list_blueprint_components"), TEXT("set_component_property"), TEXT("remove_blueprint_component"), TEXT("create_input_action"), TEXT("create_input_mapping_context"), TEXT("add_input_mapping"), TEXT("list_editor_settings"), TEXT("add_widget_child"), TEXT("list_widget_children"), TEXT("apply_asset_ir"), TEXT("get_asset_ir"), TEXT("take_screenshot"), TEXT("list_windows") };
 
 	RequestHandlers.Add(TEXT("ping"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandlePing(Payload); });
 	RequestHandlers.Add(TEXT("get_status"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleGetStatus(Payload); });
@@ -254,6 +257,7 @@ FForgeMindBridgeClient::FForgeMindBridgeClient()
 	RequestHandlers.Add(TEXT("create_blueprint_struct"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprintStruct(Payload); });
 	RequestHandlers.Add(TEXT("create_blueprint_enum"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprintEnum(Payload); });
 	RequestHandlers.Add(TEXT("create_blueprint_interface"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateBlueprintInterface(Payload); });
+	RequestHandlers.Add(TEXT("create_data_table"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleCreateDataTable(Payload); });
 	RequestHandlers.Add(TEXT("add_struct_member"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleAddStructMember(Payload); });
 	RequestHandlers.Add(TEXT("update_struct_member"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleUpdateStructMember(Payload); });
 	RequestHandlers.Add(TEXT("remove_struct_member"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleRemoveStructMember(Payload); });
@@ -292,6 +296,8 @@ FForgeMindBridgeClient::FForgeMindBridgeClient()
 	RequestHandlers.Add(TEXT("set_component_property"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleSetComponentProperty(Payload); });
 	RequestHandlers.Add(TEXT("remove_blueprint_component"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleRemoveBlueprintComponent(Payload); });
 	RequestHandlers.Add(TEXT("list_editor_settings"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleListEditorSettings(Payload); });
+	RequestHandlers.Add(TEXT("add_action_mapping"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleAddActionMapping(Payload); });
+	RequestHandlers.Add(TEXT("add_axis_mapping"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleAddAxisMapping(Payload); });
 	RequestHandlers.Add(TEXT("add_widget_child"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleAddWidgetChild(Payload); });
 	RequestHandlers.Add(TEXT("list_widget_children"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleListWidgetChildren(Payload); });
 	RequestHandlers.Add(TEXT("apply_asset_ir"), [this](const TSharedPtr<FJsonObject>& Payload) { return HandleApplyAssetIR(Payload); });
@@ -2190,36 +2196,17 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprint(const TSha
 		return Result;
 	}
 
-	// Path may arrive as /Game/Dir/BP_Name or /Game/Dir/BP_Name.BP_Name; keep
-	// the package part and derive the asset name from its last element.
-	FString PackagePath = AssetPath;
-	int32 DotIndex = INDEX_NONE;
-	if (PackagePath.FindChar(TEXT('.'), DotIndex))
-	{
-		PackagePath = PackagePath.Left(DotIndex);
-	}
-	if (!FPackageName::IsValidLongPackageName(PackagePath) || !PackagePath.StartsWith(TEXT("/Game/")))
+	// Path normalisation + clobber check: single entry point shared by every
+	// create_* asset command (see PrepareNewAssetLocation).
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!ForgeMindBlueprintUtils::PrepareNewAssetLocation(AssetPath, TEXT("/Game/Blueprints/BP_Thing"),
+		PackagePath, AssetName, PathReason))
 	{
 		Result->SetBoolField(TEXT("created"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("path must be a project content path like /Game/Blueprints/BP_Thing"));
+		Result->SetStringField(TEXT("reason"), PathReason);
 		return Result;
-	}
-	const FString AssetName = FPaths::GetCleanFilename(PackagePath);
-
-	// Refuse to clobber an existing asset.
-	// Use AssetRegistry (not FindPackage) to avoid stale in-memory packages
-	// from deleted-but-not-GC'd assets.
-	{
-		FAssetRegistryModule& AssetRegModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		IAssetRegistry& AssetRegistry = AssetRegModule.Get();
-		TArray<FAssetData> ExistingAssets;
-		AssetRegistry.GetAssetsByPackageName(FName(*PackagePath), ExistingAssets, /*bIncludeOnlyOnDiskAssets=*/true);
-		if (ExistingAssets.Num() > 0)
-		{
-			Result->SetBoolField(TEXT("created"), false);
-			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("An asset already exists at '%s'"), *PackagePath));
-			return Result;
-		}
 	}
 
 	// Guard against stale in-memory packages: a previous creation attempt
@@ -2340,6 +2327,27 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprint(const TSha
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
 	FAssetRegistryModule::AssetCreated(Blueprint);
 	Blueprint->MarkPackageDirty();
+
+	// Optional 'replicates' (class-level [Replicates]): set bReplicates on the Actor
+	// CDO so instances replicate by default (equivalent to the editor's "Replicates"
+	// checkbox under Actor). Must run after the compile above so GeneratedClass/CDO
+	// exist; non-Actor parents ignore it.
+	bool bWantsReplicates = false;
+	if (Payload->TryGetBoolField(TEXT("replicates"), bWantsReplicates) && bWantsReplicates
+		&& Blueprint->GeneratedClass != nullptr)
+	{
+		if (AActor* ActorCDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject()))
+		{
+			// bReplicates is a protected UPROPERTY (bitfield) on AActor; write it through
+			// the property system to bypass C++ access control (the editor's "Replicates"
+			// checkbox edits the same reflected property).
+			if (FBoolProperty* ReplicatesProp = FindFProperty<FBoolProperty>(ActorCDO->GetClass(), TEXT("bReplicates")))
+			{
+				ReplicatesProp->SetPropertyValue_InContainer(ActorCDO, true);
+				Blueprint->MarkPackageDirty();
+			}
+		}
+	}
 
 	// Optional 'implements' field: array of interface asset paths to implement.
 	// FBlueprintEditorUtils::ImplementNewInterface attaches the interface and
@@ -2594,5 +2602,171 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleListEditorSettings(const T
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetArrayField(TEXT("settings"), SettingsArray);
 	Result->SetNumberField(TEXT("count"), SettingsArray.Num());
+	return Result;
+}
+// ---------------------------------------------------------------------------
+// HandleAddActionMapping
+//
+// Registers an action-to-key mapping in the project Input Settings so that
+// K2Node_InputActionEvent nodes referencing this action name can bind at
+// runtime.  The bridge validates action name registration before creating
+// InputAction event nodes (ForgeMindBridgeClient_BlueprintGraph.cpp), so
+// this handler must be called before add_blueprint_node with kind=inputaction.
+//
+// Payload keys:
+//   action - the action name (FName, e.g. "Jump")
+//   key    - the key name (e.g. "SpaceBar", "W")
+//   shift  - optional modifier (default false)
+//   ctrl   - optional modifier (default false)
+//   alt    - optional modifier (default false)
+//   cmd    - optional modifier (default false)
+//
+// Idempotent: if an identical mapping already exists, returns added=true
+// with alreadyExists=true so test re-runs do not duplicate entries.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddActionMapping(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString ActionName;
+	if (!Payload.IsValid() || !Payload->TryGetStringField(TEXT("action"), ActionName) || ActionName.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("missing or empty 'action' field"));
+		return Result;
+	}
+
+	FString KeyName;
+	if (!Payload->TryGetStringField(TEXT("key"), KeyName) || KeyName.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("missing or empty 'key' field"));
+		return Result;
+	}
+
+	bool bShift = false, bCtrl = false, bAlt = false, bCmd = false;
+	Payload->TryGetBoolField(TEXT("shift"), bShift);
+	Payload->TryGetBoolField(TEXT("ctrl"), bCtrl);
+	Payload->TryGetBoolField(TEXT("alt"), bAlt);
+	Payload->TryGetBoolField(TEXT("cmd"), bCmd);
+
+	// Build FKey from the key name.  FKey uses FName internally; common keys
+	// like "SpaceBar", "W", "A", "D" are registered by the engine at startup.
+	const FKey Key(*KeyName);
+	if (!Key.IsValid())
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"),
+			FString::Printf(TEXT("unknown key '%s'"), *KeyName));
+		return Result;
+	}
+
+	UInputSettings* InputSettings = GetMutableDefault<UInputSettings>();
+	if (InputSettings == nullptr)
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("failed to get UInputSettings"));
+		return Result;
+	}
+
+	// Idempotent check: if an identical mapping already exists, report
+	// success with alreadyExists=true so test re-runs do not fail.
+	const FName ActionFName(*ActionName);
+	for (const FInputActionKeyMapping& M : InputSettings->GetActionMappings())
+	{
+		if (M.ActionName == ActionFName
+			&& M.Key == Key
+			&& M.bShift == bShift
+			&& M.bCtrl == bCtrl
+			&& M.bAlt == bAlt
+			&& M.bCmd == bCmd)
+		{
+			Result->SetBoolField(TEXT("added"), true);
+			Result->SetBoolField(TEXT("alreadyExists"), true);
+			return Result;
+		}
+	}
+
+	InputSettings->AddActionMapping(FInputActionKeyMapping(ActionFName, Key, bShift, bCtrl, bAlt, bCmd));
+	InputSettings->SaveKeyMappings();
+
+	Result->SetBoolField(TEXT("added"), true);
+	Result->SetBoolField(TEXT("alreadyExists"), false);
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// HandleAddAxisMapping
+//
+// Registers an axis-to-key mapping (with scale) in the project Input
+// Settings so that K2Node_InputAxisEvent nodes referencing this axis name
+// can bind at runtime.  Same validation / idempotency approach as
+// HandleAddActionMapping.
+//
+// Payload keys:
+//   axis  - the axis name (FName, e.g. "Move")
+//   key   - the key name (e.g. "D", "W")
+//   scale - optional float scale (default 1.0)
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddAxisMapping(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AxisName;
+	if (!Payload.IsValid() || !Payload->TryGetStringField(TEXT("axis"), AxisName) || AxisName.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("missing or empty 'axis' field"));
+		return Result;
+	}
+
+	FString KeyName;
+	if (!Payload->TryGetStringField(TEXT("key"), KeyName) || KeyName.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("missing or empty 'key' field"));
+		return Result;
+	}
+
+	double Scale = 1.0;
+	Payload->TryGetNumberField(TEXT("scale"), Scale);
+
+	const FKey Key(*KeyName);
+	if (!Key.IsValid())
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"),
+			FString::Printf(TEXT("unknown key '%s'"), *KeyName));
+		return Result;
+	}
+
+	UInputSettings* InputSettings = GetMutableDefault<UInputSettings>();
+	if (InputSettings == nullptr)
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("failed to get UInputSettings"));
+		return Result;
+	}
+
+	// Idempotent check: same axis name + key + scale.
+	const FName AxisFName(*AxisName);
+	const float ScaleFloat = static_cast<float>(Scale);
+	for (const FInputAxisKeyMapping& M : InputSettings->GetAxisMappings())
+	{
+		if (M.AxisName == AxisFName
+			&& M.Key == Key
+			&& FMath::IsNearlyEqual(M.Scale, ScaleFloat))
+		{
+			Result->SetBoolField(TEXT("added"), true);
+			Result->SetBoolField(TEXT("alreadyExists"), true);
+			return Result;
+		}
+	}
+
+	InputSettings->AddAxisMapping(FInputAxisKeyMapping(AxisFName, Key, ScaleFloat));
+	InputSettings->SaveKeyMappings();
+
+	Result->SetBoolField(TEXT("added"), true);
+	Result->SetBoolField(TEXT("alreadyExists"), false);
 	return Result;
 }

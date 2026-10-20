@@ -265,6 +265,13 @@ public class AssetTool : ITool
             }
         }
 
+        string sourcePath = "";
+        if (parameters.TryGetValue("path", out object? pathObj))
+        {
+            sourcePath = pathObj is JsonElement pe && pe.ValueKind == JsonValueKind.String
+                ? pe.GetString() ?? "" : pathObj?.ToString() ?? "";
+        }
+
         try
         {
             object definition = BlueprintGraphReader.Read(package, graphName, level);
@@ -274,6 +281,10 @@ public class AssetTool : ITool
             {
                 ["version"] = $"{major}.{minor}",
                 ["assetType"] = "blueprint",
+                // IR rules.md §1.4: the read direction has to carry "path" as well —
+                // without it this IR cannot be fed back into apply_asset_ir, which
+                // breaks the read → edit → write-back loop the symmetry exists for.
+                ["path"] = ToPackagePath(sourcePath),
                 ["mode"] = "read",
                 ["level"] = level,
                 ["definition"] = definition,
@@ -289,6 +300,42 @@ public class AssetTool : ITool
         {
             return ToolResult.Failed($"Failed to read IR: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Derives the "/Game/..." package path of an asset file so the offline IR carries the
+    /// same "path" field as the bridge read direction (IR rules.md §1.4). Falls back to the
+    /// source file path when the file does not live under a Content directory: the field
+    /// must never be missing, but it must not silently invent a package path either.
+    /// </summary>
+    private static string ToPackagePath(string filePath)
+    {
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return filePath ?? "";
+        }
+
+        try
+        {
+            string full = Path.GetFullPath(filePath);
+            string? dir = Path.GetDirectoryName(full);
+            while (!string.IsNullOrEmpty(dir))
+            {
+                if (string.Equals(Path.GetFileName(dir), "Content", StringComparison.OrdinalIgnoreCase))
+                {
+                    string rel = full.Substring(dir.Length).TrimStart(Path.DirectorySeparatorChar, '/');
+                    rel = rel.Replace('\\', '/');
+                    return "/Game/" + Path.ChangeExtension(rel, null);
+                }
+                dir = Path.GetDirectoryName(dir);
+            }
+        }
+        catch
+        {
+            // Fall through: use the raw path rather than failing the read.
+        }
+
+        return filePath.Replace('\\', '/');
     }
 
     // ===== action: info =====

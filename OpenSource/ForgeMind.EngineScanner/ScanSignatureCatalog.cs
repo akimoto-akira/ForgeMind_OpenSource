@@ -70,7 +70,7 @@ internal class ScanSignatureCatalog
                 function.Name,
                 function.IsStatic,
                 function.Parameters
-                    .Select(p => new ScanParameterSignature(p.Name, p.Type))
+                    .Select(p => new ScanParameterSignature(p.Name, p.Type, p.IsOut))
                     .ToList())
             {
                 // BlueprintPure = pure function (no exec pin, not on execution chain) —
@@ -134,11 +134,10 @@ internal class ScanSignatureCatalog
         if (candidates.Count == 0)
             return ScanOwnerLookup.NoTypeMatch;
 
-        // Multi-candidate arbitration: level descending (engine-direct modules first). OrderByDescending is stable —
-        // same-level entries preserve index order; no longer depends on List.Sort (results arbitrary for same Scope ties).
-        ownerClass = candidates
-            .OrderByDescending(d => (int)d.Class.Scope)
-            .First().Class.Name;
+        // Multi-candidate arbitration is delegated to the shared arbiter so the
+        // live-scan path ranks identically to the frozen-index path (spec 8).
+        ownerClass = ScanOwnerArbiter.PickBest([.. candidates.Select(
+            d => (d.Class.Name, (int)d.Class.Scope, d.Function))]);
         return ScanOwnerLookup.Resolved;
     }
 
@@ -161,141 +160,6 @@ internal class ScanSignatureCatalog
 /// </list>
 /// </summary>
 private static bool IsTypeCompatible(string? from, string? to)
-{
-    if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
-        return true;
+    => ScanTypeCompatibility.IsCompatible(from, to, Self.FindClassesFlexible);
 
-    (string fromBase, _, _) = DecomposeType(from);
-    (string toBase, _, _) = DecomposeType(to);
-    fromBase = CanonicalType(fromBase);
-    toBase = CanonicalType(toBase);
-    if (fromBase.Length == 0 || toBase.Length == 0)
-        return true;
-    if (fromBase.Equals(toBase, StringComparison.Ordinal))
-        return true;
-
-    if (IsNumericType(fromBase) &&
-        (IsNumericType(toBase) || toBase.Equals("FString", StringComparison.Ordinal)))
-        return true;
-
-    // FString → FName: engine BlueprintAutocast auto-conversion (Conv_StringToName).
-    // One-way exemption — FName → FString has Conv_NameToString but no call site exposed, not allowed.
-    if (fromBase.Equals("FString", StringComparison.Ordinal) &&
-        toBase.Equals("FName", StringComparison.Ordinal))
-        return true;
-
-    if (fromBase.Contains('<') || toBase.Contains('<'))
-        return false;
-
-        if (!IsKnownType(fromBase) || !IsKnownType(toBase))
-            return true;
-
-        return IsClassDerivedFrom(fromBase, toBase);
-    }
-
-    /// <summary>DSL / blueprint display type name → engine type name (positional arg types come from DSL declaration text, e.g. Vector / string).</summary>
-    private static readonly Dictionary<string, string> TypeAliases = new(StringComparer.Ordinal)
-    {
-        ["Vector"] = "FVector",
-        ["Vector2D"] = "FVector2D",
-        ["Rotator"] = "FRotator",
-        ["Transform"] = "FTransform",
-        ["Quat"] = "FQuat",
-        ["string"] = "FString",
-        ["name"] = "FName",
-        ["text"] = "FText",
-        ["int"] = "int32",
-        ["long"] = "int64",
-        ["short"] = "int16",
-        ["byte"] = "uint8",
-    };
-
-    /// <summary>Numeric family (engine auto-conversion interop: byte / int / int64 / float / double).</summary>
-    private static readonly HashSet<string> NumericTypes = new(StringComparer.Ordinal)
-    {
-        "int8", "uint8", "int16", "uint16", "int32", "uint32", "int64", "uint64",
-        "float", "double",
-    };
-
-    /// <summary>
-    /// Known non-UObject value-type families (no implicit conversion between blueprint pins, base name match needed).
-    /// Used for "do we recognize it" judgment — types not in this set pass through as "unknown".
-    /// </summary>
-    private static readonly HashSet<string> ValueTypes = new(StringComparer.Ordinal)
-    {
-        "FString", "FText", "FName", "FVector", "FVector2D", "FVector4", "FIntPoint",
-        "FRotator", "FQuat", "FTransform", "FLinearColor", "FColor", "FGuid", "FDateTime",
-        "bool",
-    };
-
-    private static string CanonicalType(string baseName)
-        => TypeAliases.TryGetValue(baseName, out string? canonical) ? canonical : baseName;
-
-    private static bool IsNumericType(string baseName) => NumericTypes.Contains(baseName);
-
-    /// <summary>Whether this base name is a type the judgment recognizes: numeric family / known value-type family / scan-indexed classes (incl. structs).</summary>
-    private static bool IsKnownType(string baseName)
-        => IsNumericType(baseName)
-           || ValueTypes.Contains(baseName)
-           || Self.FindClassesFlexible(baseName).Count > 0;
-
-    /// <summary>Decompose type string → (base name, is pointer, is ref): strip trailing * / &amp; markers and const modifier, compress whitespace.</summary>
-    private static (string Base, bool IsPointer, bool IsRef) DecomposeType(string type)
-    {
-        string t = type.Trim();
-        bool isPointer = false, isRef = false;
-        while (t.EndsWith("*"))
-        {
-            isPointer = true;
-            t = t[..^1].TrimEnd();
-        }
-        while (t.EndsWith("&"))
-        {
-            isRef = true;
-            t = t[..^1].TrimEnd();
-        }
-        if (t.StartsWith("const ", StringComparison.Ordinal))
-            t = t["const ".Length..].Trim();
-        t = string.Join(' ', t.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-        return (t, isPointer, isRef);
-    }
-
-    /// <summary>
-    /// Whether from class derives from to class along base class chain (scan index;
-    /// U/A/F/I/E prefix flexibly locates the starting point, base clause strips template params and walks up,
-    /// visited set prevents cycles).
-    /// </summary>
-    private static bool IsClassDerivedFrom(string from, string to)
-    {
-        var store = ScanDataProvider.Current;
-        // Visited set deduplicates by <b>entry itself</b> (reference identity), not by class name:
-        // the index may contain multiple entries with the same name
-        // (cross-module duplicate declarations, etc.). Dedup by name lets the first swallow all others —
-        // if that entry is a baseless empty entry, the derivation chain breaks right there
-        // (AActor was once judged "not derived from UObject" due to a leading pseudo-entry in the index).
-        var visited = new HashSet<ScanClassView>();
-        var queue = new Queue<ScanClassView>(store.FindClassesFlexible(from));
-        while (queue.Count > 0)
-        {
-            var cls = queue.Dequeue();
-            if (!visited.Add(cls))
-                continue;
-
-            foreach (string baseDecl in cls.AllBaseClasses)
-            {
-                string baseName = baseDecl.Trim();
-                int lt = baseName.IndexOf('<');
-                if (lt >= 0)
-                    baseName = baseName[..lt].Trim();
-
-                if (baseName.Equals(to, StringComparison.Ordinal))
-                    return true;
-
-                foreach (var next in store.FindClassesFlexible(baseName))
-                    queue.Enqueue(next);
-            }
-        }
-
-        return false;
-    }
 }

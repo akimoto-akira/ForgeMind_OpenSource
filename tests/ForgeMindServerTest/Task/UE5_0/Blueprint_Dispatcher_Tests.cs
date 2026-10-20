@@ -54,11 +54,11 @@ public sealed class Blueprint_Dispatcher : ITestCase
         // Custom Event Handle(int Amount) → PrintString(Amount)
         var handle2 = BlueprintTestHelper.AddNode(ctx, a2, "EventGraph", "Handle", 600, 0,
             kind: "customevent", eventParams: new[] { new { name = "Amount", type = "int" } });
-        // Binding: CustomEvent has no delegate output pin; CreateDelegate relay is needed to connect
-        // to AddDelegate's "Delegate" pin (engine real name, display name "Event").
-        var create2 = BlueprintTestHelper.AddNode(ctx, a2, "EventGraph", "CreateDelegate", 450, 120,
-            function: "Handle");
-        BlueprintTestHelper.Connect(ctx, a2, create2.nodeId, "ReturnValue", bind2.nodeId, "Delegate");
+        // Direct bind: CustomEvent (UK2Node_Event) has an OutputDelegate output pin
+        // (the event node's "red square"); wire it straight to AddDelegate's "Delegate"
+        // pin (display name "Event") - no CreateDelegate relay, exactly as the engine's
+        // own "bind event" action does.
+        BlueprintTestHelper.Connect(ctx, a2, handle2.nodeId, "OutputDelegate", bind2.nodeId, "Delegate");
         var p2 = BlueprintTestHelper.AddNode(ctx, a2, "EventGraph", "PrintString", 900, 0, "KismetSystemLibrary");
         BlueprintTestHelper.Connect(ctx, a2, handle2.nodeId, "Amount", p2.nodeId, "InString");
         BlueprintTestHelper.Connect(ctx, a2, handle2.nodeId, "then", p2.nodeId, "execute");
@@ -81,17 +81,15 @@ public sealed class Blueprint_Dispatcher : ITestCase
             new[] { new { name = "Amount", type = "int" } });
         BlueprintTestHelper.CompileAndSave(ctx, a3);
 
-        // Stop function → RemoveDelegate OnDamage
-        // Handle custom event, providing the target for CreateDelegate (signature matches OnDamage)
+        // Stop() is a void function -> B-side lowers it into the EventGraph as a
+        // custom event (same graph as Handle), so the Remove node binds
+        // Handle.OutputDelegate directly - no CreateDelegate relay. Mirror that.
         var unbindA_handle = BlueprintTestHelper.AddNode(ctx, a3, "EventGraph", "Handle", 600, 0,
             kind: "customevent", eventParams: new[] { new { name = "Amount", type = "int" } });
-        var f3 = BlueprintTestHelper.CreateFunction(ctx, a3, "Stop");
-        var unbind3 = BlueprintTestHelper.AddNode(ctx, a3, "Stop", "OnDamage", 300, 0, kind: "removeDelegate");
-        var create3 = BlueprintTestHelper.AddNode(ctx, a3, "Stop", "CreateDelegate", 150, 120,
-            function: "Handle");
-        BlueprintTestHelper.Connect(ctx, a3, create3.nodeId, "ReturnValue", unbind3.nodeId, "Delegate");
-        BlueprintTestHelper.Connect(ctx, a3, f3.entryId, "then", unbind3.nodeId, "execute");
-        BlueprintTestHelper.Connect(ctx, a3, unbind3.nodeId, "then", f3.resultId, "execute");
+        var stop3 = BlueprintTestHelper.AddNode(ctx, a3, "EventGraph", "Stop", 0, 0, kind: "customevent");
+        var unbind3 = BlueprintTestHelper.AddNode(ctx, a3, "EventGraph", "OnDamage", 300, 0, kind: "removeDelegate");
+        BlueprintTestHelper.Connect(ctx, a3, stop3.nodeId, "then", unbind3.nodeId, "execute");
+        BlueprintTestHelper.Connect(ctx, a3, unbindA_handle.nodeId, "OutputDelegate", unbind3.nodeId, "Delegate");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
         BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 

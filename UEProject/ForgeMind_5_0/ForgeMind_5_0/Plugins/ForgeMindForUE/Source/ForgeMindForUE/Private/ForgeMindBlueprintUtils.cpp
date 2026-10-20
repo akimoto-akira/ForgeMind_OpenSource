@@ -13,14 +13,19 @@
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/DataTable.h"
 #include "Engine/Level.h"
 #include "Engine/LevelScriptActor.h"
 #include "Engine/LevelScriptBlueprint.h"
 #include "Engine/World.h"
 #include "Editor.h"
+#include "Factories/DataTableFactory.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Misc/PackageName.h"
 #include "Misc/Paths.h"
+#include "Math/RandomStream.h"
+#include "UObject/Package.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UnrealType.h"
 #include "Engine/UserDefinedEnum.h"
@@ -452,6 +457,148 @@ namespace ForgeMindBlueprintUtils
 		return true;
 	}
 
+	bool TranslateEnumDefaultText(const UEnum* Enum, const FString& AuthoredDefault, FString& OutInternalName, FString& OutReason, int64* OutCombinedValue)
+	{
+		if (OutCombinedValue != nullptr)
+		{
+			*OutCombinedValue = 0;
+		}
+
+		// Bitmask combination defaults ("A|C" / "EMyFlags.A | EMyFlags.C"): the
+		// engine's text chain (FByteProperty::ImportText_Internal, PropertyByte.cpp
+		// and FEnumProperty::ImportText_Internal, EnumProperty.cpp, and
+		// PropertyValueFromString_Direct, BlueprintEditorUtils.cpp) resolves a
+		// **single** entry by name or numeric value - a combination never parses
+		// there ("A|C" is neither an authored name nor numeric; even "5" fails
+		// because GetIndexByValue looks up *entries*, and no entry carries the
+		// combined value). The editor's bitmask checkbox never goes through that
+		// text chain either - it OR-s each flag straight into the property. Split
+		// the tokens here, strip the optional "EnumName." prefix per segment (the
+		// DSL keeps it: its literal form is EMyFlags.A), resolve each entry and
+		// OR the values.
+		if (AuthoredDefault.Contains(TEXT("|")))
+		{
+			TArray<FString> Tokens;
+			AuthoredDefault.ParseIntoArray(Tokens, TEXT("|"), true);
+			int64 Combined = 0;
+			for (FString& Token : Tokens)
+			{
+				Token = Token.TrimStartAndEnd();
+				if (Token.IsEmpty())
+				{
+					OutReason = FString::Printf(TEXT("enum default '%s' has an empty segment between '|' separators"),
+						*AuthoredDefault);
+					return false;
+				}
+				// Strip the "EMyFlags." owner prefix: the enum resolves entries by
+				// their own name, and the DSL authors the literal with the owner
+				// class name (EMyFlags.A). Entry names themselves carry no dot.
+				const int32 DotPos = Token.Find(TEXT("."), ESearchCase::CaseSensitive);
+				if (DotPos != INDEX_NONE)
+				{
+					Token = Token.Mid(DotPos + 1);
+				}
+				int64 SegmentValue = Enum->GetValueByName(FName(*Token), EGetByNameFlags::CheckAuthoredName);
+				if (SegmentValue == INDEX_NONE && Token.IsNumeric())
+				{
+					const int32 ValueIndex = Enum->GetIndexByValue(FCString::Atoi64(*Token));
+					if (ValueIndex != INDEX_NONE)
+					{
+						SegmentValue = Enum->GetValueByIndex(ValueIndex);
+					}
+				}
+				if (SegmentValue == INDEX_NONE)
+				{
+					FString Entries;
+					const int32 EntryCount = Enum->NumEnums() - 1; // the last entry is always _MAX
+					for (int32 EntryIndex = 0; EntryIndex < EntryCount; ++EntryIndex)
+					{
+						Entries += FString::Printf(TEXT("%s%s"), EntryIndex == 0 ? TEXT("") : TEXT(", "),
+							*Enum->GetAuthoredNameStringByIndex(EntryIndex));
+					}
+					OutReason = FString::Printf(TEXT("enum entry '%s' (segment of '%s') not found in enum '%s' (entries: %s)"),
+						*Token, *AuthoredDefault, *Enum->GetName(), *Entries);
+					return false;
+				}
+				Combined |= SegmentValue;
+			}
+			if (OutCombinedValue != nullptr)
+			{
+				*OutCombinedValue = Combined;
+			}
+			// A combination has no single entry name the text chain could carry -
+			// leave OutInternalName empty and let the caller write the byte.
+			OutInternalName = TEXT("");
+			return true;
+		}
+
+		// UE's PropertyValueFromString_Direct resolves enum entries by **internal name only**
+		// (BlueprintEditorUtils.cpp:9037/9066 call GetValueByName without CheckAuthoredName),
+		// while every blueprint-facing surface authors enum defaults by the entry's display
+		// name -- "Red" for a user-defined enum whose internal entries are NewEnumerator0/1/2.
+		// Translate the authored name (or a numeric enum value, the other form engine
+		// ImportText accepts) to the internal entry name before handing the text to the shared
+		// parser; an unknown entry fails with the entry list instead of the bare "could not be
+		// parsed". Without this, "C : EColor = Red" can never pass even though the identical
+		// default goes through the Details panel (ImportText) just fine.
+		int64 EnumValue = Enum->GetValueByName(FName(*AuthoredDefault), EGetByNameFlags::CheckAuthoredName);
+		if (EnumValue == INDEX_NONE && AuthoredDefault.IsNumeric())
+		{
+			// A numeric token is an enum *value*, the other form engine ImportText accepts
+			const int32 ValueIndex = Enum->GetIndexByValue(FCString::Atoi64(*AuthoredDefault));
+			if (ValueIndex != INDEX_NONE)
+			{
+				EnumValue = Enum->GetValueByIndex(ValueIndex);
+			}
+		}
+		if (EnumValue == INDEX_NONE)
+		{
+			FString Entries;
+			const int32 EntryCount = Enum->NumEnums() - 1; // the last entry is always _MAX
+			for (int32 EntryIndex = 0; EntryIndex < EntryCount; ++EntryIndex)
+			{
+				Entries += FString::Printf(TEXT("%s%s"), EntryIndex == 0 ? TEXT("") : TEXT(", "),
+					*Enum->GetAuthoredNameStringByIndex(EntryIndex));
+			}
+			OutReason = FString::Printf(TEXT("enum entry '%s' not found in enum '%s' (entries: %s)"),
+				*AuthoredDefault, *Enum->GetName(), *Entries);
+			return false;
+		}
+		OutInternalName = Enum->GetNameByValue(EnumValue).ToString();
+		if (OutCombinedValue != nullptr)
+		{
+			*OutCombinedValue = EnumValue;
+		}
+		return true;
+	}
+
+	// FRandomStream (5.0.3) has no reflected UPROPERTY fields (InitialSeed / Seed are
+	// private), so the engine's ImportText / PropertyValueFromString cannot write a seed
+	// into a RandomStream variable default - the details panel and the DSL both surface
+	// "could not be parsed". Seed it through the public Initialize(int32), which fills
+	// both InitialSeed and Seed. Returns true when the property is a RandomStream struct
+	// and the seed (Text parsed as an int) was applied.
+	static bool TryApplyRandomStreamSeed(FProperty* Property, void* ValueData, const FString& Text)
+	{
+		const FStructProperty* StructProp = CastField<FStructProperty>(Property);
+		if (StructProp == nullptr || StructProp->Struct == nullptr || ValueData == nullptr)
+		{
+			return false;
+		}
+		const FString StructName = StructProp->Struct->GetName();
+		if (!StructName.Equals(TEXT("RandomStream"), ESearchCase::IgnoreCase)
+			&& !StructName.Equals(TEXT("FRandomStream"), ESearchCase::IgnoreCase))
+		{
+			return false;
+		}
+		if (StructProp->Struct->GetStructureSize() < static_cast<int32>(sizeof(FRandomStream)))
+		{
+			return false;
+		}
+		static_cast<FRandomStream*>(ValueData)->Initialize(FCString::Atoi(*Text));
+		return true;
+	}
+
 	bool EnsureCompiledVariableDefault(UBlueprint* Blueprint, const FString& VarName, const FString& ExpectedDefault, FString& OutReason)
 	{
 		UBlueprintGeneratedClass* GeneratedClass = Cast<UBlueprintGeneratedClass>(Blueprint->GeneratedClass);
@@ -473,14 +620,109 @@ namespace ForgeMindBlueprintUtils
 			return false;
 		}
 
+		// RandomStream has no reflected properties; apply its seed via Initialize.
+		{
+			void* PropData = Property->ContainerPtrToValuePtr<void>(CDO);
+			if (TryApplyRandomStreamSeed(Property, PropData, ExpectedDefault))
+			{
+				FPropertyChangedEvent SeedChangedEvent(Property);
+				CDO->PreEditChange(Property);
+				CDO->PostEditChangeProperty(SeedChangedEvent);
+				Blueprint->MarkPackageDirty();
+				return true;
+			}
+		}
+
+		// Enum defaults arrive authored as display/numeric/internal forms; the shared
+		// resolver translates them to the internal entry name (rationale on
+		// TranslateEnumDefaultText).
+		FString ParseText = ExpectedDefault;
+		const UEnum* Enum = nullptr;
+		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+		{
+			Enum = ByteProperty->Enum;
+		}
+		else if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+		{
+			Enum = EnumProperty->GetEnum();
+		}
+		if (Enum != nullptr)
+		{
+			int64 CombinedValue = 0;
+			if (!TranslateEnumDefaultText(Enum, ExpectedDefault, ParseText, OutReason, &CombinedValue))
+			{
+				return false;
+			}
+			// Bitmask combination default ("A|C" = 5): a combination has no single
+			// entry name (ParseText comes back empty) and the engine's text chain
+			// (PropertyByte.cpp / EnumProperty.cpp ImportText_Internal,
+			// PropertyValueFromString_Direct) never parses one, so write the OR-ed
+			// byte straight into the CDO - the editor's bitmask checkbox writes the
+			// same per-flag OR value (TryApplyRandomStreamSeed above is the
+			// precedent for the direct-write bypass).
+			if (ParseText.IsEmpty())
+			{
+				void* PropData = Property->ContainerPtrToValuePtr<void>(CDO);
+				if (FByteProperty* MutableByteProperty = CastField<FByteProperty>(Property))
+				{
+					MutableByteProperty->SetPropertyValue(PropData, static_cast<uint8>(CombinedValue));
+				}
+				else
+				{
+					CastFieldChecked<FEnumProperty>(Property)->GetUnderlyingProperty()->SetIntPropertyValue(PropData, CombinedValue);
+				}
+				FPropertyChangedEvent ChangedEvent(Property);
+				CDO->PreEditChange(Property);
+				CDO->PostEditChangeProperty(ChangedEvent);
+				Blueprint->MarkPackageDirty();
+				return true;
+			}
+		}
+
+		// Bitmask variable (int property + MD_Bitmask + MD_BitmaskEnum): the default
+		// value is an enum entry name (e.g. "A") or combination ("A|C"); resolve via
+		// the BitmaskEnum and write the numeric value directly to the CDO. The engine's
+		// text chain only handles single enum entries on byte/enum properties, not int
+		// properties with bitmask metadata - same bypass as the combination case above.
+		if (Enum == nullptr)
+		{
+			if (FIntProperty* IntProp = CastField<FIntProperty>(Property))
+			{
+			if (IntProp->HasMetaData(FBlueprintMetadata::MD_Bitmask))
+			{
+				FString BitmaskEnumName = IntProp->GetMetaData(FBlueprintMetadata::MD_BitmaskEnum);
+				// ResolveUserEnumReference covers every spelling the metadata may
+				// carry: full object path, asset path, short name or DSL alias.
+				const UEnum* BitmaskEnum = ResolveUserEnumReference(BitmaskEnumName);
+				if (BitmaskEnum != nullptr)
+					{
+						int64 CombinedValue = 0;
+						FString InternalName;
+						if (TranslateEnumDefaultText(BitmaskEnum, ExpectedDefault, InternalName, OutReason, &CombinedValue))
+						{
+							void* PropData = IntProp->ContainerPtrToValuePtr<void>(CDO);
+							IntProp->SetPropertyValue(PropData, static_cast<int32>(CombinedValue));
+							FPropertyChangedEvent ChangedEvent(Property);
+							CDO->PreEditChange(Property);
+							CDO->PostEditChangeProperty(ChangedEvent);
+							Blueprint->MarkPackageDirty();
+							return true;
+						}
+						// Parse failed - fall through to generic parser with original text
+					}
+				}
+			}
+		}
+
 		// Same parser the compiler uses; parse the expected text into scratch
-		// memory and compare it against what the CDO actually holds.
+		// memory and compare it against what the CDO actually holds. Enum defaults
+		// arrive pre-translated to the internal entry name (see above).
 		const int32 PropertySize = Property->GetSize();
 		uint8* ParsedValue = static_cast<uint8*>(FMemory::Malloc(PropertySize));
 		uint8* ActualValue = static_cast<uint8*>(FMemory::Malloc(PropertySize));
 		Property->InitializeValue(ParsedValue);
 		Property->InitializeValue(ActualValue);
-		const bool bParsed = FBlueprintEditorUtils::PropertyValueFromString_Direct(Property, ExpectedDefault, ParsedValue, CDO);
+		const bool bParsed = FBlueprintEditorUtils::PropertyValueFromString_Direct(Property, ParseText, ParsedValue, CDO);
 		if (!bParsed)
 		{
 			FMemory::Free(ParsedValue);
@@ -598,6 +840,19 @@ namespace ForgeMindBlueprintUtils
 
 		// ImportText is the Details panel's own write path.
 		void* ValueData = Lookup.Property->ContainerPtrToValuePtr<void>(CDO);
+
+		// RandomStream has no reflected properties; seed it via Initialize so the
+		// numeric default (DSL new RandomStream(seed) / MCP AddVariable) lands.
+		if (TryApplyRandomStreamSeed(Lookup.Property, ValueData, ValueText))
+		{
+			FPropertyChangedEvent SeedChangedEvent(Lookup.Property);
+			CDO->PreEditChange(Lookup.Property);
+			CDO->PostEditChangeProperty(SeedChangedEvent);
+			Blueprint->MarkPackageDirty();
+			OutAppliedText = MoveTemp(ValueText);
+			return true;
+		}
+
 		const TCHAR* TextPtr = *ValueText;
 		if (Lookup.Property->ImportText(TextPtr, ValueData, PPF_PropertyWindow, CDO) == nullptr)
 		{
@@ -700,6 +955,27 @@ namespace ForgeMindBlueprintUtils
 			&& !Property->GetMetaData(FBlueprintMetadata::MD_Tooltip).Equals(Tooltip, ESearchCase::IgnoreCase))
 		{
 			OutConflicts.Add(FString::Printf(TEXT("tooltip=%s"), *Tooltip));
+		}
+
+		// Bitmask settings are metadata on the declaring class' property, so a
+		// child can only restate them. Same rule as the metadata entries above:
+		// 'bitmask' compares the checkbox, 'bitmaskEnum' the resolved enum's short
+		// name (the format MD_BitmaskEnum carries - see add_blueprint_variable).
+		bool bBitmask = false;
+		if (Payload->TryGetBoolField(TEXT("bitmask"), bBitmask)
+			&& Property->GetBoolMetaData(FBlueprintMetadata::MD_Bitmask) != bBitmask)
+		{
+			OutConflicts.Add(FString::Printf(TEXT("bitmask=%s"), bBitmask ? TEXT("true") : TEXT("false")));
+		}
+		FString BitmaskEnumName;
+		if (Payload->TryGetStringField(TEXT("bitmaskEnum"), BitmaskEnumName) && !BitmaskEnumName.IsEmpty())
+		{
+			const UEnum* RequestedEnum = ResolveUserEnumReference(BitmaskEnumName);
+			const FString CurrentEnumName = Property->GetMetaData(FBlueprintMetadata::MD_BitmaskEnum);
+			if (RequestedEnum == nullptr || !CurrentEnumName.Equals(RequestedEnum->GetName(), ESearchCase::IgnoreCase))
+			{
+				OutConflicts.Add(FString::Printf(TEXT("bitmaskEnum=%s"), *BitmaskEnumName));
+			}
 		}
 
 		// The replication condition lives on the variable declaration, not on
@@ -1293,6 +1569,37 @@ namespace ForgeMindBlueprintUtils
 		return LoadObject<UEnum>(nullptr, **AliasPath);
 	}
 
+	// Single convergence point for every enum-reference lookup in the bridge
+	// (bitmask enum metadata, bitmask variable defaults, enum-payload nodes).
+	UEnum* ResolveUserEnumReference(const FString& InName)
+	{
+		if (InName.IsEmpty())
+		{
+			return nullptr;
+		}
+		if (InName.StartsWith(TEXT("/")))
+		{
+			if (UEnum* ByPath = LoadObject<UEnum>(nullptr, *InName))
+			{
+				return ByPath;
+			}
+		}
+		if (UEnum* ByName = ForgeMindFindFirstObject<UEnum>(*InName))
+		{
+			return ByName;
+		}
+		if (!InName.StartsWith(TEXT("E")))
+		{
+			if (UEnum* ByPrefixed = ForgeMindFindFirstObject<UEnum>(*FString::Printf(TEXT("E%s"), *InName)))
+			{
+				return ByPrefixed;
+			}
+		}
+		// DSL user enum alias: DSL-side C# declaration name (e.g. EState) may differ from
+		// enum asset name (EState_B); CreateEnumAsset registers a session-level alias.
+		return ResolveUserTypeEnumAlias(InName);
+	}
+
 	// Object-typed pin assignment shared by the asset-path and short-name branches.
 	//
 	// Interface classes (UInterface derivatives) are modelled the way UE itself models
@@ -1391,6 +1698,23 @@ namespace ForgeMindBlueprintUtils
 		{
 			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
 			OutPinType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get();
+			return true;
+		}
+
+		// Soft references: the editor's own type texts ("Soft Object Reference" /
+		// "Soft Class Reference", EdGraphSchema_K2.cpp type-tree labels) and the
+		// compact DSL spellings. Generic forms carry a UObject base (null sub-object),
+		// which is exactly what the editor produces for a bare soft reference variable;
+		// asset-path defaults on such pins are parsed by the object-ish default branch
+		// (BlueprintGraph.cpp, PC_SoftObject / PC_SoftClass included).
+		if (TypeLower == TEXT("soft object reference") || TypeLower == TEXT("softobject"))
+		{
+			OutPinType.PinCategory = UEdGraphSchema_K2::PC_SoftObject;
+			return true;
+		}
+		if (TypeLower == TEXT("soft class reference") || TypeLower == TEXT("softclass"))
+		{
+			OutPinType.PinCategory = UEdGraphSchema_K2::PC_SoftClass;
 			return true;
 		}
 
@@ -1700,6 +2024,41 @@ namespace ForgeMindBlueprintUtils
 			return true;
 		}
 
+		// "tsoftobjectptr<X>" / "tsoftclassptr<X>" - the C++ template spellings the
+		// DSL uses for soft reference member declarations (TSoftObjectPtr<Actor>).
+		// The inner text is resolved as a base type first, then re-categorised as the
+		// matching soft reference pin category keeping its sub-object (FSoftObjectProperty
+		// / FSoftClassProperty; EdGraphSchema_K2.cpp maps property->pin at :3361/:3366).
+		struct FSoftRefForm { const TCHAR* Prefix; FName Category; };
+		static const FSoftRefForm SoftForms[] = {
+			{ TEXT("tsoftobjectptr<"), UEdGraphSchema_K2::PC_SoftObject },
+			{ TEXT("tsoftclassptr<"), UEdGraphSchema_K2::PC_SoftClass }
+		};
+		for (const FSoftRefForm& SoftForm : SoftForms)
+		{
+			const FString SoftPrefixLower = FString(SoftForm.Prefix);
+			if (!Lower.StartsWith(SoftPrefixLower) || !Lower.EndsWith(TEXT(">")))
+			{
+				continue;
+			}
+			if (Trimmed.Len() <= SoftPrefixLower.Len() + 1)
+			{
+				OutReason = FString::Printf(TEXT("'%s' is missing its base type"), *Trimmed);
+				return false;
+			}
+			const FString SoftInner = Trimmed.Mid(SoftPrefixLower.Len(), Trimmed.Len() - SoftPrefixLower.Len() - 1);
+			FEdGraphPinType BasePin;
+			FString BaseReason;
+			if (!BaseTypeTextToPinType(SoftInner, BasePin, BaseReason))
+			{
+				OutReason = FString::Printf(TEXT("soft reference base: %s"), *BaseReason);
+				return false;
+			}
+			OutPinType = BasePin;
+			OutPinType.PinCategory = SoftForm.Category;
+			return true;
+		}
+
 		return BaseTypeTextToPinType(Trimmed, OutPinType, OutReason);
 	}
 
@@ -1777,6 +2136,17 @@ namespace ForgeMindBlueprintUtils
 			Variable.HasMetaData(FBlueprintMetadata::MD_Private),
 			Variable.HasMetaData(FBlueprintMetadata::MD_ExposeOnSpawn),
 			DeprecatedMessage, bHasDeprecatedMessage, Variable.RepNotifyFunc);
+		// Bitmask reporting: the checkbox state (MD_Bitmask) and the associated flag
+		// enum's short name (MD_BitmaskEnum) - the exact value the details panel's
+		// "Bitmask Enum" combo matches against, so this round-trips what the editor shows.
+		if (Variable.HasMetaData(FBlueprintMetadata::MD_Bitmask))
+		{
+			Entry->SetBoolField(TEXT("bitmask"), Variable.GetMetaData(FBlueprintMetadata::MD_Bitmask).Equals(TEXT("true"), ESearchCase::IgnoreCase));
+		}
+		if (Variable.HasMetaData(FBlueprintMetadata::MD_BitmaskEnum))
+		{
+			Entry->SetStringField(TEXT("bitmaskEnum"), Variable.GetMetaData(FBlueprintMetadata::MD_BitmaskEnum));
+		}
 		return Entry;
 	}
 
@@ -1873,7 +2243,87 @@ namespace ForgeMindBlueprintUtils
 		}
 		const FString ObjectPath = FString::Printf(TEXT("%s.%s"), *PackagePath, *FPaths::GetCleanFilename(PackagePath));
 		return LoadObject<UObject>(nullptr, *ObjectPath);
-	}
+		}
+
+		bool PrepareNewAssetLocation(const FString& AssetPath, const TCHAR* PathExample,
+		FString& OutPackagePath, FString& OutAssetName, FString& OutReason)
+		{
+		// Path may arrive as /Game/Dir/Name or /Game/Dir/Name.Name; keep the
+		// package part and derive the asset name from its last element.
+		FString PackagePath = AssetPath;
+		int32 DotIndex = INDEX_NONE;
+		if (PackagePath.FindChar(TEXT('.'), DotIndex))
+		{
+			PackagePath = PackagePath.Left(DotIndex);
+		}
+		if (!FPackageName::IsValidLongPackageName(PackagePath) || !PackagePath.StartsWith(TEXT("/Game/")))
+		{
+			OutReason = FString::Printf(TEXT("path must be a project content path like %s"), PathExample);
+			return false;
+		}
+
+		// Refuse to clobber an existing asset.
+		// Use AssetRegistry (not FindPackage) to avoid stale in-memory packages
+		// from deleted-but-not-GC'd assets.
+		FAssetRegistryModule& AssetRegModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		IAssetRegistry& AssetRegistry = AssetRegModule.Get();
+		TArray<FAssetData> ExistingAssets;
+		AssetRegistry.GetAssetsByPackageName(FName(*PackagePath), ExistingAssets, /*bIncludeOnlyOnDiskAssets=*/true);
+		if (ExistingAssets.Num() > 0)
+		{
+			OutReason = FString::Printf(TEXT("An asset already exists at '%s'"), *PackagePath);
+			return false;
+		}
+
+		OutPackagePath = PackagePath;
+		OutAssetName = FPaths::GetCleanFilename(PackagePath);
+		return true;
+		}
+
+		UScriptStruct* ResolveDataTableRowStruct(const FString& StructRef, FString& OutReason)
+		{
+		if (StructRef.IsEmpty())
+		{
+			OutReason = TEXT("rowStruct is required (project asset path of the row struct, e.g. /Game/Blueprints/FItemRow)");
+			return nullptr;
+		}
+
+		// /Game/Dir/FItemRow has no object name, so complete it to
+		// /Game/Dir/FItemRow.FItemRow before loading. A reference that already
+		// carries a sub-object name (native /Script/Module.FStruct) is used as-is.
+		FString ObjectPath = StructRef;
+		int32 DotIndex = INDEX_NONE;
+		if (!ObjectPath.FindChar(TEXT('.'), DotIndex))
+		{
+			ObjectPath = FString::Printf(TEXT("%s.%s"), *ObjectPath, *FPaths::GetCleanFilename(ObjectPath));
+		}
+
+		UScriptStruct* Struct = LoadObject<UScriptStruct>(nullptr, *ObjectPath);
+		if (Struct == nullptr)
+		{
+			OutReason = FString::Printf(TEXT("No row struct found at '%s' (create it first with create_blueprint_struct)"), *StructRef);
+			return nullptr;
+		}
+		return Struct;
+		}
+
+		UDataTable* CreateDataTableAsset(UPackage* Package, const FString& AssetName, UScriptStruct* RowStruct)
+		{
+		if (Package == nullptr || RowStruct == nullptr)
+		{
+			return nullptr;
+		}
+
+		// UDataTableFactory is what the content browser and apply_asset_ir use;
+		// FactoryCreateNew is a plain NewObject followed by the RowStruct
+		// assignment, and it refuses to build anything without a row struct -
+		// which is the guard every caller wants.
+		UDataTableFactory* Factory = NewObject<UDataTableFactory>();
+		Factory->Struct = RowStruct;
+		return Cast<UDataTable>(Factory->FactoryCreateNew(
+			UDataTable::StaticClass(), Package, FName(*AssetName),
+			RF_Public | RF_Standalone, nullptr, GWarn));
+		}
 
 	/** Walks graph + SubGraphs depth-first, visiting every node once. */
 	template <typename FVisitor>

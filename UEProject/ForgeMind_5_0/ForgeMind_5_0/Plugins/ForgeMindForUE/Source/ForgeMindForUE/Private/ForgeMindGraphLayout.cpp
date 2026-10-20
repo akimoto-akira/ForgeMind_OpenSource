@@ -13,7 +13,7 @@
 #include "K2Node_CallFunction.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_Event.h"
-#include "K2Node_InputActionEvent.h"
+#include "K2Node_InputAction.h"
 #include "K2Node_InputAxisEvent.h"
 #include "K2Node_MakeArray.h"
 #include "K2Node_MakeMap.h"
@@ -238,7 +238,7 @@ namespace
 		return Cast<UK2Node_Event>(Node) != nullptr
 			|| Cast<UK2Node_CustomEvent>(Node) != nullptr
 			|| Cast<UK2Node_InputAxisEvent>(Node) != nullptr
-			|| Cast<UK2Node_InputActionEvent>(Node) != nullptr;
+			|| Cast<UK2Node_InputAction>(Node) != nullptr;
 	}
 
 	/**

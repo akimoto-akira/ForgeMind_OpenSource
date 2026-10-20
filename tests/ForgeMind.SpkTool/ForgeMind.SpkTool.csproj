@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ForgeMind.SpkTool</AssemblyName>
+    <RootNamespace>ForgeMind.SpkTool</RootNamespace>
+    <Company>Hoshino Kennji</Company>
+    <Version>1.0.0.0</Version>
+    <Description>SPK command-line read tool — opens an .spk scan bundle (default the EngineIndex engine.spk) and queries classes / functions / name-resolution arbitration for diagnosis, no UE or commercial dependency.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Open-source components only: the frozen-index reader chain. Same references as ForgeMind.PublicTests. -->
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan.Abstractions\ForgeMind.Scan.Abstractions.csproj" />
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan\ForgeMind.Scan.csproj" />
+    <ProjectReference Include="..\..\OpenSource\ForgeMind.Speedy\ForgeMind.Speedy.csproj" />
+  </ItemGroup>
+
+</Project>

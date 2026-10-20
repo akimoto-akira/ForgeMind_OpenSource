@@ -27,6 +27,15 @@ public sealed class UE5_0_LaunchEditor : ITestCase
     private const string TestsDir =
         @"d:\ForgeMind\UEProject\ForgeMind_5_0\ForgeMind_5_0\Content\Tests";
 
+    /// <summary>
+    /// Editor autosaves of a previous run: when this folder has content the editor may stop at
+    /// the "recover from autosave" path on startup instead of opening the project, so it is
+    /// wiped along with Content\Tests. Derived from <see cref="ProjectPath"/> so the two can
+    /// never drift apart.
+    /// </summary>
+    private static readonly string AutosavesDir =
+        Path.Combine(Path.GetDirectoryName(ProjectPath)!, "Saved", "Autosaves");
+
     public async Task Run(TestContext ctx)
     {
         // ── 1. Delete Content/Tests folder (clean up leftover uasset from previous test) ──
@@ -38,6 +47,26 @@ public sealed class UE5_0_LaunchEditor : ITestCase
         else
         {
             ctx.Logger.Info(null, "[Test]   Tests folder does not exist, skip deletion");
+        }
+
+        // ── 1.5. Delete Saved/Autosaves folder (leftover autosaves block editor startup) ──
+        if (Directory.Exists(AutosavesDir))
+        {
+            ctx.Logger.Info(null, "[Test]   Delete Autosaves folder: {0}", AutosavesDir);
+            try
+            {
+                Directory.Delete(AutosavesDir, recursive: true);
+            }
+            catch (Exception ex)
+            {
+                // A lingering editor process may still hold a file. Warn and continue instead of
+                // aborting the whole group -- a real startup failure surfaces at the launch step.
+                ctx.Logger.Warn(null, "[Test]   Failed to delete Autosaves folder: {0}", ex.Message);
+            }
+        }
+        else
+        {
+            ctx.Logger.Info(null, "[Test]   Autosaves folder does not exist, skip deletion");
         }
 
         // ── 2. Build project (ensure C++ plugin changes take effect) ──

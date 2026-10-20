@@ -1,27 +1,27 @@
-# Feuille de route de développement de ForgeMind
+﻿# Feuille de route de développement de ForgeMind
 
-Cette feuille de route présente la progression du développement des capacités de génération d'assets de ForgeMind, regroupée par domaine et par statut, et est mise à jour en continu au fil de l'avancement. Source des données : dernier instantané de collecte d'assets (2026-10-08).
+Cette feuille de route présente la progression du développement des capacités de génération d'assets de ForgeMind, regroupée par domaine et par statut, et est mise à jour en continu au fil de l'avancement. Source des données : dernier instantané de collecte d'assets (2026-10-19).
 
 ## Vue d'ensemble
 
 | Statut | Nombre |
 | --- | ---: |
-| Terminé | 30 |
-| En cours | 11 |
-| Planifié | 118 |
+| Terminé | 59 |
+| En cours | 4 |
+| Planifié | 96 |
 | Total | 159 |
 
 ## Parcourir par domaine
 
 | Domaine | Terminé | En cours | Planifié |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Autre | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Terminé (30)
+### Terminé (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Cette feuille de route présente la progression du développement des capacités
 - Blueprint Lier un événement d'instance
 - Blueprint Dessin de débogage
 - Blueprint Nœud de sélection
-
-### En cours (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Cette feuille de route présente la progression du développement des capacités
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Planifié (43)
+### En cours (3)
 
-- Blueprint Masque de bits
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Planifié (21)
+
 - Blueprint Vecteur
 - Blueprint Entrée améliorée
-- Blueprint Liaison de délégués
 - Blueprint Subsystem
-- Blueprint Conteneur Map/Set
-- Blueprint Traçage de ligne
 - Blueprint Délai
 - Blueprint Chargement asynchrone
 - Blueprint Référence
 - Blueprint Traçage de forme
-- Blueprint Bibliothèque mathématique
-- Blueprint Expression mathématique
-- Blueprint Table de données
-- Blueprint Asset de données
-- Blueprint Opérations sur les tableaux
 - Blueprint Formatage de texte
 - Blueprint Rotation
-- Blueprint Timeline
-- Blueprint Courbe
-- Blueprint Énumération
-- Blueprint Itération d'énumération
 - Blueprint Spline
-- Blueprint Contrôle de flux
 - Blueprint Physique
 - Blueprint Caméra
-- Blueprint Événements de collision
-- Blueprint Valeurs par défaut de classe
-- Blueprint Particules
 - Blueprint Composants
-- Blueprint Réplication réseau
 - Blueprint Mouvement de personnage
 - Blueprint Conversion
-- Blueprint Références faibles
-- Blueprint Événements d'entrée
 - Blueprint Opérateurs
 - Blueprint Composants à l'exécution
 - Blueprint Nœud de sélection
 - Blueprint Détruire
-- Blueprint Porte
-- Blueprint Aléatoire
 - Blueprint Son
 - Blueprint Prédiction de trajectoire
 

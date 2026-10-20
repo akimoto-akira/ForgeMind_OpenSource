@@ -229,4 +229,16 @@ public sealed class UeParameterInfo
 
     /// <summary>Default value in the C++ declaration (may be empty — no default is not the same as default = null).</summary>
     public string? DefaultValue { get; init; }
+
+    /// <summary>
+    /// Whether this parameter is an <b>out</b> parameter, i.e. an output pin in Blueprint.
+    /// <para>
+    /// Derived from the C++ declaration itself — UHT marks a non-const reference parameter
+    /// with <c>CPF_OutParm</c> (output pin), while a const reference (<c>const T&amp;</c>) or a
+    /// const-by-value parameter stays an input pin (<c>CPF_ConstParm</c>):
+    /// <c>FHitResult&amp; OutHit</c> → out; <c>const TArray&lt;AActor*&gt;&amp; ActorsToIgnore</c> → input.
+    /// Verified against UE 5.0.3 KismetSystemLibrary.h (LineTraceSingle / LineTraceMulti).
+    /// </para>
+    /// </summary>
+    public bool IsOut { get; init; }
 }

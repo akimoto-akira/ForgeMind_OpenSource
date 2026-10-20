@@ -1089,6 +1089,9 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleApplyAssetIRLegacy(const T
 					else if (NodeType == TEXT("MacroInstance")) Kind = TEXT("macro");
 					else if (NodeType == TEXT("Branch")) Kind = TEXT("function");
 					else if (NodeType == TEXT("Self")) Kind = TEXT("self");
+					// Timeline node (UK2Node_Timeline): the bridge creates the
+					// blueprint's timeline template + node with a default float track.
+					else if (NodeType == TEXT("Timeline")) Kind = TEXT("timeline");
 					// Call parent function implementation in subclass (Blueprint "Parent: FunctionName" node).
 					else if (NodeType == TEXT("CallParentFunction")) Kind = TEXT("callParentFunction");
 					else Kind = TEXT("function"); // default: function/event
@@ -1108,6 +1111,16 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleApplyAssetIRLegacy(const T
 							if (!NodeClass.IsEmpty())
 							{
 								NodePayload->SetStringField(TEXT("class"), NodeClass);
+							}
+
+							// Timeline length in seconds (DSL [Timeline("T", 1.0f)]):
+							// forwarded as a top-level number so the timeline kind can
+							// size the template. Properties alone cannot carry it -
+							// they are applied as pin defaults after node creation.
+							double TimelineLengthValue = 0.0;
+							if (NodeDef->TryGetNumberField(TEXT("length"), TimelineLengthValue))
+							{
+								NodePayload->SetNumberField(TEXT("length"), TimelineLengthValue);
 							}
 
 							// Custom event parameters: forward the IR node's
@@ -1741,14 +1754,24 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleApplyAssetIRLegacy(const T
 			{
 				Factory = NewObject<UDataTableFactory>();
 				AssetClass = UDataTable::StaticClass();
-				// Set struct reference if specified
+				// Set struct reference if specified. ResolveDataTableRowStruct
+				// is the shared resolver (create_data_table uses the same one):
+				// a bare LoadObject only accepts the /Game/Dir/S.S object form,
+				// so an IR carrying the package form silently produced a
+				// DataTable with no RowStruct - and the factory then refuses
+				// to create the asset at all.
 				FString StructPath;
 				if (AssetDef->TryGetStringField(TEXT("struct"), StructPath) && !StructPath.IsEmpty())
 				{
-					UScriptStruct* Struct = LoadObject<UScriptStruct>(nullptr, *StructPath);
+					FString StructReason;
+					UScriptStruct* Struct = ResolveDataTableRowStruct(StructPath, StructReason);
 					if (Struct != nullptr)
 					{
 						Cast<UDataTableFactory>(Factory)->Struct = Struct;
+					}
+					else
+					{
+						UE_LOG(LogForgeMindBridge, Warning, TEXT("[AssetIR] dataTable '%s': %s"), *StructPath, *StructReason);
 					}
 				}
 			}

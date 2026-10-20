@@ -154,7 +154,12 @@ public sealed class Blueprint_Struct : ITestCase
 
         // DSL path (copied from task doc, struct block as standalone [Struct] domain per file header notes)
         BlueprintTestHelper.ApplyDsl(ctx, "");
-        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/FHealth_B");
+        // ApplyDsl compiles + saves only blueprint-backed asset types; the DSL-created struct is
+        // "user_defined_struct" (no compile concept, not saved on apply either) -- save it
+        // explicitly, same as the A-side FHealth_A above.
+        const string healthB = "/Game/Tests/UE5_0/FHealth_B";
+        SaveAsset(ctx, healthB);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, healthB);
         BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Struct_Custom_B");
 
         await Task.CompletedTask;

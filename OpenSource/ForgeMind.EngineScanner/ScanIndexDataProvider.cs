@@ -110,9 +110,22 @@ internal sealed class ScanIndexDataProvider : ScanSignatureCatalog, IScanDataPro
         new(
             fn.Name,
             fn.IsStatic,
-            fn.Specifiers.Contains(PureSpecifier, StringComparer.OrdinalIgnoreCase),
-            fn.Parameters.Select(p => new ScanParameterView(p.Name, p.Type)).ToArray(),
+            IsPureFromSpecifiers(fn.Specifiers),
+            fn.Parameters.Select(p => new ScanParameterView(p.Name, p.Type, p.IsOut)).ToArray(),
             fn.FilePath,
             fn.LineNumber,
-            fn.ReturnType);
+            fn.ReturnType,
+            // Live-scanner path stores raw "meta" key with the packed "(K=\"V\", ...)" string.
+            // Contract view is documented as pre-flattened; normalize here so consumers see the
+            // same shape as the SPK reader path (spec 8 single convergence point).
+            FunctionMetadataNormalizer.Normalize(fn.Metadata));
+
+    /// <summary>
+    /// BlueprintPure → pure; const BlueprintCallable → also pure (engine generates no exec
+    /// pins for const BlueprintCallable, same as BlueprintPure — e.g. UCurveFloat::GetFloatValue).
+    /// </summary>
+    private static bool IsPureFromSpecifiers(List<string> specs) =>
+        specs.Contains("BlueprintPure", StringComparer.OrdinalIgnoreCase)
+        || (specs.Contains("const", StringComparer.OrdinalIgnoreCase)
+            && specs.Contains("BlueprintCallable", StringComparer.OrdinalIgnoreCase));
 }

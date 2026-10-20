@@ -1,27 +1,27 @@
-# Roteiro de desenvolvimento do ForgeMind
+﻿# Roteiro de desenvolvimento do ForgeMind
 
-Este roteiro apresenta o progresso do desenvolvimento das capacidades de geração de ativos do ForgeMind, agrupado por domínio e estado, e é atualizado continuamente à medida que o desenvolvimento avança. Fonte de dados: instantâneo mais recente da recolha de ativos (2026-10-08).
+Este roteiro apresenta o progresso do desenvolvimento das capacidades de geração de ativos do ForgeMind, agrupado por domínio e estado, e é atualizado continuamente à medida que o desenvolvimento avança. Fonte de dados: instantâneo mais recente da recolha de ativos (2026-10-19).
 
 ## Resumo
 
 | Estado | Quantidade |
 | --- | ---: |
-| Concluído | 30 |
-| Em desenvolvimento | 11 |
-| Planeado | 118 |
+| Concluído | 59 |
+| Em desenvolvimento | 4 |
+| Planeado | 96 |
 | Total | 159 |
 
 ## Explorar por domínio
 
 | Domínio | Concluído | Em desenvolvimento | Planeado |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Outro | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Concluído (30)
+### Concluído (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Este roteiro apresenta o progresso do desenvolvimento das capacidades de geraç�
 - Blueprint Vincular evento de instância
 - Blueprint Desenho de depuração
 - Blueprint Nó de seleção
-
-### Em desenvolvimento (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Este roteiro apresenta o progresso do desenvolvimento das capacidades de geraç�
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Planeado (43)
+### Em desenvolvimento (3)
 
-- Blueprint Máscara de bits
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Planeado (21)
+
 - Blueprint Vetor
 - Blueprint Entrada melhorada
-- Blueprint Vinculação de delegados
 - Blueprint Subsystem
-- Blueprint Contentor Map/Set
-- Blueprint Traçado de linha
 - Blueprint Atraso
 - Blueprint Carregamento assíncrono
 - Blueprint Referência
 - Blueprint Traçado de forma
-- Blueprint Biblioteca matemática
-- Blueprint Expressão matemática
-- Blueprint Tabela de dados
-- Blueprint Ativo de dados
-- Blueprint Operações com matrizes
 - Blueprint Formatação de texto
 - Blueprint Rotação
-- Blueprint Timeline
-- Blueprint Curva
-- Blueprint Enum
-- Blueprint Iteração de enum
 - Blueprint Spline
-- Blueprint Controlo de fluxo
 - Blueprint Física
 - Blueprint Câmara
-- Blueprint Eventos de colisão
-- Blueprint Valores predefinidos de classe
-- Blueprint Partículas
 - Blueprint Componentes
-- Blueprint Replicação de rede
 - Blueprint Movimento de personagem
 - Blueprint Conversão
-- Blueprint Referências suaves
-- Blueprint Eventos de entrada
 - Blueprint Operadores
 - Blueprint Componentes em tempo de execução
 - Blueprint Nó de seleção
 - Blueprint Destruir
-- Blueprint Gate
-- Blueprint Aleatório
 - Blueprint Som
 - Blueprint Previsão de trajetória
 

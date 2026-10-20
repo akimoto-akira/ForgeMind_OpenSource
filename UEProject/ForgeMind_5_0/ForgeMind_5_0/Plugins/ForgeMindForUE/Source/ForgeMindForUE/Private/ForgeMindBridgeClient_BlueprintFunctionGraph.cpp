@@ -19,6 +19,7 @@
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
 #include "K2Node_Tunnel.h"
+
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -216,6 +217,35 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateFunctionGraph(const 
 		// FUNC_BlueprintPure is carried in the entry node's ExtraFlags (see
 		// UK2Node_FunctionEntry) and ends up on the compiled UFunction.
 		ExtraFunctionFlags |= FUNC_BlueprintPure;
+	}
+	// Optional 'rpc' (server/client/multicast) + 'reliable'/'withValidation': set the
+	// entry node's net function flags so the compiled UFunction is a blueprint RPC.
+	// Mirrors FBlueprintGraphActionDetails::SetNetFlags (FUNC_Net | direction flag,
+	// plus FUNC_NetReliable when reliable) - the compiler carries ExtraFlags onto the
+	// UFunction.
+	FString RpcKind;
+	if (Payload->TryGetStringField(TEXT("rpc"), RpcKind) && !RpcKind.IsEmpty())
+	{
+		uint32 NetFlags = FUNC_Net;
+		if (RpcKind.Equals(TEXT("server"), ESearchCase::IgnoreCase))
+		{
+			NetFlags |= FUNC_NetServer;
+		}
+		else if (RpcKind.Equals(TEXT("client"), ESearchCase::IgnoreCase))
+		{
+			NetFlags |= FUNC_NetClient;
+		}
+		else if (RpcKind.Equals(TEXT("multicast"), ESearchCase::IgnoreCase)
+			|| RpcKind.Equals(TEXT("netmulticast"), ESearchCase::IgnoreCase))
+		{
+			NetFlags |= FUNC_NetMulticast;
+		}
+		bool bReliable = false;
+		if (Payload->TryGetBoolField(TEXT("reliable"), bReliable) && bReliable)
+		{
+			NetFlags |= FUNC_NetReliable;
+		}
+		ExtraFunctionFlags |= static_cast<int32>(NetFlags);
 	}
 	if (const UEdGraphSchema_K2* K2Schema = Cast<UEdGraphSchema_K2>(Graph->GetSchema()))
 	{

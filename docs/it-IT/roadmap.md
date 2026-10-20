@@ -1,27 +1,27 @@
-# Roadmap di sviluppo di ForgeMind
+﻿# Roadmap di sviluppo di ForgeMind
 
-Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità di generazione asset di ForgeMind, raggruppata per dominio e stato, ed è aggiornata continuamente man mano che lo sviluppo procede. Origine dati: snapshot più recente della raccolta asset (2026-10-08).
+Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità di generazione asset di ForgeMind, raggruppata per dominio e stato, ed è aggiornata continuamente man mano che lo sviluppo procede. Origine dati: snapshot più recente della raccolta asset (2026-10-19).
 
 ## Panoramica
 
 | Stato | Quantità |
 | --- | ---: |
-| Completato | 30 |
-| In sviluppo | 11 |
-| Pianificato | 118 |
+| Completato | 59 |
+| In sviluppo | 4 |
+| Pianificato | 96 |
 | Totale | 159 |
 
 ## Esplora per dominio
 
 | Dominio | Completato | In sviluppo | Pianificato |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Altro | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Completato (30)
+### Completato (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità d
 - Blueprint Associazione evento di istanza
 - Blueprint Disegno di debug
 - Blueprint Nodo di selezione
-
-### In sviluppo (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità d
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Pianificato (43)
+### In sviluppo (3)
 
-- Blueprint Maschera di bit
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Pianificato (21)
+
 - Blueprint Vettore
 - Blueprint Input potenziato
-- Blueprint Associazione di delegati
 - Blueprint Subsystem
-- Blueprint Contenitore Map/Set
-- Blueprint Traccia lineare
 - Blueprint Ritardo
 - Blueprint Caricamento asincrono
 - Blueprint Riferimento
 - Blueprint Traccia di forma
-- Blueprint Libreria matematica
-- Blueprint Espressione matematica
-- Blueprint Tabella dati
-- Blueprint Asset di dati
-- Blueprint Operazioni sugli array
 - Blueprint Formattazione del testo
 - Blueprint Rotazione
-- Blueprint Timeline
-- Blueprint Curva
-- Blueprint Enum
-- Blueprint Iterazione enum
 - Blueprint Spline
-- Blueprint Controllo di flusso
 - Blueprint Fisica
 - Blueprint Fotocamera
-- Blueprint Eventi di collisione
-- Blueprint Valori predefiniti di classe
-- Blueprint Particelle
 - Blueprint Componenti
-- Blueprint Replicazione di rete
 - Blueprint Movimento del personaggio
 - Blueprint Conversione
-- Blueprint Riferimenti soft
-- Blueprint Eventi di input
 - Blueprint Operatori
 - Blueprint Componenti in esecuzione
 - Blueprint Nodo di selezione
 - Blueprint Distruggi
-- Blueprint Gate
-- Blueprint Casuale
 - Blueprint Audio
 - Blueprint Previsione della traiettoria
 

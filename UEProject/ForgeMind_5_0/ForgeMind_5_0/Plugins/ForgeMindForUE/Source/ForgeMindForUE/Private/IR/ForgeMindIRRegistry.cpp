@@ -440,6 +440,22 @@ TSharedPtr<FJsonObject> FForgeMindIRRegistry::ApplySingle(const TSharedPtr<FJson
 			Ctx.Fail(TEXT("ASSET_NOT_FOUND"), FString::Printf(TEXT("asset not found at %s"), *Ctx.Path));
 			return BuildAssetResult(Ctx.AssetType, Ctx.Path, Ctx.Mode, Ctx);
 		}
+
+		// IR rules.md section 4.2 — asset type match. Without this guard an IR
+		// aimed at the wrong domain (wrong Path, or a mistyped assetType that
+		// still resolves to a registered handler) is applied to whatever asset
+		// lives at that path, silently corrupting it.
+		FString ActualType;
+		if (!ForgeMindIR::AssetMatchesType(Asset, Ctx.AssetType, ActualType))
+		{
+			Ctx.Fail(TEXT("ASSET_TYPE_MISMATCH"),
+				FString::Printf(TEXT("asset type mismatch: expected %s, got %s"), *Ctx.AssetType, *ActualType));
+			return BuildAssetResult(Ctx.AssetType, Ctx.Path, Ctx.Mode, Ctx);
+		}
+
+		// IR rules.md section 4.2 / 8.3 — non-fatal lock warning (see WarnIfAssetLocked).
+		ForgeMindIR::WarnIfAssetLocked(Asset, Ctx);
+
 		if (!Handler->Update(Asset, Ctx))
 		{
 			Ctx.Fail(TEXT("UPDATE_FAILED"), Ctx.Error.IsEmpty()
@@ -463,7 +479,11 @@ TSharedPtr<FJsonObject> FForgeMindIRRegistry::ApplySingle(const TSharedPtr<FJson
 	{
 		if (!Handler->CompileAsset(Asset, Ctx))
 		{
-			Ctx.Warn(TEXT("COMPILATION_FAILED"), Ctx.Error.IsEmpty()
+			// IR rules.md section 7.1: a failed compilation is a FAILURE, not a
+			// warning. Reporting success:true here let callers keep building on a
+			// broken asset (references, defaults, further patches) without ever
+			// noticing, which is the worst kind of silent contract violation.
+			Ctx.Fail(TEXT("COMPILATION_FAILED"), Ctx.Error.IsEmpty()
 				? FString::Printf(TEXT("compilation of %s reported errors"), *Ctx.Path)
 				: Ctx.Error);
 		}

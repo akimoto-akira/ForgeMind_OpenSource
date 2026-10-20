@@ -3,7 +3,6 @@
 
 using ForgeMind.Scan;
 using ForgeMind.Scan.Abstractions;
-using ForgeMind.Speedy;
 
 namespace ForgeMind.PublicTests;
 
@@ -12,6 +11,11 @@ namespace ForgeMind.PublicTests;
 /// Verifies that a single SPK containing multiple UE version scopes (e.g. 5.0 and 5.8)
 /// can be queried per-version without cross-version contamination — querying "5.0" must
 /// never return "5.8" data, and same-named classes stay within their own version scope.
+/// <para>
+/// The pack is written through <see cref="PackFixture"/> (runtime layout, one
+/// {version}/engine.json entry per version) — see ScanPackRoundTripTests for why the
+/// historical in-boundary packer is no longer available here.
+/// </para>
 /// </summary>
 internal static class SpkMultiVersionTests
 {
@@ -28,40 +32,12 @@ internal static class SpkMultiVersionTests
         return failures;
     }
 
-    // ===== Test: PackMany writes both versions and the merged manifest lists both =====
+    // ===== Test: two version entries are both present in the pack =====
 
     private static void PackMany_TwoVersions_BothPresent()
     {
         using var spk = new TempSpk();
-
-        var data50 = new ScanData();
-        data50.RootList.Add(new ScanRootView("/Engine/5.0", "5.0", ["Core"], []));
-        data50.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data50.FunctionMap["AActor"] = [new ScanFunctionView("K2_GetActorLocation", false, true, [], "Actor.h", 100, "FVector")];
-
-        var data58 = new ScanData();
-        data58.RootList.Add(new ScanRootView("/Engine/5.8", "5.8", ["Core"], []));
-        data58.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data58.FunctionMap["AActor"] = [new ScanFunctionView("GetActorLocation", false, true, [], "Actor.h", 200, "FVector")];
-
-        var manifest50 = new ScanManifest
-        {
-            ScannerId = "TestScanner", ScannerVersion = "1.0",
-            TargetType = "UnrealEngine", TargetVersions = ["5.0"],
-            DataTypes = [ScanDataTypes.Code],
-        };
-        var manifest58 = new ScanManifest
-        {
-            ScannerId = "TestScanner", ScannerVersion = "1.0",
-            TargetType = "UnrealEngine", TargetVersions = ["5.8"],
-            DataTypes = [ScanDataTypes.Code],
-        };
-
-        using (var pack = SpeedyPack.Open(spk.Path))
-        {
-            var packer = new ScanResultPacker(pack);
-            packer.PackMany([new SimpleScanResult(manifest50, new ScanIndex(), data50), new SimpleScanResult(manifest58, new ScanIndex(), data58)]);
-        }
+        WriteTwoVersionPack(spk.Path);
 
         // Verify both versions exist in the pack
         IReadOnlyList<string> versions = ScanPackLoader.ListVersions(spk.Path);
@@ -113,28 +89,15 @@ internal static class SpkMultiVersionTests
         using var spk = new TempSpk();
 
         // 5.0: AActor with 1 function
-        var data50 = new ScanData();
-        data50.RootList.Add(new ScanRootView("/Engine/5.0", "5.0", ["Core"], []));
-        data50.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data50.FunctionMap["AActor"] = [new ScanFunctionView("Func50", false, false, [], "A.h", 1, "void")];
+        PackFixture.Write(spk.Path, "5.0", PackFixture.Root("/Engine/5.0", "5.0",
+            PackFixture.Class("AActor", "UObject",
+                PackFixture.Function("Func50", false))));
 
         // 5.8: AActor with 2 functions
-        var data58 = new ScanData();
-        data58.RootList.Add(new ScanRootView("/Engine/5.8", "5.8", ["Core"], []));
-        data58.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data58.FunctionMap["AActor"] =
-        [
-            new ScanFunctionView("Func50", false, false, [], "A.h", 1, "void"),
-            new ScanFunctionView("Func58", false, false, [], "A.h", 2, "void"),
-        ];
-
-        var manifest50 = new ScanManifest { ScannerId = "T", ScannerVersion = "1", TargetType = "UE", TargetVersions = ["5.0"], DataTypes = [ScanDataTypes.Code] };
-        var manifest58 = new ScanManifest { ScannerId = "T", ScannerVersion = "1", TargetType = "UE", TargetVersions = ["5.8"], DataTypes = [ScanDataTypes.Code] };
-
-        using (var pack = SpeedyPack.Open(spk.Path))
-        {
-            new ScanResultPacker(pack).PackMany([new SimpleScanResult(manifest50, new ScanIndex(), data50), new SimpleScanResult(manifest58, new ScanIndex(), data58)]);
-        }
+        PackFixture.Write(spk.Path, "5.8", PackFixture.Root("/Engine/5.8", "5.8",
+            PackFixture.Class("AActor", "UObject",
+                PackFixture.Function("Func50", false),
+                PackFixture.Function("Func58", false))));
 
         // 5.0 scope: only 1 function
         using (var p50 = ScanPackLoader.FromFileVersionScoped(spk.Path, "5.0"))
@@ -197,30 +160,16 @@ internal static class SpkMultiVersionTests
 
     // ===== helpers =====
 
+    /// <summary>Writes the two-version fixture: 5.0 has K2_GetActorLocation, 5.8 has GetActorLocation.</summary>
     private static void WriteTwoVersionPack(string path)
     {
-        var data50 = new ScanData();
-        data50.RootList.Add(new ScanRootView("/Engine/5.0", "5.0", ["Core"], []));
-        data50.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data50.FunctionMap["AActor"] = [new ScanFunctionView("K2_GetActorLocation", false, true, [], "Actor.h", 100, "FVector")];
+        PackFixture.Write(path, "5.0", PackFixture.Root("/Engine/5.0", "5.0",
+            PackFixture.Class("AActor", "UObject",
+                PackFixture.Function("K2_GetActorLocation", false))));
 
-        var data58 = new ScanData();
-        data58.RootList.Add(new ScanRootView("/Engine/5.8", "5.8", ["Core"], []));
-        data58.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data58.FunctionMap["AActor"] = [new ScanFunctionView("GetActorLocation", false, true, [], "Actor.h", 200, "FVector")];
-
-        var manifest50 = new ScanManifest { ScannerId = "T", ScannerVersion = "1", TargetType = "UE", TargetVersions = ["5.0"], DataTypes = [ScanDataTypes.Code] };
-        var manifest58 = new ScanManifest { ScannerId = "T", ScannerVersion = "1", TargetType = "UE", TargetVersions = ["5.8"], DataTypes = [ScanDataTypes.Code] };
-
-        using var pack = SpeedyPack.Open(path);
-        new ScanResultPacker(pack).PackMany([new SimpleScanResult(manifest50, new ScanIndex(), data50), new SimpleScanResult(manifest58, new ScanIndex(), data58)]);
-    }
-
-    private sealed class SimpleScanResult(ScanManifest m, ScanIndex i, IScanData d) : IScanResult
-    {
-        public ScanManifest Manifest { get; } = m;
-        public ScanIndex Index { get; } = i;
-        public IScanData Data { get; } = d;
+        PackFixture.Write(path, "5.8", PackFixture.Root("/Engine/5.8", "5.8",
+            PackFixture.Class("AActor", "UObject",
+                PackFixture.Function("GetActorLocation", false))));
     }
 
     private sealed class TempSpk : IDisposable

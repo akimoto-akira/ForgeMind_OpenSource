@@ -8,8 +8,15 @@ using ForgeMind.Speedy;
 namespace ForgeMind.PublicTests;
 
 /// <summary>
-/// Round-trip tests: ScanResultPacker writes scan data to SPK, ScanPackReader reads it back.
-/// Verifies the write/read symmetry that the runtime relies on (refactor plan §15/§16).
+/// Round-trip tests: a pack written in the runtime layout ({version}/engine.json) is read back
+/// through ScanPackReader / ScanPackLoader.
+/// <para>
+/// The pack writer itself (ScanResultPacker) was removed with the ScanCache-layout refactor —
+/// writing now happens in the engine scanner, which is outside this project's dependency
+/// boundary. These tests therefore write the pack through the pack-format contract that
+/// ScanPackReader exposes (see <see cref="PackFixture"/>), so the read path — the one the
+/// runtime actually uses — stays covered end to end.
+/// </para>
 /// </summary>
 internal static class ScanPackRoundTripTests
 {
@@ -19,28 +26,31 @@ internal static class ScanPackRoundTripTests
         failures += TestRunner.Run(nameof(RoundTrip_PreservesRoots), RoundTrip_PreservesRoots);
         failures += TestRunner.Run(nameof(RoundTrip_PreservesClasses), RoundTrip_PreservesClasses);
         failures += TestRunner.Run(nameof(RoundTrip_PreservesFunctions), RoundTrip_PreservesFunctions);
+        failures += TestRunner.Run(nameof(RoundTrip_PreservesOutParameter), RoundTrip_PreservesOutParameter);
         return failures;
     }
 
     private static void RoundTrip_PreservesRoots()
     {
         using var spk = new TempSpk();
-        var (result, data) = BuildSampleScanResult();
-        WriteResult(spk.Path, result);
+        PackFixture.Write(spk.Path, "5.0", PackFixture.Root("/Engine", "5.0",
+            PackFixture.Class("AActor", "UObject",
+                PackFixture.Function("K2_DestroyActor", true,
+                    PackFixture.Parameter("Object;AActor*", "AActor*")))));
 
         using var provider = ScanPackLoader.FromFile(spk.Path);
         IReadOnlyList<ScanRootView> roots = provider.Roots;
 
         TestRunner.Equal(1, roots.Count);
-        TestRunner.Equal(data.RootList[0].RootPath, roots[0].RootPath);
-        TestRunner.Equal(data.RootList[0].Version, roots[0].Version);
+        TestRunner.Equal("/Engine", roots[0].RootPath);
+        TestRunner.Equal("5.0", roots[0].Version);
     }
 
     private static void RoundTrip_PreservesClasses()
     {
         using var spk = new TempSpk();
-        var (result, _) = BuildSampleScanResult();
-        WriteResult(spk.Path, result);
+        PackFixture.Write(spk.Path, "5.0", PackFixture.Root("/Engine", "5.0",
+            PackFixture.Class("AActor", "UObject")));
 
         using var provider = ScanPackLoader.FromFile(spk.Path);
         IReadOnlyList<ScanClassView> classes = provider.FindClassesFlexible("AActor");
@@ -53,8 +63,9 @@ internal static class ScanPackRoundTripTests
     private static void RoundTrip_PreservesFunctions()
     {
         using var spk = new TempSpk();
-        var (result, _) = BuildSampleScanResult();
-        WriteResult(spk.Path, result);
+        PackFixture.Write(spk.Path, "5.0", PackFixture.Root("/Engine", "5.0",
+            PackFixture.Class("AActor", "UObject",
+                PackFixture.Function("K2_DestroyActor", true))));
 
         using var provider = ScanPackLoader.FromFile(spk.Path);
         IReadOnlyList<ScanFunctionView> funcs = provider.CollectFunctions("AActor");
@@ -64,48 +75,29 @@ internal static class ScanPackRoundTripTests
         TestRunner.True(funcs[0].IsStatic);
     }
 
-    // ===== helpers =====
-
-    internal static (IScanResult, ScanData) BuildSampleScanResult()
+    /// <summary>
+    /// The out-parameter flag survives the pack round trip: a non-const C++ reference
+    /// ("FHitResult&amp;") is an out parameter (output pin), a const reference
+    /// ("const TArray&lt;AActor*&gt;&amp;") is not.
+    /// </summary>
+    private static void RoundTrip_PreservesOutParameter()
     {
-        var data = new ScanData();
-        data.RootList.Add(new ScanRootView("/Engine", "5.0", ["Core"], []));
-        data.ClassList.Add(new ScanClassView("AActor", "UObject", ["UObject"], 10));
-        data.FunctionMap["AActor"] =
-        [
-            new ScanFunctionView(
-                "K2_DestroyActor", true, false,
-                [new ScanParameterView("Object;AActor*", "AActor*")],
-                "/Engine/Source/Runtime/GameFramework/Actor.h", 42, "void"),
-        ];
+        using var spk = new TempSpk();
+        PackFixture.Write(spk.Path, "5.0", PackFixture.Root("/Engine", "5.0",
+            PackFixture.Class("UKismetSystemLibrary", null,
+                PackFixture.Function("LineTraceSingle", true,
+                    PackFixture.Parameter("Start", "const FVector"),
+                    PackFixture.Parameter("OutHit", "FHitResult&", isOut: true),
+                    PackFixture.Parameter("ActorsToIgnore", "const TArray<AActor*>&")))));
 
-        var manifest = new ScanManifest
-        {
-            ScannerId = "TestScanner",
-            ScannerVersion = "1.0",
-            TargetType = "TestTarget",
-            TargetVersions = ["5.0"],
-            DataTypes = [ScanDataTypes.Code],
-        };
+        using var provider = ScanPackLoader.FromFile(spk.Path);
+        IReadOnlyList<ScanFunctionView> funcs = provider.CollectFunctions("UKismetSystemLibrary");
 
-        var index = new ScanIndex();
-        index.Add(new ScanEntry { Id = "code/classes/AActor", Version = "5.0", DataType = "code" });
-
-        return (new SimpleScanResult(manifest, index, data), data);
-    }
-
-    internal static void WriteResult(string path, IScanResult result)
-    {
-        using var pack = SpeedyPack.Open(path);
-        var packer = new ScanResultPacker(pack);
-        packer.Pack(result);
-    }
-
-    internal sealed class SimpleScanResult(ScanManifest m, ScanIndex i, IScanData d) : IScanResult
-    {
-        public ScanManifest Manifest { get; } = m;
-        public ScanIndex Index { get; } = i;
-        public IScanData Data { get; } = d;
+        TestRunner.Equal(1, funcs.Count);
+        TestRunner.Equal(3, funcs[0].Parameters.Count);
+        TestRunner.False(funcs[0].Parameters[0].IsOut);
+        TestRunner.True(funcs[0].Parameters[1].IsOut);
+        TestRunner.False(funcs[0].Parameters[2].IsOut);
     }
 
     internal sealed class TempSpk : IDisposable

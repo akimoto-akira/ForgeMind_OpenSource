@@ -1,27 +1,27 @@
-# Plán vývoje ForgeMind
+﻿# Plán vývoje ForgeMind
 
-Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, seskupených podle domén a stavů, a je průběžně aktualizován podle postupu vývoje. Zdroj dat: nejnovější snímek sběru assetů (2026-10-08).
+Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, seskupených podle domén a stavů, a je průběžně aktualizován podle postupu vývoje. Zdroj dat: nejnovější snímek sběru assetů (2026-10-19).
 
 ## Přehled
 
 | Stav | Počet |
 | --- | ---: |
-| Dokončeno | 30 |
-| Ve vývoji | 11 |
-| Plánováno | 118 |
+| Dokončeno | 59 |
+| Ve vývoji | 4 |
+| Plánováno | 96 |
 | Celkem | 159 |
 
 ## Procházet podle domén
 
 | Doména | Dokončeno | Ve vývoji | Plánováno |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Ostatní | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Dokončeno (30)
+### Dokončeno (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, s
 - Blueprint Vázání události instance
 - Blueprint Ladící kreslení
 - Blueprint Uzel výběru
-
-### Ve vývoji (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, s
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Plánováno (43)
+### Ve vývoji (3)
 
-- Blueprint Bitová maska
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Plánováno (21)
+
 - Blueprint Vektor
 - Blueprint Rozšířený vstup
-- Blueprint Vázání delegátů
 - Blueprint Subsystem
-- Blueprint Kontejner Map/Set
-- Blueprint Trasování paprsku
 - Blueprint Zpoždění
 - Blueprint Asynchronní načítání
 - Blueprint Reference
 - Blueprint Trasování tvaru
-- Blueprint Matematická knihovna
-- Blueprint Matematický výraz
-- Blueprint Datová tabulka
-- Blueprint Datový asset
-- Blueprint Operace s poli
 - Blueprint Formátování textu
 - Blueprint Rotace
-- Blueprint Timeline
-- Blueprint Křivka
-- Blueprint Enum
-- Blueprint Iterace enum
 - Blueprint Spline
-- Blueprint Řízení toku
 - Blueprint Fyzika
 - Blueprint Kamera
-- Blueprint Události kolizí
-- Blueprint Výchozí hodnoty třídy
-- Blueprint Částice
 - Blueprint Komponenty
-- Blueprint Síťová replikace
 - Blueprint Pohyb postavy
 - Blueprint Konverze
-- Blueprint Měkké reference
-- Blueprint Vstupní události
 - Blueprint Operátory
 - Blueprint Komponenty za běhu
 - Blueprint Uzel výběru
 - Blueprint Zničení
-- Blueprint Brána
-- Blueprint Náhodnost
 - Blueprint Zvuk
 - Blueprint Predikce trajektorie
 

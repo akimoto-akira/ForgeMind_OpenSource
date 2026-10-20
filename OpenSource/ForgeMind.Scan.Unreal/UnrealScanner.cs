@@ -210,11 +210,20 @@ public sealed class UnrealScanner : IScanner
         new(
             fn.Name,
             fn.IsStatic,
-            fn.Specifiers.Contains(PureSpecifier, StringComparer.OrdinalIgnoreCase),
-            fn.Parameters.Select(p => new ScanParameterView(p.Name, p.Type)).ToArray(),
+            IsPureFromSpecifiers(fn.Specifiers),
+            fn.Parameters.Select(p => new ScanParameterView(p.Name, p.Type, p.IsOut)).ToArray(),
             fn.FilePath,
             fn.LineNumber,
             fn.ReturnType);
+
+    /// <summary>
+    /// BlueprintPure → pure; const BlueprintCallable → also pure (engine generates no exec
+    /// pins for const BlueprintCallable, same as BlueprintPure — e.g. UCurveFloat::GetFloatValue).
+    /// </summary>
+    private static bool IsPureFromSpecifiers(List<string> specs) =>
+        specs.Contains("BlueprintPure", StringComparer.OrdinalIgnoreCase)
+        || (specs.Contains("const", StringComparer.OrdinalIgnoreCase)
+            && specs.Contains("BlueprintCallable", StringComparer.OrdinalIgnoreCase));
 
     /// <summary>
     /// Converts an absolute file path into a path relative to the engine root so the

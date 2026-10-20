@@ -209,11 +209,27 @@ public sealed class ScanPackReader : IDisposable
         new(
             fn.Name,
             fn.IsStatic,
-            fn.Specifiers?.Contains("BlueprintPure", StringComparer.OrdinalIgnoreCase) ?? false,
-            fn.Parameters?.Select(p => new ScanParameterView(p.Name, p.Type)).ToArray() ?? [],
+            IsPureFromSpecifiers(fn.Specifiers),
+            fn.Parameters?.Select(p => new ScanParameterView(p.Name, p.Type, p.IsOut)).ToArray() ?? [],
             fn.FilePath,
             fn.LineNumber,
-            fn.ReturnType);
+            fn.ReturnType,
+            // Scanner writes raw meta=(K="V", ...) as a single "meta" string entry; the contract
+            // view is documented as pre-flattened. Normalize() unpacks it (and is idempotent on
+            // already-flattened packs, so no rebuild is required).
+            FunctionMetadataNormalizer.Normalize(fn.Metadata));
+
+    /// <summary>
+    /// BlueprintPure → pure; const BlueprintCallable → also pure (engine generates no exec
+    /// pins for const BlueprintCallable, same as BlueprintPure — e.g. UCurveFloat::GetFloatValue).
+    /// </summary>
+    private static bool IsPureFromSpecifiers(List<string>? specs)
+    {
+        if (specs is null) return false;
+        return specs.Contains("BlueprintPure", StringComparer.OrdinalIgnoreCase)
+            || (specs.Contains("const", StringComparer.OrdinalIgnoreCase)
+                && specs.Contains("BlueprintCallable", StringComparer.OrdinalIgnoreCase));
+    }
 
     private byte[]? ReadOrNull(string path)
     {
@@ -270,6 +286,7 @@ public sealed class ScanPackReader : IDisposable
         public string FilePath { get; set; } = "";
         public int LineNumber { get; set; }
         public List<string>? Specifiers { get; set; }
+        public Dictionary<string, string>? Metadata { get; set; }
         public List<DtoParameter>? Parameters { get; set; }
     }
 
@@ -278,5 +295,11 @@ public sealed class ScanPackReader : IDisposable
     {
         public string Name { get; set; } = "";
         public string? Type { get; set; }
+
+        /// <summary>
+        /// Non-const reference parameter -> Blueprint output pin. Absent in packs written
+        /// before out-parameter capture, in which case it defaults to false (input pin).
+        /// </summary>
+        public bool IsOut { get; set; }
     }
 }

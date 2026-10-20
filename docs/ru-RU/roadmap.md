@@ -1,27 +1,27 @@
-# Дорожная карта развития ForgeMind
+﻿# Дорожная карта развития ForgeMind
 
-Эта дорожная карта отражает прогресс разработки функций генерации ассетов ForgeMind, сгруппированных по областям и статусам, и непрерывно обновляется по мере развития. Источник данных: последний снимок сбора ассетов (2026-10-08).
+Эта дорожная карта отражает прогресс разработки функций генерации ассетов ForgeMind, сгруппированных по областям и статусам, и непрерывно обновляется по мере развития. Источник данных: последний снимок сбора ассетов (2026-10-19).
 
 ## Обзор
 
 | Статус | Количество |
 | --- | ---: |
-| Завершено | 30 |
-| В разработке | 11 |
-| Запланировано | 118 |
+| Завершено | 59 |
+| В разработке | 4 |
+| Запланировано | 96 |
 | Всего | 159 |
 
 ## Обзор по областям
 
 | Область | Завершено | В разработке | Запланировано |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Прочее | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Завершено (30)
+### Завершено (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@
 - Blueprint Привязка события экземпляра
 - Blueprint Отладочное рисование
 - Blueprint Узел выбора
-
-### В разработке (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Запланировано (43)
+### В разработке (3)
 
-- Blueprint Битовая маска
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Запланировано (21)
+
 - Blueprint Вектор
 - Blueprint Расширенный ввод
-- Blueprint Привязка делегатов
 - Blueprint Subsystem
-- Blueprint Контейнер Map/Set
-- Blueprint Трассировка линии
 - Blueprint Задержка
 - Blueprint Асинхронная загрузка
 - Blueprint Ссылка
 - Blueprint Трассировка формы
-- Blueprint Математическая библиотека
-- Blueprint Математическое выражение
-- Blueprint Таблица данных
-- Blueprint Ассет данных
-- Blueprint Операции с массивами
 - Blueprint Форматирование текста
 - Blueprint Поворот
-- Blueprint Timeline
-- Blueprint Кривая
-- Blueprint Enum
-- Blueprint Итерация по enum
 - Blueprint Spline
-- Blueprint Управление потоком
 - Blueprint Физика
 - Blueprint Камера
-- Blueprint События столкновений
-- Blueprint Значения по умолчанию класса
-- Blueprint Частицы
 - Blueprint Компоненты
-- Blueprint Сетевая репликация
 - Blueprint Движение персонажа
 - Blueprint Преобразование
-- Blueprint Мягкие ссылки
-- Blueprint События ввода
 - Blueprint Операторы
 - Blueprint Компоненты времени выполнения
 - Blueprint Узел выбора
 - Blueprint Уничтожение
-- Blueprint Gate
-- Blueprint Случайность
 - Blueprint Звук
 - Blueprint Прогнозирование траектории
 

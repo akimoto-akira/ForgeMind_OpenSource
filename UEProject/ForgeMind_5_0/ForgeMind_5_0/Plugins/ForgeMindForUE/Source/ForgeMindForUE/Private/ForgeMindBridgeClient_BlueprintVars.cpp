@@ -37,7 +37,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 		|| !Payload->TryGetStringField(TEXT("type"), TypeName) || TypeName.IsEmpty())
 	{
 		Result->SetBoolField(TEXT("added"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path, e.g. /Game/Blueprints/BP_Thing), name (variable name), type (bool, byte, int, int64, float, double, name, string, text, vector, rotator, transform, or a UClass name for an object reference; append '[]' or wrap in array<>/set<>/map<KeyType,ValueType> for container variables); optional category (variable category, default 'Default'), instanceEditable (bool), exposeOnSpawn (bool) and tooltip (string, the hover hint in the details panel)"));
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path, e.g. /Game/Blueprints/BP_Thing), name (variable name), type (bool, byte, int, int64, float, double, name, string, text, vector, rotator, transform, or a UClass name for an object reference; append '[]' or wrap in array<>/set<>/map<KeyType,ValueType> for container variables); optional category (variable category, default 'Default'), instanceEditable (bool), exposeOnSpawn (bool), tooltip (string, the hover hint in the details panel), bitmask (bool) and bitmaskEnum (flag enum reference: asset path, short name or DSL declaration name)"));
 		return Result;
 	}
 
@@ -148,7 +148,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 			// Settings that restate the declaring class are no-ops here; report
 			// them so a reader can tell them apart from applied ones.
 			TArray<TSharedPtr<FJsonValue>> Restated;
-			for (const TCHAR* Setting : { TEXT("category"), TEXT("instanceEditable"), TEXT("exposeOnSpawn"), TEXT("replication") })
+			for (const TCHAR* Setting : { TEXT("category"), TEXT("instanceEditable"), TEXT("exposeOnSpawn"), TEXT("replication"), TEXT("bitmask"), TEXT("bitmaskEnum") })
 			{
 				if (Payload->HasField(Setting))
 				{
@@ -192,11 +192,20 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 	bool bExposeOnSpawn = false;
 	bool bInstanceEditable = false;
 	FString TooltipText;
+	FString ReplicationMode;
+	FString OnRepFunc;
+	bool bBitmask = false;
+	FString BitmaskEnumName;
 	const bool bHasCategory = Payload->TryGetStringField(TEXT("category"), CategoryText);
 	const bool bHasExposeOnSpawn = Payload->TryGetBoolField(TEXT("exposeOnSpawn"), bExposeOnSpawn);
 	const bool bHasInstanceEditable = Payload->TryGetBoolField(TEXT("instanceEditable"), bInstanceEditable);
 	const bool bHasTooltip = Payload->TryGetStringField(TEXT("tooltip"), TooltipText);
-	if (bHasCategory || bHasInstanceEditable || (bHasExposeOnSpawn && bExposeOnSpawn) || bHasTooltip)
+	const bool bHasReplication = Payload->TryGetStringField(TEXT("replication"), ReplicationMode);
+	Payload->TryGetStringField(TEXT("onRep"), OnRepFunc);
+	const bool bHasBitmask = Payload->TryGetBoolField(TEXT("bitmask"), bBitmask);
+	const bool bHasBitmaskEnum = Payload->TryGetStringField(TEXT("bitmaskEnum"), BitmaskEnumName);
+	if (bHasCategory || bHasInstanceEditable || (bHasExposeOnSpawn && bExposeOnSpawn) || bHasTooltip || bHasReplication
+		|| bHasBitmask || bHasBitmaskEnum)
 	{
 		FBPVariableDescription* Variable = Blueprint->NewVariables.FindByPredicate(
 			[&VarName](const FBPVariableDescription& Desc) { return Desc.VarName == FName(*VarName); });
@@ -232,6 +241,109 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintVariable(const
 				else
 				{
 					Variable->SetMetaData(FBlueprintMetadata::MD_Tooltip, TooltipText);
+				}
+			}
+			// Replication mirrors FBPVariableDescription / OnChangeReplication:
+			// 'replicated' sets CPF_Net; 'repNotify' (or a non-empty onRep) sets
+			// CPF_Net|CPF_RepNotify + the OnRep function name; 'none' clears both. The
+			// add path previously ignored 'replication' entirely (a silent no-op).
+			if (bHasReplication)
+			{
+				const FString ModeLower = ReplicationMode.ToLower();
+				if (ModeLower == TEXT("none"))
+				{
+					Variable->PropertyFlags &= ~(CPF_Net | CPF_RepNotify);
+					Variable->RepNotifyFunc = NAME_None;
+				}
+				else if (ModeLower == TEXT("repnotify") || !OnRepFunc.IsEmpty())
+				{
+					Variable->PropertyFlags |= CPF_Net | CPF_RepNotify;
+					// UE names the RepNotify callback OnRep_<VarName> automatically; neither the
+					// editor nor the DSL authors a custom name. Default to that when the caller
+					// gave none (so an explicit onRep, if ever passed, still wins).
+					Variable->RepNotifyFunc = OnRepFunc.IsEmpty()
+						? FName(*FString::Printf(TEXT("OnRep_%s"), *VarName))
+						: FName(*OnRepFunc);
+				}
+				else // 'replicated'
+				{
+					Variable->PropertyFlags |= CPF_Net;
+					Variable->PropertyFlags &= ~CPF_RepNotify;
+					Variable->RepNotifyFunc = NAME_None;
+				}
+			}
+			// Bitmask metadata: the editor's bitmask checkbox control keys off the
+			// property-level MD_Bitmask metadata (SPropertyEditorNumeric) and
+			// MD_BitmaskEnum associates the property with the flag enum. When the
+			// caller asks for bitmask without naming an enum, the variable's own
+			// type is the flag enum (a bitmask variable of an enum type is exactly
+			// how the editor authors one) - the compiler copies both metadata
+			// entries onto the property with Category.
+			// MD_BitmaskEnum must carry the enum's SHORT name (GetName/FName, e.g.
+			// "EMyFlags_A"), NOT a path: the variable details panel's "Bitmask Enum"
+			// combo builds its options from each loaded enum's GetFName() and matches
+			// the current value by direct string comparison (BlueprintDetailsCustomization.cpp
+			// GetBitmaskEnumTypeName / OnBitmaskEnumTypeChanged), and the numeric
+			// bitmask editor + pin type resolve it with FindObject<UEnum>(ANY_PACKAGE,
+			// name). A raw asset path or DSL declaration name matches none of these and
+			// shows "None". So resolve the reference first (ResolveUserEnumReference:
+			// path / short name / DSL alias) then write the resolved enum's short name;
+			// an unresolvable name is reported, not written as junk.
+			if (bHasBitmask || bHasBitmaskEnum)
+			{
+				Variable->SetMetaData(FBlueprintMetadata::MD_Bitmask, bBitmask ? TEXT("true") : TEXT("false"));
+				FString EnumForMeta = BitmaskEnumName;
+				if (EnumForMeta.IsEmpty() && !TypeName.IsEmpty())
+				{
+					EnumForMeta = TypeName;
+				}
+				if (!EnumForMeta.IsEmpty())
+				{
+					if (UEnum* BitmaskEnum = ResolveUserEnumReference(EnumForMeta))
+					{
+						Variable->SetMetaData(FBlueprintMetadata::MD_BitmaskEnum, *BitmaskEnum->GetName());
+						// Hard dependency: the details panel's "Bitmask Enum" combo only
+						// lists enums currently in memory (TObjectIterator<UEnum>), so a
+						// bitmask variable whose enum is referenced by nothing else shows
+						// "None" after an editor reopen. The metadata string does not create
+						// a package dependency; FEdGraphPinType serializes PinSubCategoryObject
+						// as an object reference (EdGraphPin.cpp), so pointing it at the enum
+						// makes the blueprint depend on the enum package and load it with the
+						// blueprint. The compiler still creates an FIntProperty (PC_Int ignores
+						// the subcategory); the engine's own bitmask pins carry this subcategory.
+						Variable->VarType.PinSubCategoryObject = BitmaskEnum;
+						// Bitmask default: the authored default is an enum entry name ("A"),
+						// an owner-qualified name ("EMyFlags.A") or a combination ("A|C").
+						// Resolve it to its numeric value and store that on the variable
+						// description BEFORE compiling, so every compile reproduces the CDO
+						// default. The direct CDO write in EnsureCompiledVariableDefault alone
+						// does not survive a recompile: the compiler re-parses the description's
+						// DefaultValue text as an int, and a non-numeric entry name parses to 0,
+						// wiping the value on the next compile (e.g. the CompileAndSave that
+						// follows this command).
+						if (!DefaultValue.IsEmpty() && !DefaultValue.IsNumeric())
+						{
+							int64 CombinedValue = 0;
+							FString InternalName, TranslateReason;
+							if (TranslateEnumDefaultText(BitmaskEnum, DefaultValue, InternalName, TranslateReason, &CombinedValue))
+							{
+								DefaultValue = FString::Printf(TEXT("%lld"), CombinedValue);
+								Variable->DefaultValue = DefaultValue;
+							}
+							else
+							{
+								DefaultWarnings.Add(FString::Printf(
+									TEXT("bitmask default '%s' did not resolve against enum '%s': %s (the default keeps its authored text and may not survive a recompile)"),
+									*DefaultValue, *BitmaskEnum->GetName(), *TranslateReason));
+							}
+						}
+					}
+					else
+					{
+						DefaultWarnings.Add(FString::Printf(
+							TEXT("bitmaskEnum '%s' did not resolve to a loadable UEnum; MD_BitmaskEnum was not set (the bitmask checkbox still applies)"),
+							*EnumForMeta));
+					}
 				}
 			}
 		}
@@ -287,7 +399,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		|| !Payload->TryGetStringField(TEXT("name"), VarName) || VarName.IsEmpty())
 	{
 		Result->SetBoolField(TEXT("updated"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path), name (variable name); optional settings: category (string), instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, exposeOnSpawn, exposeToCinematics (booleans), deprecatedMessage (string), tooltip (string), replication ('none' or 'replicated'), replicationCondition (e.g. none, initialOnly, ownerOnly)"));
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (blueprint asset path), name (variable name); optional settings: category (string), instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, exposeOnSpawn, exposeToCinematics, bitmask (booleans), deprecatedMessage (string), tooltip (string), replication ('none' or 'replicated'), replicationCondition (e.g. none, initialOnly, ownerOnly), bitmaskEnum (flag enum reference: asset path, short name or DSL declaration name; empty clears)"));
 		return Result;
 	}
 
@@ -412,6 +524,8 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 	FString TooltipText; bool bTooltipPresent = false;
 	FString ReplicationMode; bool bReplicationPresent = false;
 	FString ConditionText; bool bConditionPresent = false;
+	bool bBitmask = false, bBitmaskPresent = false;
+	FString BitmaskEnumText; bool bBitmaskEnumPresent = false;
 	if (!TryGetOptionalBool(Payload, TEXT("instanceEditable"), bInstanceEditable, bInstanceEditablePresent, KeyReason)
 		|| !TryGetOptionalBool(Payload, TEXT("private"), bPrivate, bPrivatePresent, KeyReason)
 		|| !TryGetOptionalBool(Payload, TEXT("config"), bConfig, bConfigPresent, KeyReason)
@@ -425,7 +539,9 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		|| !TryGetOptionalString(Payload, TEXT("deprecatedMessage"), DeprecatedMessage, bDeprecatedMessagePresent, KeyReason)
 		|| !TryGetOptionalString(Payload, TEXT("tooltip"), TooltipText, bTooltipPresent, KeyReason)
 		|| !TryGetOptionalString(Payload, TEXT("replication"), ReplicationMode, bReplicationPresent, KeyReason)
-		|| !TryGetOptionalString(Payload, TEXT("replicationCondition"), ConditionText, bConditionPresent, KeyReason))
+		|| !TryGetOptionalString(Payload, TEXT("replicationCondition"), ConditionText, bConditionPresent, KeyReason)
+		|| !TryGetOptionalBool(Payload, TEXT("bitmask"), bBitmask, bBitmaskPresent, KeyReason)
+		|| !TryGetOptionalString(Payload, TEXT("bitmaskEnum"), BitmaskEnumText, bBitmaskEnumPresent, KeyReason))
 	{
 		Result->SetBoolField(TEXT("updated"), false);
 		Result->SetStringField(TEXT("reason"), KeyReason);
@@ -434,11 +550,12 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 
 	const bool bAnyKeyPresent = bDefaultPresent || bInstanceEditablePresent || bPrivatePresent || bConfigPresent || bTransientPresent
 		|| bSaveGamePresent || bAdvancedDisplayPresent || bDeprecatedPresent || bExposeOnSpawnPresent
-		|| bExposeToCinematicsPresent || bCategoryPresent || bDeprecatedMessagePresent || bTooltipPresent || bReplicationPresent || bConditionPresent;
+		|| bExposeToCinematicsPresent || bCategoryPresent || bDeprecatedMessagePresent || bTooltipPresent || bReplicationPresent || bConditionPresent
+		|| bBitmaskPresent || bBitmaskEnumPresent;
 	if (!bAnyKeyPresent)
 	{
 		Result->SetBoolField(TEXT("updated"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("Nothing to change - pass at least one of default, category, instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, deprecatedMessage, exposeOnSpawn, exposeToCinematics, tooltip, replication, replicationCondition"));
+		Result->SetStringField(TEXT("reason"), TEXT("Nothing to change - pass at least one of default, category, instanceEditable, private, config, transient, saveGame, advancedDisplay, deprecated, deprecatedMessage, exposeOnSpawn, exposeToCinematics, tooltip, replication, replicationCondition, bitmask, bitmaskEnum"));
 		return Result;
 	}
 
@@ -545,6 +662,39 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleUpdateBlueprintVariable(co
 		else
 		{
 			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_DeprecationMessage, DeprecatedMessage);
+		}
+	}
+	// Bitmask metadata mirrors add_blueprint_variable: MD_Bitmask is the checkbox,
+	// MD_BitmaskEnum must carry the resolved enum's SHORT name (the details panel's
+	// "Bitmask Enum" combo matches options by enum FName; an empty value clears it,
+	// an unresolvable one is reported instead of written as junk).
+	if (bBitmaskPresent)
+	{
+		FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_Bitmask, bBitmask ? TEXT("true") : TEXT("false"));
+	}
+	if (bBitmaskEnumPresent)
+	{
+		if (BitmaskEnumText.IsEmpty())
+		{
+			FBlueprintEditorUtils::RemoveBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_BitmaskEnum);
+		}
+		else if (UEnum* BitmaskEnum = ResolveUserEnumReference(BitmaskEnumText))
+		{
+			FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, FName(*VarName), nullptr, FBlueprintMetadata::MD_BitmaskEnum, *BitmaskEnum->GetName());
+			// Same hard dependency as the add path: point the variable's pin type at the
+			// enum so the blueprint package depends on it and the details panel combo can
+			// resolve it after an editor reopen.
+			if (FBPVariableDescription* VarDesc = Blueprint->NewVariables.FindByPredicate(
+				[&VarName](const FBPVariableDescription& Desc) { return Desc.VarName == FName(*VarName); }))
+			{
+				VarDesc->VarType.PinSubCategoryObject = BitmaskEnum;
+			}
+		}
+		else
+		{
+			DefaultWarnings.Add(FString::Printf(
+				TEXT("bitmaskEnum '%s' did not resolve to a loadable UEnum; MD_BitmaskEnum was not changed"),
+				*BitmaskEnumText));
 		}
 	}
 	if (bDefaultPresent)

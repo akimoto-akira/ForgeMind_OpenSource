@@ -35,6 +35,27 @@
 #include "K2Node_AssignmentStatement.h"
 #include "K2Node_TemporaryVariable.h"
 #include "K2Node_DynamicCast.h"
+#include "K2Node_GetClassDefaults.h"
+#include "K2Node_EnumEquality.h"
+#include "K2Node_EnumInequality.h"
+#include "K2Node_EnumLiteral.h"
+#include "K2Node_BitmaskLiteral.h"
+// Timeline node (UK2Node_Timeline): creates the blueprint's timeline template
+// (UTimelineTemplate) plus the graph node; the node's AllocateDefaultPins
+// resolves tracks from the template.
+#include "K2Node_Timeline.h"
+#include "Engine/TimelineTemplate.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+// Timeline track curve objects (DSL Curve((t, v), ...) / At(t, ...)): the tracks
+// own UCurveFloat / UCurveVector / UCurveLinearColor instances holding the
+// keyframes; FRichCurve carries the keys themselves.
+#include "Curves/CurveFloat.h"
+#include "Curves/CurveVector.h"
+#include "Curves/CurveLinearColor.h"
+#include "Curves/RichCurve.h"
+// Enum iteration: UK2Node_ForEachElementInEnum ("ForEach {EnumName}"). Its LoopBody /
+// EnumValue pins only exist when the node's Enum member is set before AllocateDefaultPins.
+#include "K2Node_ForEachElementInEnum.h"
 #include "K2Node_Event.h"
 #include "K2Node_BaseMCDelegate.h"
 #include "K2Node_CallDelegate.h"
@@ -46,6 +67,7 @@
 #include "K2Node_IfThenElse.h"
 #include "K2Node_Literal.h"
 #include "K2Node_MacroInstance.h"
+#include "K2Node_MathExpression.h"
 #include "K2Node_SpawnActorFromClass.h"
 #include "K2Node_AddComponent.h"
 #include "K2Node_MakeArray.h"
@@ -54,6 +76,7 @@
 #include "K2Node_MakeSet.h"
 #include "K2Node_MakeStruct.h"
 #include "K2Node_BreakStruct.h"
+#include "K2Node_GetDataTableRow.h"
 #include "K2Node_Self.h"
 #include "K2Node_Select.h"
 #include "K2Node_StructOperation.h"
@@ -66,7 +89,9 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_GetSubsystem.h"
 #include "K2Node_InputAxisEvent.h"
-#include "K2Node_InputActionEvent.h"
+#include "K2Node_InputAction.h"
+#include "K2Node_InputKey.h"
+#include "GameFramework/InputSettings.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
 #include "Editor.h"
@@ -112,8 +137,11 @@ namespace
 	 *   SwitchOnInt          — UK2Node_SwitchInteger  (cases via payload 'cases')
 	 *   SwitchOnString       — UK2Node_SwitchString   (cases via payload 'cases')
 	 *   SwitchOnEnum         — UK2Node_SwitchEnum     (enum via payload 'enum')
+	 *   EqualEnum            — UK2Node_EnumEquality   (dedicated enum "Equal (Enum)" node; A/B wildcards conform from connections)
+	 *   NotEqualEnum         — UK2Node_EnumInequality (dedicated enum "!=" node, same wildcard conform)
+	 *   EnumLiteral          — UK2Node_EnumLiteral    (enum dropdown literal; enum via payload 'enum', entry via 'properties' on the typed "Enum" input pin)
 	 *   Cast                 — UK2Node_DynamicCast    (target class via payload 'targetClass')
-	 *   Select               — UK2Node_Select         (option count via payload 'options')
+	 *   Select               — UK2Node_Select         (option count via payload 'options'; enum via payload 'enum' → SetEnum, option pins then named by the enum entries)
 	 *   SpawnActorFromClass  — UK2Node_SpawnActorFromClass (spawn class via payload 'targetClass' → Class pin default)
 	 *   AddComponent         — UK2Node_AddComponent   (component class via payload 'targetClass' → TemplateType)
 	 */
@@ -125,6 +153,10 @@ namespace
 		|| Name == TEXT("SwitchOnInt")
 		|| Name == TEXT("SwitchOnString")
 		|| Name == TEXT("SwitchOnEnum")
+		|| Name == TEXT("EqualEnum")
+		|| Name == TEXT("NotEqualEnum")
+		|| Name == TEXT("EnumLiteral")
+		|| Name == TEXT("ForEachElementInEnum")
 		|| Name == TEXT("Cast")
 		|| Name == TEXT("Select")
 		|| Name == TEXT("CreateDelegate")
@@ -136,7 +168,25 @@ namespace
 		|| Name == TEXT("MakeMap")
 		|| Name == TEXT("MakeStruct")
 		|| Name == TEXT("BreakStruct")
-		|| Name == TEXT("ConstructObjectFromClass");
+		|| Name == TEXT("ConstructObjectFromClass")
+		// GetClassDefaults: UK2Node_GetClassDefaults ("Get Class Defaults") -
+		// pure K2 node with no backing UFunction; resolved by context-menu
+		// name like the flow nodes above. Target class via payload
+		// 'targetClass' -> Class pin default (see ConfigureNativeFlowNode).
+		|| Name == TEXT("GetClassDefaults")
+		// GetDataTableRow: UK2Node_GetDataTableRow ("Get Data Table Row") - the
+		// engine's dedicated node. It cannot be a plain CallFunction on
+		// UDataTableFunctionLibrary::GetDataTableRowFromName: that function's
+		// OutRow is a CustomStructureParam wildcard that only resolves from the
+		// DataTable pin's DefaultObject, and a pin fed by a variable link has
+		// none (the bridge refuses a default on a wired pin). UK2Node_GetDataTableRow
+		// covers that case - GetDataTableRowStructType falls back to the Out Row
+		// pin's own link when the table pin carries no DefaultObject.
+		|| Name == TEXT("GetDataTableRow")
+		// MakeBitmask: UK2Node_BitmaskLiteral ("Make Bitmask") - pure node that
+		// wraps a bitflags enum literal; expands to MakeLiteralInt at compile.
+		// BitflagsEnum is set from payload 'enum' in ConfigureNativeFlowNode.
+		|| Name == TEXT("MakeBitmask");
 	}
 
 	/**
@@ -170,6 +220,22 @@ namespace
 		if (Name == TEXT("SwitchOnEnum"))
 		{
 			return NewObject<UK2Node_SwitchEnum>(Graph);
+		}
+		if (Name == TEXT("EqualEnum"))
+		{
+			return NewObject<UK2Node_EnumEquality>(Graph);
+		}
+		if (Name == TEXT("NotEqualEnum"))
+		{
+			return NewObject<UK2Node_EnumInequality>(Graph);
+		}
+		if (Name == TEXT("EnumLiteral"))
+		{
+			return NewObject<UK2Node_EnumLiteral>(Graph);
+		}
+		if (Name == TEXT("ForEachElementInEnum"))
+		{
+			return NewObject<UK2Node_ForEachElementInEnum>(Graph);
 		}
 		if (Name == TEXT("Cast"))
 		{
@@ -214,6 +280,32 @@ namespace
 		if (Name == TEXT("BreakStruct"))
 		{
 			return NewObject<UK2Node_BreakStruct>(Graph);
+		}
+		// GetDataTableRow: UK2Node_GetDataTableRow (Get Data Table Row). Pins are
+		// exec in/out, "DataTable" (object), "RowName" (FName) and "ReturnValue"
+		// (the Out Row wildcard). See IsNativeFlowNodeName for why this is the
+		// node a table held in a variable has to use.
+		if (Name == TEXT("GetDataTableRow"))
+		{
+			return NewObject<UK2Node_GetDataTableRow>(Graph);
+		}
+		// GetClassDefaults: UK2Node_GetClassDefaults (Get Class Defaults).
+		// Pure node with no UFunction behind it; output pins are per-property
+		// pins generated from the Class input pin's class - they are created
+		// in ConfigureNativeFlowNode (via PinDefaultValueChanged -> 
+		// OnClassPinChanged) after the target class is known, so the factory
+		// only spawns the node without allocating pins.
+		if (Name == TEXT("GetClassDefaults"))
+		{
+			return NewObject<UK2Node_GetClassDefaults>(Graph);
+		}
+		// MakeBitmask: UK2Node_BitmaskLiteral ("Make Bitmask"). Pure node with
+		// "Bitmask" input and "ReturnValue" output pins (both PC_Int + PSC_Bitmask).
+		// BitflagsEnum must be set before AllocateDefaultPins (pins take their
+		// enum type from it); ConfigureNativeFlowNode handles that from payload 'enum'.
+		if (Name == TEXT("MakeBitmask"))
+		{
+			return NewObject<UK2Node_BitmaskLiteral>(Graph);
 		}
 		// ConstructObjectFromClass: UK2Node_ConstructObjectFromClass is abstract,
 		// UK2Node_GenericCreateObject (its concrete subclass) has ExpandNode but
@@ -288,6 +380,18 @@ namespace
 	 * - Select:          'options' (int) sets the initial option pin count;
 	 *                   the first option pin's type drives the wildcard.
 	 */
+	/**
+	 * Resolves the 'enum' payload field of enum-parameterized nodes
+	 * (SwitchOnEnum, EnumLiteral). Resolution is a single convergence point:
+	 * ResolveUserEnumReference (/Game|/Script asset path, UEnum short name,
+	 * E-prefixed short name, DSL user-enum declaration alias). Returns nullptr
+	 * when unresolvable.
+	 */
+	UEnum* ResolveEnumPayloadValue(const FString& EnumPath)
+	{
+		return ResolveUserEnumReference(EnumPath);
+	}
+
 	bool ConfigureNativeFlowNode(UK2Node* Node, const FString& Name, const TSharedPtr<FJsonObject>& Payload)
 	{
 		if (Name == TEXT("SwitchOnInt"))
@@ -360,38 +464,83 @@ namespace
 			UK2Node_SwitchEnum* Switch = Cast<UK2Node_SwitchEnum>(Node);
 			if (Switch == nullptr) { return false; }
 			// The enum can be specified by asset path (e.g. /Script/Engine.EBlendMode)
-			// or by short name (e.g. EBlendMode). Try path first, then name search.
+			// or by short name (e.g. EBlendMode) - same resolution chain as EnumLiteral.
 			FString EnumPath;
 			if (Payload.IsValid() && Payload->TryGetStringField(TEXT("enum"), EnumPath) && !EnumPath.IsEmpty())
 			{
-				UEnum* EnumObj = nullptr;
-				if (EnumPath.StartsWith(TEXT("/")))
-				{
-					EnumObj = LoadObject<UEnum>(nullptr, *EnumPath);
-				}
-				if (EnumObj == nullptr)
-				{
-					EnumObj = ForgeMindFindFirstObject<UEnum>(*EnumPath);
-				}
-				if (EnumObj == nullptr && !EnumPath.StartsWith(TEXT("E")))
-				{
-					EnumObj = ForgeMindFindFirstObject<UEnum>(*FString::Printf(TEXT("E%s"), *EnumPath));
-				}
-				if (EnumObj == nullptr)
-				{
-					// DSL user enum alias: DSL-side C# declaration name (e.g. EState) may differ from
-					// enum asset name (EState_B); CreateEnumAsset registers a session-level alias.
-					EnumObj = ResolveUserTypeEnumAlias(EnumPath);
-				}
 				// Resolution result must land on node's Enum member: AllocateDefaultPins generates
 				// case output pins by it; UK2Node_SwitchEnum::IsConnectionDisallowed
 				// also rejects connections where Enum differs from the other pin's Enum (null Enum rejects all).
-				if (EnumObj != nullptr)
+				if (UEnum* EnumObj = ResolveEnumPayloadValue(EnumPath))
 				{
 					Switch->Enum = EnumObj;
 				}
 			}
 		}
+		else if (Name == TEXT("EnumLiteral"))
+		{
+			UK2Node_EnumLiteral* Literal = Cast<UK2Node_EnumLiteral>(Node);
+			if (Literal == nullptr) { return false; }
+			// 'enum' binds the enum type; same resolution chain as SwitchOnEnum.
+			// The chosen ENTRY is not a node property - it lives in the "Enum"
+			// INPUT pin's DefaultValue (the engine's dropdown writes there,
+			// K2Node_EnumLiteral.cpp AddSearchMetaDataInfo reads it back from the
+			// pin). Enum must land before AllocateDefaultPins: the "Enum" input and
+			// "Return Value" output pins both take their PC_Byte+enum type from it.
+			// The entry itself is applied afterwards via the node's 'properties'
+			// ("Enum" → entry author name) when the pin is already enum-typed, so
+			// set_pin_default_value's enum translation (display name → internal
+			// NewEnumeratorN) applies - no wildcard-ordering problem like the
+			// Array_Add NewItem pin had.
+			FString EnumPath;
+			if (Payload.IsValid() && Payload->TryGetStringField(TEXT("enum"), EnumPath) && !EnumPath.IsEmpty())
+			{
+				if (UEnum* EnumObj = ResolveEnumPayloadValue(EnumPath))
+				{
+					Literal->Enum = EnumObj;
+				}
+			}
+			// Enum unresolved → pins stay as the engine creates them for a null
+			// enum and ValidateNodeDuringCompilation reports "Undefined Enum" at
+			// compile - visible instead of silently pin-less.
+		}
+	else if (Name == TEXT("MakeBitmask"))
+	{
+		UK2Node_BitmaskLiteral* BitmaskNode = Cast<UK2Node_BitmaskLiteral>(Node);
+		if (BitmaskNode == nullptr) { return false; }
+		// 'enum' binds the bitflags enum type; same resolution chain as
+		// EnumLiteral / SwitchOnEnum. Must land BEFORE AllocateDefaultPins:
+		// the "Bitmask" input and "ReturnValue" output pins both take their
+		// PC_Int+PSC_Bitmask type from BitflagsEnum. The enum must carry the
+		// Bitflags metadata (set by create_blueprint_enum's bitflags payload);
+		// otherwise ReconstructNode's ValidateBitflagsEnumType clears it.
+		FString EnumPath;
+		if (Payload.IsValid() && Payload->TryGetStringField(TEXT("enum"), EnumPath) && !EnumPath.IsEmpty())
+		{
+			if (UEnum* EnumObj = ResolveEnumPayloadValue(EnumPath))
+			{
+				BitmaskNode->BitflagsEnum = EnumObj;
+			}
+		}
+	}
+	else if (Name == TEXT("ForEachElementInEnum"))
+	{
+		UK2Node_ForEachElementInEnum* ForEach = Cast<UK2Node_ForEachElementInEnum>(Node);
+		if (ForEach == nullptr) { return false; }
+		// 'enum' binds the enum type; same resolution chain as SwitchOnEnum / EnumLiteral.
+		// It must land BEFORE AllocateDefaultPins: the node only creates SkipHidden /
+		// LoopBody / EnumValue when Enum is set (K2Node_ForEachElementInEnum.cpp:150-163),
+		// so an unset enum yields a node whose loop pins are missing -- invisible in the
+		// response, fatal for every downstream connection.
+		FString EnumPath;
+		if (Payload.IsValid() && Payload->TryGetStringField(TEXT("enum"), EnumPath) && !EnumPath.IsEmpty())
+		{
+			if (UEnum* EnumObj = ResolveEnumPayloadValue(EnumPath))
+			{
+				ForEach->Enum = EnumObj;
+			}
+		}
+	}
 	else if (Name == TEXT("CreateDelegate"))
 	{
 		// CreateDelegate: wraps a CustomEvent as a delegate value for
@@ -522,21 +671,75 @@ namespace
 				}
 			}
 		}
+		else if (Name == TEXT("MultiGate") || Name == TEXT("Sequence"))
+		{
+			// UK2Node_MultiGate derives from UK2Node_ExecutionSequence, so one branch covers
+			// both: AllocateDefaultPins creates two outputs ("Out 0/1" for MultiGate,
+			// "then_0/1" for Sequence), and payload 'outputs' asks for more. Extra outputs go
+			// through the shared UK2Node_ExecutionSequence::AddInputPin, whose name comes from
+			// GetPinNameGivenIndex -- MultiGate overrides it to "Out %d", so the numbering stays
+			// consistent. Capped at 32 (UK2Node_MultiGate::CanAddPin tracks used gates in an int32).
+			UK2Node_ExecutionSequence* SeqNode = Cast<UK2Node_ExecutionSequence>(Node);
+			if (SeqNode == nullptr) { return false; }
+			int32 OutputCount = 2;
+			if (Payload.IsValid())
+			{
+				Payload->TryGetNumberField(TEXT("outputs"), OutputCount);
+			}
+			OutputCount = FMath::Clamp(OutputCount, 2, 32);
+			SeqNode->AllocateDefaultPins();
+			for (int32 i = 2; i < OutputCount; ++i)
+			{
+				SeqNode->AddInputPin();
+			}
+			return true;
+		}
 		else if (Name == TEXT("Select"))
 		{
 			UK2Node_Select* SelectNode = Cast<UK2Node_Select>(Node);
 			if (SelectNode == nullptr) { return false; }
-			// Select starts with 2 option pins by default; add more if requested.
-			int32 OptionCount = 2;
-			if (Payload.IsValid())
+			// Select on Enum: payload 'enum' binds the enum through the engine's public
+			// SetEnum, same resolution chain as SwitchOnEnum / EnumLiteral.
+			//
+			// Why it must land here: ConfigureNativeFlowNode runs BEFORE AllocateDefaultPins
+			// (the add-node path calls AllocateDefaultPins only when this returns false), and
+			// UK2Node_Select::AllocateDefaultPins re-invokes SetEnum(Enum, true) then creates
+			// one option pin per EnumEntry (K2Node_Select.cpp:192-215) - so the option pins
+			// come out named by the enum instead of the default "Option 0/1".
+			//
+			// Pin naming (verified in engine source, do not "fix"): SetEnum fills EnumEntries
+			// with GetNameStringByIndex, which UUserDefinedEnum does NOT override - a
+			// user-created enum's entries are NewEnumerator0/1/2 and those become the real pin
+			// names. The authored names (Red/Green/Blue) land in PinFriendlyName
+			// (K2Node_Select.cpp:225-228), which the existing set_pin_default / connect
+			// GetDisplayName() fallback already resolves. No new fallback is added here - per
+			// collaboration spec point 8 name resolution stays "must be queryable".
+			FString EnumPath;
+			bool bEnumBound = false;
+			if (Payload.IsValid() && Payload->TryGetStringField(TEXT("enum"), EnumPath) && !EnumPath.IsEmpty())
 			{
-				Payload->TryGetNumberField(TEXT("options"), OptionCount);
+				if (UEnum* EnumObj = ResolveEnumPayloadValue(EnumPath))
+				{
+					SelectNode->SetEnum(EnumObj);
+					bEnumBound = true;
+				}
 			}
-			OptionCount = FMath::Max(2, OptionCount);
-			// The constructor creates 2 option pins; add the remainder.
-			for (int32 i = 2; i < OptionCount; ++i)
+			// Select starts with 2 option pins by default; add more if requested. Skipped when
+			// an enum is bound: AllocateDefaultPins sizes the option pins from EnumEntries, and
+			// growing them here too would fight that count.
+			if (!bEnumBound)
 			{
-				SelectNode->AddInputPin();
+				int32 OptionCount = 2;
+				if (Payload.IsValid())
+				{
+					Payload->TryGetNumberField(TEXT("options"), OptionCount);
+				}
+				OptionCount = FMath::Max(2, OptionCount);
+				// The constructor creates 2 option pins; add the remainder.
+				for (int32 i = 2; i < OptionCount; ++i)
+				{
+					SelectNode->AddInputPin();
+				}
 			}
 		}
 		else if (Name == TEXT("MakeArray") || Name == TEXT("MakeSet") || Name == TEXT("MakeMap"))
@@ -597,6 +800,64 @@ namespace
 			{
 				StructOp->StructType = StructObj;
 			}
+		}
+		else if (Name == TEXT("GetClassDefaults"))
+		{
+			UK2Node_GetClassDefaults* CdoNode = Cast<UK2Node_GetClassDefaults>(Node);
+			if (CdoNode == nullptr) { return false; }
+			// AllocateDefaultPins creates only the Class input pin for this
+			// node family; PostPlacedNewNode ran earlier with no pins
+			// (FindClassPin returns null), so pin creation starts here.
+			CdoNode->AllocateDefaultPins();
+			UEdGraphPin* ClassPin = CdoNode->FindClassPin();
+			FString TargetClassName;
+			if (ClassPin != nullptr && Payload.IsValid()
+				&& Payload->TryGetStringField(TEXT("targetClass"), TargetClassName)
+				&& !TargetClassName.IsEmpty())
+			{
+				// Same resolution chain as the Cast branch: full path, bare
+				// name, blueprint "_C" suffix, then asset-root load.
+				UClass* TargetClass = nullptr;
+				if (TargetClassName.StartsWith(TEXT("/")))
+				{
+					TargetClass = LoadObject<UClass>(nullptr, *TargetClassName);
+				}
+				if (TargetClass == nullptr)
+				{
+					TargetClass = ForgeMindFindFirstObject<UClass>(*TargetClassName);
+				}
+				if (TargetClass == nullptr)
+				{
+					TargetClass = ForgeMindFindFirstObject<UClass>(*(TargetClassName + TEXT("_C")));
+				}
+				if (TargetClass == nullptr)
+				{
+					for (const FString& Root : { FString(TEXT("/Game/Tests")), FString(TEXT("/Game")) })
+					{
+						FString BpAssetPath = FString::Printf(TEXT("%s/%s.%s"), *Root, *TargetClassName, *TargetClassName);
+						if (UBlueprint* Bp = LoadObject<UBlueprint>(nullptr, *BpAssetPath))
+						{
+							TargetClass = Bp->GeneratedClass;
+							if (TargetClass != nullptr) break;
+						}
+					}
+				}
+				if (TargetClass != nullptr)
+				{
+					// PostPlacedNewNode already defaulted the Class pin to the
+					// owner blueprint's generated class (BPTYPE_Normal); override
+					// it with the target class, then route through the engine's
+					// own pin-changed path: PinDefaultValueChanged (virtual)
+					// triggers OnClassPinChanged, which regenerates the
+					// per-property output pins from the new input class
+					// (FClassDefaultsOptionalPinManager) and rewires old pins.
+					ClassPin->DefaultObject = TargetClass;
+					CdoNode->PinDefaultValueChanged(ClassPin);
+				}
+			}
+			// Pins allocated inside this branch; the caller must skip its own
+			// AllocateDefaultPins (a second call would add a duplicate Class pin).
+			return true;
 		}
 		return false;
 	}
@@ -675,10 +936,7 @@ namespace
 		Entry->SetStringField(TEXT("name"), Pin->PinName.ToString());
 		Entry->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("input") : TEXT("output"));
 		Entry->SetStringField(TEXT("type"), PinTypeToText(Pin->PinType));
-		if (!Pin->DefaultValue.IsEmpty())
-		{
-			Entry->SetStringField(TEXT("defaultValue"), Pin->DefaultValue);
-		}
+
 		TArray<TSharedPtr<FJsonValue>> Links;
 		for (const UEdGraphPin* Linked : Pin->LinkedTo)
 		{
@@ -694,6 +952,26 @@ namespace
 		if (Links.Num() > 0)
 		{
 			Entry->SetArrayField(TEXT("links"), Links);
+		}
+
+		// Node default values: an unwired input pin carries the node's default for
+		// that argument -- DSL literals land here as pin defaults. Emit it through the
+		// engine's canonical accessor GetDefaultAsString (DefaultObject path /
+		// DefaultTextValue / DefaultValue -- the same vocabulary set_pin_default_value
+		// reads back with, so dump and write path share one resolver). A connected pin
+		// ignores its default, so only unwired input pins take this branch; wired and
+		// output pins keep the raw DefaultValue form below.
+		if (Pin->Direction == EGPD_Input && Links.Num() == 0)
+		{
+			const FString DefaultStr = Pin->GetDefaultAsString();
+			if (!DefaultStr.IsEmpty())
+			{
+				Entry->SetStringField(TEXT("defaultValue"), DefaultStr);
+			}
+		}
+		else if (!Pin->DefaultValue.IsEmpty())
+		{
+			Entry->SetStringField(TEXT("defaultValue"), Pin->DefaultValue);
 		}
 		return Entry;
 	}
@@ -1087,6 +1365,222 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleListBlueprintCatalog(const
 	return Result;
 }
 
+// ---------------------------------------------------------------------------
+// Timeline track curve helpers
+//
+// DSL [Timeline] nested classes declare tracks with their curve data:
+//   float v  = Curve((0.0f, 0.0f), (1.0f, 1.0f));   // inline keyframes
+//   Vector p = Curve((0.0f, Vector(0, 0, 0)), ...);  // composite value
+//   float w  = Curve("/Game/Curves/CV_RampUp");      // external curve asset
+//   EventTrack Fire = At(0.5f, 1.5f);                // event keyframe times
+// The translator emits them as a "tracks" array (each
+// {name, type, keys:[{t,v}], times:[...] | curveAsset}) and the timeline kind
+// turns them into UCurveFloat / UCurveVector / UCurveLinearColor objects inside
+// the blueprint's package - the same shape the timeline editor produces
+// (TimelineTemplate.cpp warns and duplicates curves whose outer is not a
+// package, so the package is used as the outer here).
+// ---------------------------------------------------------------------------
+
+/** Reads one IR key entry { "t": <seconds>, "v": <number> | [<component>, ...] }. */
+static bool ForgeMindReadCurveKey(const TSharedPtr<FJsonValue>& KeyVal, double& OutTime, TArray<double>& OutComponents)
+{
+	const TSharedPtr<FJsonObject>* KeyObjPtr = nullptr;
+	if (!KeyVal.IsValid() || !KeyVal->TryGetObject(KeyObjPtr) || !KeyObjPtr->IsValid())
+	{
+		return false;
+	}
+	const TSharedPtr<FJsonObject>& KeyObj = *KeyObjPtr;
+	if (!KeyObj->TryGetNumberField(TEXT("t"), OutTime))
+	{
+		return false;
+	}
+
+	// UE 5.0's FJsonObject::TryGetField takes the name only and returns the value
+	// by value (the two-argument out-pointer form does not exist in this version).
+	const TSharedPtr<FJsonValue> KeyValue = KeyObj->TryGetField(TEXT("v"));
+	if (!KeyValue.IsValid())
+	{
+		return false;
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* ComponentArray = nullptr;
+	if (KeyValue->TryGetArray(ComponentArray))
+	{
+		for (const TSharedPtr<FJsonValue>& Component : *ComponentArray)
+		{
+			double Value = 0.0;
+			if (Component.IsValid())
+			{
+				Component->TryGetNumber(Value);
+			}
+			OutComponents.Add(Value);
+		}
+	}
+	else
+	{
+		double Value = 0.0;
+		if (KeyValue->TryGetNumber(Value))
+		{
+			OutComponents.Add(Value);
+		}
+	}
+	return true;
+}
+
+/** Writes the IR keyframes into one rich curve per component (in index order). */
+static void ForgeMindApplyKeys(TArray<FRichCurve*> Curves, const TArray<TSharedPtr<FJsonValue>>& Keys)
+{
+	for (const TSharedPtr<FJsonValue>& KeyVal : Keys)
+	{
+		double Time = 0.0;
+		TArray<double> Components;
+		if (!ForgeMindReadCurveKey(KeyVal, Time, Components))
+		{
+			continue;
+		}
+		for (int32 Index = 0; Index < Curves.Num(); ++Index)
+		{
+			if (Curves[Index] == nullptr)
+			{
+				continue;
+			}
+			const double Value = Components.IsValidIndex(Index) ? Components[Index] : 0.0;
+			const FKeyHandle Handle = Curves[Index]->AddKey(static_cast<float>(Time), static_cast<float>(Value));
+			Curves[Index]->SetKeyInterpMode(Handle, RCIM_Linear);
+		}
+	}
+}
+
+/**
+ * Curve object factory for INTERNAL timeline curves.
+ *
+ * Mirrors the editor's own add-track path (STimelineEditor::CreateNewTrack):
+ *   NewTrack.CurveFloat = NewObject<UCurveFloat>(OwnerClass, NAME_None, RF_Public);
+ * the curve is a sub-object of the blueprint's generated class - NOT a
+ * package-level asset. Creating it as a standalone object inside a package makes
+ * it surface as its own asset in the content browser / asset manager (one
+ * .uasset showing up as several asset icons). The official design is that
+ * building a timeline produces NO visible curve asset (visual feedback
+ * 2026-10-13); internal curves live under the class and UTimelineTemplate
+ * duplicates them into the compiled class at compile time (it only duplicates
+ * when the curve's outer is NOT a package).
+ *
+ * NOTE: the bridge never invents keyframes. It only writes the keys the caller
+ * (DSL "tracks" / MCP payload) supplied - it knows the track names, types and
+ * the timeline length, but nothing about the intended value range, so seeding
+ * default keys here would fabricate data (reverted on 2026-10-13 after review).
+ * Curve data must come from the test / DSL on both the A and the B side.
+ */
+template <typename CurveType>
+static CurveType* ForgeMindNewCurve(UObject* Outer, FName DesiredName)
+{
+	if (Outer == nullptr)
+	{
+		return nullptr;
+	}
+	const FName UniqueName = MakeUniqueObjectName(Outer, CurveType::StaticClass(), DesiredName);
+	return NewObject<CurveType>(Outer, UniqueName, RF_Public | RF_Transactional);
+}
+
+/**
+ * External curve asset reference (DSL `Curve("/Game/...")`): the loaded asset
+ * keeps its package as outer, which is exactly how UTimelineTemplate tells
+ * internal from external curves, so bIsExternalCurve must be set on the track -
+ * otherwise the compile-time copy would swallow a shared asset.
+ */
+template <typename CurveType>
+static CurveType* ForgeMindLoadExternalCurve(const FString& AssetPath)
+{
+	return LoadObject<CurveType>(nullptr, *AssetPath);
+}
+
+/** Float track curve: Curve((t, v), ...) keyframes, exactly as supplied. */
+static UCurveFloat* ForgeMindBuildCurveFloat(UObject* Outer, FName CurveName,
+	const TSharedPtr<FJsonObject>& TrackDef)
+{
+	UCurveFloat* Curve = ForgeMindNewCurve<UCurveFloat>(Outer, CurveName);
+	if (Curve == nullptr)
+	{
+		return nullptr;
+	}
+	TArray<FRichCurve*> Curves;
+	Curves.Add(&Curve->FloatCurve);
+	const TArray<TSharedPtr<FJsonValue>>* Keys = nullptr;
+	if (TrackDef->TryGetArrayField(TEXT("keys"), Keys))
+	{
+		ForgeMindApplyKeys(Curves, *Keys);
+	}
+	return Curve;
+}
+
+/** Vector track curve: the value is a [x, y, z] component array per keyframe. */
+static UCurveVector* ForgeMindBuildCurveVector(UObject* Outer, FName CurveName,
+	const TSharedPtr<FJsonObject>& TrackDef)
+{
+	UCurveVector* Curve = ForgeMindNewCurve<UCurveVector>(Outer, CurveName);
+	if (Curve == nullptr)
+	{
+		return nullptr;
+	}
+	TArray<FRichCurve*> Curves;
+	Curves.Add(&Curve->FloatCurves[0]);
+	Curves.Add(&Curve->FloatCurves[1]);
+	Curves.Add(&Curve->FloatCurves[2]);
+	const TArray<TSharedPtr<FJsonValue>>* Keys = nullptr;
+	if (TrackDef->TryGetArrayField(TEXT("keys"), Keys))
+	{
+		ForgeMindApplyKeys(Curves, *Keys);
+	}
+	return Curve;
+}
+
+/** Color track curve: the value is an [r, g, b, a] component array per keyframe. */
+static UCurveLinearColor* ForgeMindBuildCurveLinearColor(UObject* Outer, FName CurveName,
+	const TSharedPtr<FJsonObject>& TrackDef)
+{
+	UCurveLinearColor* Curve = ForgeMindNewCurve<UCurveLinearColor>(Outer, CurveName);
+	if (Curve == nullptr)
+	{
+		return nullptr;
+	}
+	TArray<FRichCurve*> Curves;
+	Curves.Add(&Curve->FloatCurves[0]);
+	Curves.Add(&Curve->FloatCurves[1]);
+	Curves.Add(&Curve->FloatCurves[2]);
+	Curves.Add(&Curve->FloatCurves[3]);
+	const TArray<TSharedPtr<FJsonValue>>* Keys = nullptr;
+	if (TrackDef->TryGetArrayField(TEXT("keys"), Keys))
+	{
+		ForgeMindApplyKeys(Curves, *Keys);
+	}
+	return Curve;
+}
+
+/**
+ * Event track curve: At(t, ...) lists only the firing times, so every keyframe
+ * carries value 0 - BlueprintGeneratedClass builds one timeline event per key of
+ * this curve (TimelineTemplate::EventTracks[].CurveKeys).
+ */
+static UCurveFloat* ForgeMindBuildEventCurve(UObject* Outer, FName CurveName, const TArray<TSharedPtr<FJsonValue>>& Times)
+{
+	UCurveFloat* Curve = ForgeMindNewCurve<UCurveFloat>(Outer, CurveName);
+	if (Curve == nullptr)
+	{
+		return nullptr;
+	}
+	for (const TSharedPtr<FJsonValue>& TimeVal : Times)
+	{
+		double Time = 0.0;
+		if (!TimeVal.IsValid() || !TimeVal->TryGetNumber(Time))
+		{
+			continue;
+		}
+		const FKeyHandle Handle = Curve->FloatCurve.AddKey(static_cast<float>(Time), 0.0f);
+		Curve->FloatCurve.SetKeyInterpMode(Handle, RCIM_Linear);
+	}
+	return Curve;
+}
+
 TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Payload)
 {
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -1138,6 +1632,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintNode(const TSh
 	const bool bCustomEvent = Kind == TEXT("customevent");
 	const bool bInputAxis = Kind == TEXT("inputaxis");
 	const bool bInputAction = Kind == TEXT("inputaction");
+	const bool bInputKey = Kind == TEXT("inputkey");
 	const bool bSubsystem = Kind == TEXT("subsystem");
 const bool bSelf = Kind == TEXT("self");
 // Kind has been ToLower()'d above, so compare against all-lowercase
@@ -1164,13 +1659,17 @@ const bool bLevelLiteral = Kind == TEXT("levelliteral");
 // message function name. The node's self pin is PC_Object (engine internally
 // casts to interface at compile time via ExpandNode).
 const bool bMessage = Kind == TEXT("message");
-if (!Kind.IsEmpty() && !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && Kind != TEXT("function") && Kind != TEXT("event"))
+// Timeline node (UK2Node_Timeline): 'name' = timeline variable name; creates
+// the UTimelineTemplate + node with a default float track.
+const bool bTimeline = Kind == TEXT("timeline");
+const bool bMathExpression = Kind == TEXT("mathexpression");
+if (!Kind.IsEmpty() && !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bInputKey && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && !bTimeline && !bMathExpression && Kind != TEXT("function") && Kind != TEXT("event"))
 {
 Result->SetBoolField(TEXT("added"), false);
-Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown kind '%s'; supported kinds: function (default), getter, setter, macro, customevent, inputAxis, inputAction, subsystem, self, callDelegate, addDelegate, removeDelegate, componentBoundEvent, temporaryVariable, assignment, callParentFunction, levelLiteral, message"), *Kind));
+Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown kind '%s'; supported kinds: function (default), getter, setter, macro, customevent, inputAxis, inputAction, inputKey, subsystem, self, callDelegate, addDelegate, removeDelegate, componentBoundEvent, temporaryVariable, assignment, callParentFunction, levelLiteral, message, timeline"), *Kind));
 return Result;
 }
-const bool bFunctionKind = !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage;
+const bool bFunctionKind = !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bInputKey && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && !bTimeline && !bMathExpression;
 // Set when a function-call target resolves to a UInterface — create UK2Node_Message
 // instead of K2Node_CallFunction (DSL d.ApplyDamage(5) where d is interface-typed).
 bool bInterfaceMessage = false;
@@ -1309,7 +1808,64 @@ bool bExternalMember = false;
 	}
 
 	UEdGraphNode* NewNode = nullptr;
-	if (bMessage || bInterfaceMessage)
+	if (bMathExpression)
+	{
+		FString Expression;
+		if (!Payload->TryGetStringField(TEXT("expression"), Expression) || Expression.IsEmpty())
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), TEXT("MathExpression requires a non-empty expression"));
+			return Result;
+		}
+		TArray<TPair<FName, FEdGraphPinType>> Inputs;
+		TSet<FName> Names;
+		const TArray<TSharedPtr<FJsonValue>>* Params = nullptr;
+		if (Payload->TryGetArrayField(TEXT("params"), Params))
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *Params)
+			{
+				const TSharedPtr<FJsonObject> Spec = Value->AsObject();
+				FString Name, Type, Reason;
+				FEdGraphPinType PinType;
+				if (!Spec.IsValid() || !Spec->TryGetStringField(TEXT("name"), Name) || Name.IsEmpty()
+					|| Names.Contains(FName(*Name)) || !Spec->TryGetStringField(TEXT("type"), Type)
+					|| !PinTypeTextToPinType(Type, PinType, Reason) || PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+				{
+					Result->SetBoolField(TEXT("added"), false);
+					Result->SetStringField(TEXT("reason"), TEXT("Invalid MathExpression input: ") + Name + TEXT(" ") + Reason);
+					return Result;
+				}
+				Names.Add(FName(*Name));
+				Inputs.Emplace(FName(*Name), PinType);
+			}
+		}
+		UK2Node_MathExpression* MathNode = NewObject<UK2Node_MathExpression>(Graph);
+		MathNode->SetFlags(RF_Transactional);
+		Graph->AddNode(MathNode);
+		MathNode->CreateNewGuid();
+		MathNode->PostPlacedNewNode();
+		MathNode->AllocateDefaultPins();
+		// Declare input types before resolution; the engine preserves these pins, preventing Vector from being guessed as double.
+		for (const auto& Input : Inputs)
+		{
+			MathNode->GetEntryNode()->CreateUserDefinedPin(Input.Key, Input.Value, EGPD_Output, false);
+		}
+		MathNode->OnRenameNode(Expression);
+		FCompilerResultsLog MathLog;
+		MathLog.bSilentMode = true;
+		MathNode->ValidateNodeDuringCompilation(MathLog);
+		if (MathLog.NumErrors > 0 || MathNode->FindPin(UEdGraphSchema_K2::PN_ReturnValue, EGPD_Output) == nullptr)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), TEXT("MathExpression could not compile: ") + Expression + TEXT(" ") + MathNode->ErrorMsg);
+			MathNode->DestroyNode();
+			return Result;
+		}
+		MathNode->NodePosX = PosX;
+		MathNode->NodePosY = PosY;
+		NewNode = MathNode;
+	}
+	else if (bMessage || bInterfaceMessage)
 	{
 		// Interface message call: 'class' = interface generated class path,
 		// 'name' = message function name. Resolve the interface class, find
@@ -1679,6 +2235,35 @@ bool bExternalMember = false;
 		}
 		CustomEventNode->NodePosX = PosX;
 		CustomEventNode->NodePosY = PosY;
+		// Replication on a custom event (blueprint RPC): set the node's FunctionFlags so the
+		// compiler emits the event's UFunction as a net RPC (mirrors the editor's "Replication"
+		// dropdown: FUNC_Net | server/client/multicast [| FUNC_NetReliable]).
+		{
+			FString RpcMode;
+			if (Payload->TryGetStringField(TEXT("rpc"), RpcMode) && !RpcMode.IsEmpty())
+			{
+				uint32 NetFlags = FUNC_Net;
+				if (RpcMode.Equals(TEXT("server"), ESearchCase::IgnoreCase))
+				{
+					NetFlags |= FUNC_NetServer;
+				}
+				else if (RpcMode.Equals(TEXT("client"), ESearchCase::IgnoreCase))
+				{
+					NetFlags |= FUNC_NetClient;
+				}
+				else if (RpcMode.Equals(TEXT("multicast"), ESearchCase::IgnoreCase)
+					|| RpcMode.Equals(TEXT("netmulticast"), ESearchCase::IgnoreCase))
+				{
+					NetFlags |= FUNC_NetMulticast;
+				}
+				bool bRpcReliable = false;
+				if (Payload->TryGetBoolField(TEXT("reliable"), bRpcReliable) && bRpcReliable)
+				{
+					NetFlags |= FUNC_NetReliable;
+				}
+				CustomEventNode->FunctionFlags |= NetFlags;
+			}
+		}
 		// SnapToGrid(GetDefault<UEditorStyleSettings>()->GridSnapSize) - UnrealEd
 		// not a plugin dependency; skip grid snap (the editor will snap on open).
 		if (CustomEventNode == nullptr)
@@ -1688,6 +2273,188 @@ bool bExternalMember = false;
 			return Result;
 		}
 		NewNode = CustomEventNode;
+	}
+	else if (bTimeline)
+	{
+		// Timeline node (UK2Node_Timeline): creates the blueprint's timeline
+		// template (UTimelineTemplate - the variable the generated
+		// TimelineComponent binds to) plus the graph node. The node's
+		// AllocateDefaultPins resolves the template and emits one output pin
+		// per track (float track -> PC_Real output named after the track),
+		// alongside the fixed Play / PlayFromStart / Stop / Reverse /
+		// ReverseFromEnd / SetNewTime exec inputs and Update / Finished exec
+		// outputs. Only valid in event graphs / function graphs.
+		const bool bIsUbergraph = Blueprint->UbergraphPages.Contains(Graph);
+		const bool bIsFunction = Blueprint->FunctionGraphs.Contains(Graph);
+		if (!bIsUbergraph && !bIsFunction)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Timeline '%s' can only be placed in an event graph or function graph; '%s' is a macro graph"), *MemberName, *Graph->GetName()));
+			return Result;
+		}
+
+		// One timeline template per variable name (the node resolves the
+		// template by TimelineName == VariableName).
+		if (Blueprint->FindTimelineTemplateByVariableName(FName(*MemberName)) != nullptr)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Timeline '%s' already exists in this blueprint"), *MemberName));
+			return Result;
+		}
+
+		// Optional length in seconds (DSL [Timeline("T", 1.0f)]); defaults to 1s.
+		double TimelineLengthValue = 1.0;
+		Payload->TryGetNumberField(TEXT("length"), TimelineLengthValue);
+
+		Blueprint->Modify();
+		Graph->Modify();
+
+		// Template first: the node's AllocateDefaultPins reads tracks from it.
+		UTimelineTemplate* Template = FBlueprintEditorUtils::AddNewTimeline(Blueprint, FName(*MemberName));
+		if (Template == nullptr)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Failed to create the timeline template for '%s'"), *MemberName));
+			return Result;
+		}
+		Template->TimelineLength = static_cast<float>(TimelineLengthValue);
+		Template->LengthMode = ETimelineLengthMode::TL_TimelineLength;
+
+		// Tracks. The DSL [Timeline] nested class declares them explicitly
+		// ("tracks": [{name, type, keys/times/curveAsset}, ...]) - the node emits
+		// one output pin per track, named after the track. Without a "tracks"
+		// payload (the MCP A-side construction form) the legacy single default
+		// float track named after the timeline is kept.
+		//
+		// Every track MUST be registered in the display order besides being added
+		// to its array: UK2Node_Timeline::AllocateDefaultPins enumerates tracks
+		// through UTimelineTemplate::GetNumDisplayTracks(), which returns
+		// TrackDisplayOrder.Num() - NOT the size of the track arrays
+		// (TimelineTemplate.cpp). A track that only lives in FloatTracks is
+		// invisible to the node: its value output pin is never created at all
+		// (run 20261012_2025: connect "T" -> InString failed with
+		// "Node 'T' has no pin named 'T'"). The editor's own add-track path
+		// registers both (STimelineEditor.cpp: array Add + AddDisplayTrack),
+		// so mirror it here. TrackIndex is captured BEFORE the array Add (it is
+		// the index the new track will occupy) - same as the editor.
+		const TArray<TSharedPtr<FJsonValue>>* TracksArray = nullptr;
+		const bool bHasTracks = Payload->TryGetArrayField(TEXT("tracks"), TracksArray)
+			&& TracksArray != nullptr && TracksArray->Num() > 0;
+
+		if (bHasTracks)
+		{
+			// Internal curves are sub-objects of the blueprint's generated class
+			// (same as STimelineEditor::CreateNewTrack). They must NOT become
+			// package-level assets: building a timeline produces no visible curve
+			// asset in the content browser / asset manager (visual feedback
+			// 2026-10-13).
+			UObject* CurveOuter = Template->GetOuter();
+
+			for (const TSharedPtr<FJsonValue>& TrackVal : *TracksArray)
+			{
+				const TSharedPtr<FJsonObject>* TrackObjPtr = nullptr;
+				if (!TrackVal.IsValid() || !TrackVal->TryGetObject(TrackObjPtr) || !TrackObjPtr->IsValid())
+				{
+					continue;
+				}
+				const TSharedPtr<FJsonObject>& TrackDef = *TrackObjPtr;
+
+				FString TrackName;
+				if (!TrackDef->TryGetStringField(TEXT("name"), TrackName) || TrackName.IsEmpty())
+				{
+					continue;
+				}
+				FString TrackType;
+				TrackDef->TryGetStringField(TEXT("type"), TrackType);
+				const FName TrackFName(*TrackName);
+				const FName CurveName(*FString::Printf(TEXT("%s_%s_Curve"), *MemberName, *TrackName));
+
+				// Named 'TrackCurveAsset', not 'AssetPath': the enclosing handler
+				// already declares AssetPath (the blueprint path) and a same-named
+				// local would hide it (C4456).
+				FString TrackCurveAsset;
+				TrackDef->TryGetStringField(TEXT("curveAsset"), TrackCurveAsset);
+
+				if (TrackType == TEXT("event"))
+				{
+					// Event track: keyframe times only; each key is a firing point,
+					// the output is an exec pin named after the track.
+					FTTTrackId TrackId(FTTTrackBase::TT_Event, Template->EventTracks.Num());
+					FTTEventTrack& EventTrack = Template->EventTracks.AddDefaulted_GetRef();
+					EventTrack.SetTrackName(TrackFName, Template);
+					const TArray<TSharedPtr<FJsonValue>>* Times = nullptr;
+					if (TrackDef->TryGetArrayField(TEXT("times"), Times))
+					{
+						EventTrack.CurveKeys = ForgeMindBuildEventCurve(CurveOuter, CurveName, *Times);
+					}
+					Template->AddDisplayTrack(TrackId);
+				}
+				else if (TrackType == TEXT("vector"))
+				{
+					FTTTrackId TrackId(FTTTrackBase::TT_VectorInterp, Template->VectorTracks.Num());
+					FTTVectorTrack& VectorTrack = Template->VectorTracks.AddDefaulted_GetRef();
+					VectorTrack.SetTrackName(TrackFName, Template);
+					VectorTrack.bIsExternalCurve = !TrackCurveAsset.IsEmpty();
+					VectorTrack.CurveVector = TrackCurveAsset.IsEmpty()
+						? ForgeMindBuildCurveVector(CurveOuter, CurveName, TrackDef)
+						: ForgeMindLoadExternalCurve<UCurveVector>(TrackCurveAsset);
+					Template->AddDisplayTrack(TrackId);
+				}
+				else if (TrackType == TEXT("color"))
+				{
+					FTTTrackId TrackId(FTTTrackBase::TT_LinearColorInterp, Template->LinearColorTracks.Num());
+					FTTLinearColorTrack& ColorTrack = Template->LinearColorTracks.AddDefaulted_GetRef();
+					ColorTrack.SetTrackName(TrackFName, Template);
+					ColorTrack.bIsExternalCurve = !TrackCurveAsset.IsEmpty();
+					ColorTrack.CurveLinearColor = TrackCurveAsset.IsEmpty()
+						? ForgeMindBuildCurveLinearColor(CurveOuter, CurveName, TrackDef)
+						: ForgeMindLoadExternalCurve<UCurveLinearColor>(TrackCurveAsset);
+					Template->AddDisplayTrack(TrackId);
+				}
+				else
+				{
+					// Float track (default): inline keyframes or an external
+					// CurveFloat reference.
+					FTTTrackId TrackId(FTTTrackBase::TT_FloatInterp, Template->FloatTracks.Num());
+					FTTFloatTrack& FloatTrack = Template->FloatTracks.AddDefaulted_GetRef();
+					FloatTrack.SetTrackName(TrackFName, Template);
+					FloatTrack.bIsExternalCurve = !TrackCurveAsset.IsEmpty();
+					FloatTrack.CurveFloat = TrackCurveAsset.IsEmpty()
+						? ForgeMindBuildCurveFloat(CurveOuter, CurveName, TrackDef)
+						: ForgeMindLoadExternalCurve<UCurveFloat>(TrackCurveAsset);
+					Template->AddDisplayTrack(TrackId);
+				}
+			}
+		}
+		else
+		{
+			// Legacy default float track named after the timeline (the MCP A-side
+			// construction form relies on it when it passes no tracks). The track
+			// gets a real (empty) curve object - CurveFloat used to stay null here,
+			// so the timeline editor showed a track with no curve at all. Keyframes
+			// are NEVER invented: a caller that wants a populated curve must pass
+			// tracks (DSL "tracks" / MCP payload), on both the A and the B side.
+			FTTTrackId FloatTrackId(FTTTrackBase::TT_FloatInterp, Template->FloatTracks.Num());
+			FTTFloatTrack& FloatTrack = Template->FloatTracks.AddDefaulted_GetRef();
+			FloatTrack.SetTrackName(FName(*MemberName), Template);
+			FloatTrack.bIsExternalCurve = false;
+			FloatTrack.CurveFloat = ForgeMindBuildCurveFloat(
+				Template->GetOuter(),
+				FName(*FString::Printf(TEXT("%s_%s_Curve"), *MemberName, *MemberName)),
+				MakeShared<FJsonObject>());
+			Template->AddDisplayTrack(FloatTrackId);
+		}
+
+		UK2Node_Timeline* TimelineNode = NewObject<UK2Node_Timeline>(Graph);
+		TimelineNode->TimelineName = FName(*MemberName);
+		TimelineNode->SetFlags(RF_Transactional);
+		Graph->AddNode(TimelineNode, true, true);
+		TimelineNode->CreateNewGuid();
+		TimelineNode->PostPlacedNewNode();
+		TimelineNode->AllocateDefaultPins();
+		TimelineNode->NodePosX = PosX;
+		TimelineNode->NodePosY = PosY;
+		NewNode = TimelineNode;
 	}
 	else if (bInputAxis)
 	{
@@ -1699,6 +2466,23 @@ bool bExternalMember = false;
 			Result->SetBoolField(TEXT("added"), false);
 			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input axis events can only be placed in an event graph; '%s' is not one (omit graphName to use the default event graph)"), *Graph->GetName()));
 			return Result;
+		}
+
+		// Validate: the axis must be registered in the project's AxisMappings
+		// (Project Settings > Input) - an unregistered name binds nothing at
+		// runtime (the engine only warns at compile time), so validate at
+		// creation and reject.
+		UInputSettings* InputSettings = GetMutableDefault<UInputSettings>();
+		if (InputSettings != nullptr)
+		{
+			TArray<FName> AxisNames;
+			InputSettings->GetAxisNames(AxisNames);
+			if (!AxisNames.Contains(FName(*MemberName)))
+			{
+				Result->SetBoolField(TEXT("added"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input axis '%s' is not registered in the project's AxisMappings (Project Settings > Input); register it before creating the event"), *MemberName));
+				return Result;
+			}
 		}
 
 		// Check for duplicate: only one InputAxis node per axis name.
@@ -1732,9 +2516,12 @@ bool bExternalMember = false;
 	}
 	else if (bInputAction)
 	{
-		// Input action event (K2Node_InputActionEvent): binds a named action
-		// from the project's ActionMappings. 'inputEvent' field (pressed /
-		// released, default pressed) selects IE_Pressed vs IE_Released.
+		// Input action node (UK2Node_InputAction): the editor-visible node that
+		// binds a named action from the project's ActionMappings. Natively has
+		// "Pressed"/"Released" exec out pins + "Key" data out pin (same layout
+		// as K2Node_InputKey). GetNodeTitle returns a localized "InputAction
+		// {name}" string. At compile time ExpandNode spawns internal
+		// K2Node_InputActionEvent nodes — we never create those directly.
 		if (!Blueprint->UbergraphPages.Contains(Graph))
 		{
 			Result->SetBoolField(TEXT("added"), false);
@@ -1742,34 +2529,43 @@ bool bExternalMember = false;
 			return Result;
 		}
 
-		FString InputEventStr;
-		Payload->TryGetStringField(TEXT("inputEvent"), InputEventStr);
-		InputEventStr.ToLowerInline();
-		EInputEvent KeyEvent = IE_Pressed;
-		if (InputEventStr == TEXT("released"))
+		// Validate: the action must be registered in the project's ActionMappings
+		// (Project Settings > Input) - an unregistered name binds nothing at
+		// runtime (the engine has no compile-time check for this node), so
+		// validate at creation and reject.
+		UInputSettings* InputSettings = GetMutableDefault<UInputSettings>();
+		if (InputSettings != nullptr)
 		{
-			KeyEvent = IE_Released;
+			TArray<FName> ActionNames;
+			InputSettings->GetActionNames(ActionNames);
+			if (!ActionNames.Contains(FName(*MemberName)))
+			{
+				Result->SetBoolField(TEXT("added"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input action '%s' is not registered in the project's ActionMappings (Project Settings > Input); register it before creating the event"), *MemberName));
+				return Result;
+			}
 		}
 
-		// Check for duplicate: only one InputAction node per action+event pair.
+		// Check for duplicate: only one InputAction node per action name.
+		// UK2Node_InputAction carries both "Pressed" and "Released" pins on a
+		// single node, so there is no per-event-type duplication.
 		for (const UEdGraph* Page : Blueprint->UbergraphPages)
 		{
 			if (Page == nullptr) { continue; }
 			for (const UEdGraphNode* Node : Page->Nodes)
 			{
-				const UK2Node_InputActionEvent* Existing = Cast<UK2Node_InputActionEvent>(Node);
-				if (Existing != nullptr && Existing->InputActionName == FName(*MemberName) && Existing->InputKeyEvent == KeyEvent)
+				const UK2Node_InputAction* Existing = Cast<UK2Node_InputAction>(Node);
+				if (Existing != nullptr && Existing->InputActionName == FName(*MemberName))
 				{
 					Result->SetBoolField(TEXT("added"), false);
-					Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input action event '%s' (%s) already exists in this blueprint"), *MemberName, KeyEvent == IE_Pressed ? TEXT("Pressed") : TEXT("Released")));
+					Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input action node '%s' already exists in this blueprint"), *MemberName));
 					return Result;
 				}
 			}
 		}
 
-		UK2Node_InputActionEvent* ActionNode = NewObject<UK2Node_InputActionEvent>(Graph);
+		UK2Node_InputAction* ActionNode = NewObject<UK2Node_InputAction>(Graph);
 		ActionNode->InputActionName = FName(*MemberName);
-		ActionNode->InputKeyEvent = KeyEvent;
 		ActionNode->SetFlags(RF_Transactional);
 		Graph->Modify();
 		Graph->AddNode(ActionNode, true, true);
@@ -1779,6 +2575,47 @@ bool bExternalMember = false;
 		ActionNode->NodePosX = PosX;
 		ActionNode->NodePosY = PosY;
 		NewNode = ActionNode;
+	}
+	else if (bInputKey)
+	{
+		// Input key event (UK2Node_InputKey): binds a raw key (FKey, e.g. "E").
+		// Unlike InputAction (single "then" out + inputEvent selector), the node
+		// natively carries TWO exec output pins "Pressed"/"Released" plus a "Key"
+		// data out pin (FKey::StaticStruct) - the connector picks which one to wire.
+		if (!Blueprint->UbergraphPages.Contains(Graph))
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input key events can only be placed in an event graph; '%s' is not one (omit graphName to use the default event graph)"), *Graph->GetName()));
+			return Result;
+		}
+
+		// Check for duplicate: only one InputKey node per key.
+		for (const UEdGraph* Page : Blueprint->UbergraphPages)
+		{
+			if (Page == nullptr) { continue; }
+			for (const UEdGraphNode* Node : Page->Nodes)
+			{
+				const UK2Node_InputKey* Existing = Cast<UK2Node_InputKey>(Node);
+				if (Existing != nullptr && Existing->InputKey == FKey(*MemberName))
+				{
+					Result->SetBoolField(TEXT("added"), false);
+					Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Input key event '%s' already exists in this blueprint"), *MemberName));
+					return Result;
+				}
+			}
+		}
+
+		UK2Node_InputKey* KeyNode = NewObject<UK2Node_InputKey>(Graph);
+		KeyNode->InputKey = FKey(*MemberName);
+		KeyNode->SetFlags(RF_Transactional);
+		Graph->Modify();
+		Graph->AddNode(KeyNode, true, true);
+		KeyNode->CreateNewGuid();
+		KeyNode->PostPlacedNewNode();
+		KeyNode->AllocateDefaultPins();
+		KeyNode->NodePosX = PosX;
+		KeyNode->NodePosY = PosY;
+		NewNode = KeyNode;
 	}
 	else if (bSelf)
 	{
@@ -2481,6 +3318,71 @@ else if (bLevelLiteral)
 	return Result;
 }
 
+/**
+ * Base→derived object reference connection: UE rejects it directly ("X and Y object
+ * references are incompatible"), and the autocast table has no such conversion either
+ * (FAutocastFunctionMap only covers value-type conversions). The editor's answer is to
+ * insert a dynamic Cast node — here we provide the same semantics: produce a pure Cast
+ * ('as T', outputs null on failure, does not break the execution flow), source → Cast.Object,
+ * Cast output pin ("As <T>", dynamically named via GetCastResultPin) → target.
+ * Typical form: UObject output pin (Conv_SoftObjectReferenceToObject) fed to a typed variable
+ * (SoftRef_Resolve_B's `Actor a = Ref.TryGet()`). Only takes over when both pins are PC_Object
+ * and the source class is a true base of the target class; otherwise DISALLOWs with the
+ * original error.
+ */
+static bool TryConnectViaDynamicCast(UEdGraphPin* PinA, UEdGraphPin* PinB, const UEdGraphSchema_K2* Schema)
+{
+	UEdGraphPin* OutPin = PinA->Direction == EGPD_Output ? PinA : PinB;
+	UEdGraphPin* InPin = PinA->Direction == EGPD_Output ? PinB : PinA;
+	if (OutPin->PinType.PinCategory != UEdGraphSchema_K2::PC_Object
+		|| InPin->PinType.PinCategory != UEdGraphSchema_K2::PC_Object)
+	{
+		return false;
+	}
+	UClass* SourceClass = Cast<UClass>(OutPin->PinType.PinSubCategoryObject.Get());
+	UClass* TargetClass = Cast<UClass>(InPin->PinType.PinSubCategoryObject.Get());
+	// Base→derived: target class must inherit from source class (e.g. UObject→Actor).
+	// Reversing the IsChildOf direction makes the branch never fire (UObject->IsChildOf(Actor)
+	// is false; SoftRef_Resolve_B's second pass still falls back to the original rejection).
+	if (SourceClass == nullptr || TargetClass == nullptr
+		|| SourceClass == TargetClass || !TargetClass->IsChildOf(SourceClass))
+	{
+		return false;
+	}
+
+	// UE 5.0's UEdGraphPin has no GetGraph() (added in later versions); get the graph via the owning node.
+	UEdGraph* PinGraph = OutPin->GetOwningNode() != nullptr ? OutPin->GetOwningNode()->GetGraph() : nullptr;
+	if (PinGraph == nullptr) { return false; }
+	UK2Node_DynamicCast* CastNode = NewObject<UK2Node_DynamicCast>(PinGraph);
+	CastNode->TargetType = TargetClass;
+	// Pure Cast must be set before AllocateDefaultPins — SetPurity only sets bIsPureCast;
+	// after that, AllocateDefaultPins creates pins following the pure-node shape (see the
+	// Cast branch comment in HandleAddBlueprintNode).
+	CastNode->SetPurity(true);
+	CastNode->SetFlags(RF_Transactional);
+	PinGraph->AddNode(CastNode, true, true);
+	CastNode->CreateNewGuid();
+	CastNode->PostPlacedNewNode();
+	CastNode->AllocateDefaultPins();
+	CastNode->NodePosX = OutPin->GetOwningNode()->NodePosX - 200;
+	CastNode->NodePosY = OutPin->GetOwningNode()->NodePosY + 120;
+
+	// Input pin real name PN_ObjectToCast = "Object" (EdGraphSchema_K2.cpp:701);
+	// output pin name is "As <TargetClass>" dynamically formed (K2Node_DynamicCast.cpp:63);
+	// use GetCastResultPin() to avoid fragile name construction.
+	UEdGraphPin* CastIn = CastNode->FindPin(UEdGraphSchema_K2::PN_ObjectToCast, EGPD_Input);
+	UEdGraphPin* CastOut = CastNode->GetCastResultPin();
+	if (CastIn == nullptr || CastOut == nullptr
+		|| !Schema->TryCreateConnection(OutPin, CastIn)
+		|| !Schema->TryCreateConnection(CastOut, InPin))
+	{
+		// Mid-failure leaves no wreckage: destroy the node then fall back to the original DISALLOW error.
+		CastNode->DestroyNode();
+		return false;
+	}
+	return true;
+}
+
 TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectBlueprintPins(const TSharedPtr<FJsonObject>& Payload)
 {
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -2659,13 +3561,34 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectBlueprintPins(const
 	// exclusive-exec semantics (breaking the previous link when needed).
 	const UEdGraphSchema_K2* Schema = GetDefault<UEdGraphSchema_K2>();
 	const FPinConnectionResponse Response = Schema->CanCreateConnection(FromPin, ToPin);
+	bool bViaAutocast = false;
 	if (Response.Response == CONNECT_RESPONSE_DISALLOW)
 	{
-		Result->SetBoolField(TEXT("connected"), false);
-		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Connection refused: %s"), *Response.Message.ToString()));
-		return Result;
+		// Autocast: when CanCreateConnection refuses due to type mismatch (e.g.
+		// int → string), attempt to create an automatic conversion node
+		// (Conv_IntToString, Conv_FloatToString, ...) — the same mechanism
+		// UE's editor uses when dragging a wire between mismatched pins.
+		// CreateAutomaticConversionNodeAndConnections calls SearchForAutocastFunction
+		// to look up FAutocastFunctionMap, spawns a UK2Node_CallFunction for the
+		// conversion, and wires source → conversion → target. Returns false when
+		// no autocast exists (e.g. exec→data, both inputs) — in that case fall
+		// through to the original DISALLOW error.
+		if (Schema->CreateAutomaticConversionNodeAndConnections(FromPin, ToPin))
+		{
+			bViaAutocast = true;
+		}
+		else if (TryConnectViaDynamicCast(FromPin, ToPin, Schema))
+		{
+			bViaAutocast = true;
+		}
+		else
+		{
+			Result->SetBoolField(TEXT("connected"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Connection refused: %s"), *Response.Message.ToString()));
+			return Result;
+		}
 	}
-	if (!Schema->TryCreateConnection(FromPin, ToPin))
+	if (!bViaAutocast && !Schema->TryCreateConnection(FromPin, ToPin))
 	{
 		Result->SetBoolField(TEXT("connected"), false);
 		Result->SetStringField(TEXT("reason"), TEXT("Connection could not be made (the graph rejected the link)"));
@@ -2695,6 +3618,14 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectBlueprintPins(const
 	auto PropagateWildcardTypes = [](UEdGraphNode* Node)
 	{
 		if (Node == nullptr) { return; }
+
+		// UK2Node_GetDataTableRow is exempt. Its Out Row wildcard is typed by the
+		// node itself (GetDataTableRowStructType: the table's RowStruct, or - when
+		// the table arrives over a variable link and the DataTable pin has no
+		// DefaultObject - the Out Row pin's own link). Copying the DataTable
+		// input's object type onto that output turned it into a UDataTable
+		// reference, and every row read then refused to connect.
+		if (Node->IsA<UK2Node_GetDataTableRow>()) { return; }
 
 		// Collect the terminal type from the first non-wildcard connected
 		// input pin. Array library functions have TargetArray + NewItem as
@@ -2989,6 +3920,29 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleSetPinDefaultValue(const T
 		Result->SetBoolField(TEXT("set"), false);
 		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Pin '%s' is a pass-by-reference (ref) pin; it cannot take a literal default and must be wired to a variable"), *PinName));
 		return Result;
+	}
+
+	// Enum pins author their defaults as display/numeric/internal entry forms
+	// ("Red" / "0" / "NewEnumerator0"), but the engine's
+	// DefaultValueSimpleValidation (EdGraphSchema_K2.cpp) resolves via
+	// GetIndexByNameString which matches internal entry names only - the same
+	// internal-name-only wall the variable-default path hit (see
+	// TranslateEnumDefaultText). Translate here so both data sources share one
+	// resolver instead of drifting apart (spec point 8).
+	if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Byte)
+	{
+		if (const UEnum* Enum = Cast<UEnum>(Pin->PinType.PinSubCategoryObject.Get()))
+		{
+			FString Translated;
+			FString EnumReason;
+			if (!TranslateEnumDefaultText(Enum, Value, Translated, EnumReason))
+			{
+				Result->SetBoolField(TEXT("set"), false);
+				Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Pin '%s' %s"), *PinName, *EnumReason));
+				return Result;
+			}
+			Value = Translated;
+		}
 	}
 
 	Pin->Modify();

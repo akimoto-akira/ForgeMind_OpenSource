@@ -31,9 +31,8 @@ using Task = System.Threading.Tasks.Task;
 // - DSL side: `void OnOverlap(AActor other)` also mismatches the parameter name (real pin:
 //   "Other Actor"); copied verbatim per test-is-spec.
 //
-// Note: per collaboration spec point 9, "diff comparison" (VerifyIrSnapshot) not attached
-// when transcribing task docs -- pending user visual confirmation of cases and results,
-// then separately inserted per user instruction.
+// Note: mis-touch comparison (VerifyIrSnapshot) inserted per user instruction,
+// after visual confirmation of all subtasks and test results.
 // =========================================================================
 
 public sealed class Blueprint_Collision : ITestCase
@@ -46,20 +45,26 @@ public sealed class Blueprint_Collision : ITestCase
     {
         // -- Subtask 1: Event ActorBeginOverlap --
         // MCP steps: Coll_Begin_A (Extends Actor) + Event ActorBeginOverlap
-        //   -> Other Actor -> GetName -> PrintString
+        //   -> Other Actor -> GetObjectName -> PrintString
         const string a1 = "/Game/Tests/UE5_0/Coll_Begin_A";
         BlueprintTestHelper.CreateBlueprintActor(ctx, a1);
         var ev1 = BlueprintTestHelper.AddNode(ctx, a1, "EventGraph", "ReceiveActorBeginOverlap", 0, 0);
-        var name1 = BlueprintTestHelper.AddNode(ctx, a1, "EventGraph", "GetName", 300, 0);
+        var name1 = BlueprintTestHelper.AddNode(ctx, a1, "EventGraph", "GetObjectName", 300, 0,
+            "KismetSystemLibrary");
         var print1 = BlueprintTestHelper.AddNode(ctx, a1, "EventGraph", "PrintString", 550, 0,
             "KismetSystemLibrary");
-        BlueprintTestHelper.Connect(ctx, a1, ev1.nodeId, "Other Actor", name1.nodeId, "Target");
-        BlueprintTestHelper.Connect(ctx, a1, name1.nodeId, "Return Value", print1.nodeId, "InString");
+        // GetObjectName's object pin is "Object" (param name, KismetSystemLibrary.h:102);
+        // return value pin is "ReturnValue" (no space -- standard function convention).
+        BlueprintTestHelper.Connect(ctx, a1, ev1.nodeId, "Other Actor", name1.nodeId, "Object");
+        BlueprintTestHelper.Connect(ctx, a1, name1.nodeId, "ReturnValue", print1.nodeId, "InString");
         BlueprintTestHelper.Connect(ctx, a1, ev1.nodeId, "then", print1.nodeId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a1);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
 
-        // DSL path (copied from task doc)
+        // DSL path: GetName is a UObject C++ method (not a UFunction) -- blueprints
+        // use KismetSystemLibrary::GetObjectName instead.
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Coll_Begin_B");
 
         // -- Subtask 2: Event Hit --
         // MCP steps: Coll_Hit_A (Extends Actor) + Event Hit -> PrintString("hit")
@@ -71,9 +76,13 @@ public sealed class Blueprint_Collision : ITestCase
         BlueprintTestHelper.SetPinDefault(ctx, a2, print2.nodeId, "InString", "hit");
         BlueprintTestHelper.Connect(ctx, a2, ev2.nodeId, "then", print2.nodeId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a2);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
 
-        // DSL path (copied from task doc)
+        // DSL path: override the parent BIE by its real function name and full
+        // 8-parameter signature (Actor.h:1868) -- override entry pins are shaped by
+        // the parent signature, per test-is-spec (spec point 6: assume supported).
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Coll_Hit_B");
 
         // -- Subtask 3: Event ActorEndOverlap --
         // MCP steps: Coll_End_A (Extends Actor) + Event ActorEndOverlap -> PrintString("end")
@@ -85,9 +94,11 @@ public sealed class Blueprint_Collision : ITestCase
         BlueprintTestHelper.SetPinDefault(ctx, a3, print3.nodeId, "InString", "end");
         BlueprintTestHelper.Connect(ctx, a3, ev3.nodeId, "then", print3.nodeId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 
         // DSL path (copied from task doc)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Coll_End_B");
 
         await Task.CompletedTask;
     }

@@ -88,6 +88,9 @@ public static class ScanCachePersistence
         public string Name { get; set; } = "";
         public string? Type { get; set; }
         public string? DefaultValue { get; set; }
+
+        /// <summary>Non-const reference parameter -> Blueprint output pin.</summary>
+        public bool IsOut { get; set; }
     }
 
     private sealed class DtoAsset
@@ -190,6 +193,7 @@ public static class ScanCachePersistence
         Name = p.Name,
         Type = p.Type,
         DefaultValue = p.DefaultValue,
+        IsOut = p.IsOut,
     };
 
     private static DtoProperty ToDto(UePropertyInfo prop) => new()

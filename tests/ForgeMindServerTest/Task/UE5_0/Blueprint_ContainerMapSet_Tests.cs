@@ -28,15 +28,29 @@ using Task = System.Threading.Tasks.Task;
 //   TMap<int32,int32>& / TSet<int32>&: BlueprintMapLibrary.h:28, BlueprintSetLibrary.h:26).
 //   The bridge's shared type parser documents container forms `X[]` / `set<X>` / `map<K,V>`
 //   (ForgeMindBridgeClient_BlueprintVars.cpp:75-78) -- that is what this test uses.
+// - **Wildcard timing (fix, TestRuns/20261011_1403)**: Map_Add/Map_Find Key/Value and
+//   Set_Add NewItem / Set_Contains ItemToFind are AutoCreateRefTerm wildcard-by-ref pins
+//   (MapParam/MapKeyParam/MapValueParam, SetParam="TargetSet|ItemToFind") -- no default is
+//   settable before the Target pin is connected (same family as Array_Add NewItem,
+//   Blueprint_Enum_Tests subtask 3 precedent). The MCP side therefore connects the
+//   container variable getter to TargetMap/TargetSet FIRST (engine ConformContainerPins,
+//   K2Node_CallFunction.cpp:3011-3037, fires via the bridge's ReconstructNode chain),
+//   THEN sets pin defaults. The original order (SetPinDefault on a still-wildcard Key)
+//   is rejected: "Unsupported type wildcard (by ref) on pin Key".
+// - Map_Find is BlueprintPure (no exec pins): exec chain runs entry -> Add -> Print and
+//   the printed value comes from Find's out "Value" pin (int, = DSL `int v = M[1]`).
+//   Set_Contains is also pure; its bool "Return Value" autocasts to PrintString's
+//   InString via the schema's auto conversion map (Conv_BoolToString).
+//   Map_Remove is BlueprintCallable (has exec pins) and stays on the exec chain.
 // - **No UK2Node_MapGet / UK2Node_MapSet exist in 5.0.3** (grep over Editor found none):
 //   map get/set is only reachable through the library functions, so the doc's `M[1]`
 //   indexer has no MCP equivalent -- the pure Map_Find node is used instead.
 // - DSL side: `M.Add(1, 10)` / `int v = M[1]` / `S.Contains(5)` copied verbatim; the
 //   translator's container support is unverified for the indexer form specifically.
 //
-// Note: per collaboration spec point 9, "diff comparison" (VerifyIrSnapshot) not attached
-// when transcribing task docs -- pending user visual confirmation of cases and results,
-// then separately inserted per user instruction.
+// Note: "diff comparison" (VerifyIrSnapshot) inserted on user instruction per
+// collaboration spec point 9 -- every asset in this file gets one after its
+// build chain completes (same shape as Blueprint_Enum_Tests / Blueprint_Switch_Tests).
 // =========================================================================
 
 public sealed class Blueprint_ContainerMapSet : ITestCase
@@ -54,24 +68,32 @@ public sealed class Blueprint_ContainerMapSet : ITestCase
         BlueprintTestHelper.CreateBlueprintActor(ctx, a1);
         BlueprintTestHelper.AddVariable(ctx, a1, "M", "map<int,int>");
         var f1 = BlueprintTestHelper.CreateFunction(ctx, a1, "Run");
+        var getM1 = BlueprintTestHelper.AddNode(ctx, a1, "Run", "M", 100, 0, kind: "getter");
         var add1 = BlueprintTestHelper.AddNode(ctx, a1, "Run", "Map_Add", 300, -100,
             "BlueprintMapLibrary");
-        BlueprintTestHelper.SetPinDefault(ctx, a1, add1.nodeId, "Key", "1");
-        BlueprintTestHelper.SetPinDefault(ctx, a1, add1.nodeId, "Value", "10");
         var find1 = BlueprintTestHelper.AddNode(ctx, a1, "Run", "Map_Find", 300, 100,
             "BlueprintMapLibrary");
+        // Connect the map getter to both TargetMap pins BEFORE defaults: Key/Value are
+        // wildcard-by-ref until the MapParam group propagates the type (see header note).
+        BlueprintTestHelper.Connect(ctx, a1, getM1.nodeId, "M", add1.nodeId, "TargetMap");
+        BlueprintTestHelper.Connect(ctx, a1, getM1.nodeId, "M", find1.nodeId, "TargetMap");
+        BlueprintTestHelper.SetPinDefault(ctx, a1, add1.nodeId, "Key", "1");
+        BlueprintTestHelper.SetPinDefault(ctx, a1, add1.nodeId, "Value", "10");
         BlueprintTestHelper.SetPinDefault(ctx, a1, find1.nodeId, "Key", "1");
         var print1 = BlueprintTestHelper.AddNode(ctx, a1, "Run", "PrintString", 600, 100,
             "KismetSystemLibrary");
         BlueprintTestHelper.Connect(ctx, a1, f1.entryId, "then", add1.nodeId, "execute");
-        BlueprintTestHelper.Connect(ctx, a1, add1.nodeId, "then", find1.nodeId, "execute");
-        BlueprintTestHelper.Connect(ctx, a1, add1.nodeId, "TargetMap", find1.nodeId, "TargetMap");
-        BlueprintTestHelper.Connect(ctx, a1, find1.nodeId, "Return Value", print1.nodeId, "InString");
+        // Map_Find is pure -- no exec pins; the print follows Add on the exec chain and
+        // reads the found value from Find's out "Value" pin (not the bool "Return Value").
+        BlueprintTestHelper.Connect(ctx, a1, add1.nodeId, "then", print1.nodeId, "execute");
+        BlueprintTestHelper.Connect(ctx, a1, find1.nodeId, "Value", print1.nodeId, "InString");
         BlueprintTestHelper.Connect(ctx, a1, print1.nodeId, "then", f1.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a1);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
 
         // DSL path (copied from task doc)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Cont_Map_B");
 
         // -- Subtask 2: TMap Remove --
         // MCP steps: Cont_MapRm_A (Extends Actor) + M : map<int,int>
@@ -80,21 +102,26 @@ public sealed class Blueprint_ContainerMapSet : ITestCase
         BlueprintTestHelper.CreateBlueprintActor(ctx, a2);
         BlueprintTestHelper.AddVariable(ctx, a2, "M", "map<int,int>");
         var f2 = BlueprintTestHelper.CreateFunction(ctx, a2, "Run");
+        var getM2 = BlueprintTestHelper.AddNode(ctx, a2, "Run", "M", 100, 0, kind: "getter");
         var add2 = BlueprintTestHelper.AddNode(ctx, a2, "Run", "Map_Add", 300, -100,
             "BlueprintMapLibrary");
-        BlueprintTestHelper.SetPinDefault(ctx, a2, add2.nodeId, "Key", "1");
-        BlueprintTestHelper.SetPinDefault(ctx, a2, add2.nodeId, "Value", "10");
         var rm2 = BlueprintTestHelper.AddNode(ctx, a2, "Run", "Map_Remove", 300, 100,
             "BlueprintMapLibrary");
+        // Getter -> TargetMap first (wildcard Key/Value conformance), then defaults.
+        BlueprintTestHelper.Connect(ctx, a2, getM2.nodeId, "M", add2.nodeId, "TargetMap");
+        BlueprintTestHelper.Connect(ctx, a2, getM2.nodeId, "M", rm2.nodeId, "TargetMap");
+        BlueprintTestHelper.SetPinDefault(ctx, a2, add2.nodeId, "Key", "1");
+        BlueprintTestHelper.SetPinDefault(ctx, a2, add2.nodeId, "Value", "10");
         BlueprintTestHelper.SetPinDefault(ctx, a2, rm2.nodeId, "Key", "1");
         BlueprintTestHelper.Connect(ctx, a2, f2.entryId, "then", add2.nodeId, "execute");
         BlueprintTestHelper.Connect(ctx, a2, add2.nodeId, "then", rm2.nodeId, "execute");
-        BlueprintTestHelper.Connect(ctx, a2, add2.nodeId, "TargetMap", rm2.nodeId, "TargetMap");
         BlueprintTestHelper.Connect(ctx, a2, rm2.nodeId, "then", f2.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a2);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
 
         // DSL path (copied from task doc)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Cont_MapRm_B");
 
         // -- Subtask 3: TSet Add / Contains --
         // MCP steps: Cont_Set_A (Extends Actor) + S : set<int>
@@ -103,23 +130,29 @@ public sealed class Blueprint_ContainerMapSet : ITestCase
         BlueprintTestHelper.CreateBlueprintActor(ctx, a3);
         BlueprintTestHelper.AddVariable(ctx, a3, "S", "set<int>");
         var f3 = BlueprintTestHelper.CreateFunction(ctx, a3, "Run");
+        var getS3 = BlueprintTestHelper.AddNode(ctx, a3, "Run", "S", 100, 0, kind: "getter");
         var add3 = BlueprintTestHelper.AddNode(ctx, a3, "Run", "Set_Add", 300, -100,
             "BlueprintSetLibrary");
-        BlueprintTestHelper.SetPinDefault(ctx, a3, add3.nodeId, "NewItem", "5");
         var has3 = BlueprintTestHelper.AddNode(ctx, a3, "Run", "Set_Contains", 300, 100,
             "BlueprintSetLibrary");
+        // Getter -> TargetSet first (wildcard NewItem/ItemToFind conformance), then defaults.
+        BlueprintTestHelper.Connect(ctx, a3, getS3.nodeId, "S", add3.nodeId, "TargetSet");
+        BlueprintTestHelper.Connect(ctx, a3, getS3.nodeId, "S", has3.nodeId, "TargetSet");
+        BlueprintTestHelper.SetPinDefault(ctx, a3, add3.nodeId, "NewItem", "5");
         BlueprintTestHelper.SetPinDefault(ctx, a3, has3.nodeId, "ItemToFind", "5");
         var print3 = BlueprintTestHelper.AddNode(ctx, a3, "Run", "PrintString", 600, 100,
             "KismetSystemLibrary");
         BlueprintTestHelper.Connect(ctx, a3, f3.entryId, "then", add3.nodeId, "execute");
-        BlueprintTestHelper.Connect(ctx, a3, add3.nodeId, "then", has3.nodeId, "execute");
-        BlueprintTestHelper.Connect(ctx, a3, add3.nodeId, "TargetSet", has3.nodeId, "TargetSet");
+        // Set_Contains is pure -- no exec pins; bool "Return Value" autocasts to InString.
+        BlueprintTestHelper.Connect(ctx, a3, add3.nodeId, "then", print3.nodeId, "execute");
         BlueprintTestHelper.Connect(ctx, a3, has3.nodeId, "Return Value", print3.nodeId, "InString");
         BlueprintTestHelper.Connect(ctx, a3, print3.nodeId, "then", f3.resultId, "execute");
         BlueprintTestHelper.CompileAndSave(ctx, a3);
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
 
         // DSL path (copied from task doc)
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Cont_Set_B");
 
         await Task.CompletedTask;
     }

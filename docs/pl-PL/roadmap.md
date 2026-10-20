@@ -1,27 +1,27 @@
-# Plan rozwoju ForgeMind
+﻿# Plan rozwoju ForgeMind
 
-Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, pogrupowany według dziedziny i statusu, i jest aktualizowany w sposób ciągły wraz z postępem prac. Źródło danych: najnowszy zrzut zbierania assetów (2026-10-08).
+Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, pogrupowany według dziedziny i statusu, i jest aktualizowany w sposób ciągły wraz z postępem prac. Źródło danych: najnowszy zrzut zbierania assetów (2026-10-19).
 
 ## Przegląd
 
 | Status | Liczba |
 | --- | ---: |
-| Ukończone | 30 |
-| W trakcie | 11 |
-| Planowane | 118 |
+| Ukończone | 59 |
+| W trakcie | 4 |
+| Planowane | 96 |
 | Razem | 159 |
 
 ## Przeglądaj według dziedziny
 
 | Dziedzina | Ukończone | W trakcie | Planowane |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Inne | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Ukończone (30)
+### Ukończone (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, 
 - Blueprint Wiązanie zdarzenia instancji
 - Blueprint Rysowanie debugowania
 - Blueprint Węzeł wyboru
-
-### W trakcie (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, 
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Planowane (43)
+### W trakcie (3)
 
-- Blueprint Maska bitowa
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Planowane (21)
+
 - Blueprint Wektor
 - Blueprint Ulepszone wejście
-- Blueprint Wiązanie delegatów
 - Blueprint Subsystem
-- Blueprint Kontener Map/Set
-- Blueprint Śledzenie linii
 - Blueprint Opóźnienie
 - Blueprint Ładowanie asynchroniczne
 - Blueprint Odniesienie
 - Blueprint Śledzenie kształtu
-- Blueprint Biblioteka matematyczna
-- Blueprint Wyrażenie matematyczne
-- Blueprint Tabela danych
-- Blueprint Asset danych
-- Blueprint Operacje na tablicach
 - Blueprint Formatowanie tekstu
 - Blueprint Obrót
-- Blueprint Timeline
-- Blueprint Krzywa
-- Blueprint Enum
-- Blueprint Iteracja enum
 - Blueprint Spline
-- Blueprint Kontrola przepływu
 - Blueprint Fizyka
 - Blueprint Kamera
-- Blueprint Zdarzenia kolizji
-- Blueprint Wartości domyślne klasy
-- Blueprint Cząsteczki
 - Blueprint Komponenty
-- Blueprint Replikacja sieciowa
 - Blueprint Ruch postaci
 - Blueprint Konwersja
-- Blueprint Miękkie odniesienia
-- Blueprint Zdarzenia wejściowe
 - Blueprint Operatory
 - Blueprint Komponenty w czasie wykonywania
 - Blueprint Węzeł wyboru
 - Blueprint Zniszczenie
-- Blueprint Brama
-- Blueprint Losowość
 - Blueprint Dźwięk
 - Blueprint Przewidywanie trajektorii
 

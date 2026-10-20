@@ -14,6 +14,7 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/Blueprint.h"
+#include "Engine/DataTable.h"
 #include "Engine/UserDefinedStruct.h"
 #include "Engine/UserDefinedEnum.h"
 #include "HAL/FileManager.h"
@@ -320,35 +321,16 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintStruct(cons
 		return Result;
 	}
 
-	// Path normalisation — same rules as create_blueprint.
-	FString PackagePath = AssetPath;
-	int32 DotIndex = INDEX_NONE;
-	if (PackagePath.FindChar(TEXT('.'), DotIndex))
-	{
-		PackagePath = PackagePath.Left(DotIndex);
-	}
-	if (!FPackageName::IsValidLongPackageName(PackagePath) || !PackagePath.StartsWith(TEXT("/Game/")))
+	// Path normalisation + clobber check: single entry point shared by every
+	// create_* asset command (see PrepareNewAssetLocation).
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Blueprints/FMyStruct"), PackagePath, AssetName, PathReason))
 	{
 		Result->SetBoolField(TEXT("created"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("path must be a project content path like /Game/Blueprints/FMyStruct"));
+		Result->SetStringField(TEXT("reason"), PathReason);
 		return Result;
-	}
-	const FString AssetName = FPaths::GetCleanFilename(PackagePath);
-
-	// Refuse to clobber an existing asset.
-	// Use AssetRegistry (not FindPackage) to avoid stale in-memory packages
-	// from deleted-but-not-GC'd assets.
-	{
-		FAssetRegistryModule& AssetRegModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		IAssetRegistry& AssetRegistry = AssetRegModule.Get();
-		TArray<FAssetData> ExistingAssets;
-		AssetRegistry.GetAssetsByPackageName(FName(*PackagePath), ExistingAssets, /*bIncludeOnlyOnDiskAssets=*/true);
-		if (ExistingAssets.Num() > 0)
-		{
-			Result->SetBoolField(TEXT("created"), false);
-			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("An asset already exists at '%s'"), *PackagePath));
-			return Result;
-		}
 	}
 
 	// Parse members before creating the asset so a bad type does not leave
@@ -494,6 +476,14 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintStruct(cons
 //   path        — project asset path, e.g. /Game/Blueprints/EMyEnum
 //   entries     — array of strings (enumerator display names); omit for
 //                 an empty enum to fill in later
+//   bitflags    — true sets the enumerator-as-bitflags meta data
+//                 (FEnumEditorUtils::SetEnumeratorBitflagsTypeState), the
+//                 same flag the enum editor's "Bitflags" checkbox writes.
+//                 The editor keys the bitmask property checkbox
+//                 (SPropertyEditorNumeric) and the MakeBitmask literal node
+//                 (UK2Node_BitmaskLiteral::ValidateBitflagsEnumType) off
+//                 this metadata; without it a bitmask variable default can
+//                 never round-trip.
 //
 // The enum is registered with the asset registry and left dirty — the
 // caller must save_asset to persist it.
@@ -512,35 +502,16 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintEnum(const 
 		return Result;
 	}
 
-	// Path normalisation — same rules as create_blueprint.
-	FString PackagePath = AssetPath;
-	int32 DotIndex = INDEX_NONE;
-	if (PackagePath.FindChar(TEXT('.'), DotIndex))
-	{
-		PackagePath = PackagePath.Left(DotIndex);
-	}
-	if (!FPackageName::IsValidLongPackageName(PackagePath) || !PackagePath.StartsWith(TEXT("/Game/")))
+	// Path normalisation + clobber check: single entry point shared by every
+	// create_* asset command (see PrepareNewAssetLocation).
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Blueprints/EMyEnum"), PackagePath, AssetName, PathReason))
 	{
 		Result->SetBoolField(TEXT("created"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("path must be a project content path like /Game/Blueprints/EMyEnum"));
+		Result->SetStringField(TEXT("reason"), PathReason);
 		return Result;
-	}
-	const FString AssetName = FPaths::GetCleanFilename(PackagePath);
-
-	// Refuse to clobber an existing asset.
-	// Use AssetRegistry (not FindPackage) to avoid stale in-memory packages
-	// from deleted-but-not-GC'd assets.
-	{
-		FAssetRegistryModule& AssetRegModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		IAssetRegistry& AssetRegistry = AssetRegModule.Get();
-		TArray<FAssetData> ExistingAssets;
-		AssetRegistry.GetAssetsByPackageName(FName(*PackagePath), ExistingAssets, /*bIncludeOnlyOnDiskAssets=*/true);
-		if (ExistingAssets.Num() > 0)
-		{
-			Result->SetBoolField(TEXT("created"), false);
-			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("An asset already exists at '%s'"), *PackagePath));
-			return Result;
-		}
 	}
 
 	// Parse the enumerator display names before creating the asset.
@@ -583,6 +554,17 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintEnum(const 
 	}
 
 	FAssetRegistryModule::AssetCreated(Enum);
+
+	// Optional enumerator-as-bitflags metadata: SetEnumeratorBitflagsTypeState
+	// is the same write the enum editor's "Bitflags" checkbox takes (the
+	// editor-side metadata key FBlueprintMetadata::MD_Bitflags). The MakeBitmask
+	// literal node validates its enum against this key, and the bitmask
+	// property checkbox lists the entries once the enum carries it.
+	bool bBitflags = false;
+	if (Payload->TryGetBoolField(TEXT("bitflags"), bBitflags) && bBitflags)
+	{
+		FEnumEditorUtils::SetEnumeratorBitflagsTypeState(Enum, true);
+	}
 
 	// Add each enumerator. AddNewEnumeratorForUserDefinedEnum appends a new
 	// entry with an auto-generated unique name; we then set its display name
@@ -648,33 +630,16 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintInterface(c
 		return Result;
 	}
 
-	// Path normalisation — same rules as create_blueprint.
-	FString PackagePath = AssetPath;
-	int32 DotIndex = INDEX_NONE;
-	if (PackagePath.FindChar(TEXT('.'), DotIndex))
-	{
-		PackagePath = PackagePath.Left(DotIndex);
-	}
-	if (!FPackageName::IsValidLongPackageName(PackagePath) || !PackagePath.StartsWith(TEXT("/Game/")))
+	// Path normalisation + clobber check: single entry point shared by every
+	// create_* asset command (see PrepareNewAssetLocation).
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Blueprints/IDamageable"), PackagePath, AssetName, PathReason))
 	{
 		Result->SetBoolField(TEXT("created"), false);
-		Result->SetStringField(TEXT("reason"), TEXT("path must be a project content path like /Game/Blueprints/IDamageable"));
+		Result->SetStringField(TEXT("reason"), PathReason);
 		return Result;
-	}
-	const FString AssetName = FPaths::GetCleanFilename(PackagePath);
-
-	// Refuse to clobber an existing asset (disk-only check, same as enum handler).
-	{
-		FAssetRegistryModule& AssetRegModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		IAssetRegistry& AssetRegistry = AssetRegModule.Get();
-		TArray<FAssetData> ExistingAssets;
-		AssetRegistry.GetAssetsByPackageName(FName(*PackagePath), ExistingAssets, /*bIncludeOnlyOnDiskAssets=*/true);
-		if (ExistingAssets.Num() > 0)
-		{
-			Result->SetBoolField(TEXT("created"), false);
-			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("An asset already exists at '%s'"), *PackagePath));
-			return Result;
-		}
 	}
 
 	// Guard against stale in-memory packages (same logic as create_blueprint).
@@ -795,6 +760,84 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateBlueprintInterface(c
 		MessageValues.Add(MakeShared<FJsonValueString>(AddedName));
 	}
 	Result->SetField(TEXT("messages"), MakeShared<FJsonValueArray>(MessageValues));
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// create_data_table
+//
+// Creates a DataTable asset (the "Data Table" the content browser creates via
+// right-click -> Miscellaneous -> Data Table). A DataTable is a typed table:
+// every row is one instance of the row struct, addressed by an FName row key.
+// It is the asset the "Get Data Table Row" node reads, and it has no compile
+// concept like a blueprint - save_asset is what persists it.
+//
+// Payload keys:
+//   path        - project asset path, e.g. /Game/Tests/UE5_0/DT_Items
+//   rowStruct   - project asset path of the row struct, e.g.
+//                 /Game/Tests/UE5_0/FItemRow_A (created beforehand with
+//                 create_blueprint_struct; "struct" is accepted as an alias)
+//
+// The table starts out with no rows and is registered with the asset registry
+// and left dirty - the caller must save_asset to persist it.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateDataTable(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	FString StructRef;
+	if (!Payload.IsValid()
+		|| (!Payload->TryGetStringField(TEXT("path"), AssetPath)
+			&& !Payload->TryGetStringField(TEXT("assetPath"), AssetPath)) || AssetPath.IsEmpty()
+		|| (!Payload->TryGetStringField(TEXT("rowStruct"), StructRef)
+			&& !Payload->TryGetStringField(TEXT("struct"), StructRef)) || StructRef.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (project asset path, e.g. /Game/Blueprints/DT_Items) and rowStruct (project asset path of the row struct, e.g. /Game/Blueprints/FItemRow)"));
+		return Result;
+	}
+
+	// Path normalisation + clobber check: single entry point shared by every
+	// create_* asset command (see PrepareNewAssetLocation).
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Blueprints/DT_Items"), PackagePath, AssetName, PathReason))
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), PathReason);
+		return Result;
+	}
+
+	// Resolve the row struct before creating the package, so an unresolvable
+	// reference never leaves an orphaned package behind.
+	FString StructReason;
+	UScriptStruct* RowStruct = ResolveDataTableRowStruct(StructRef, StructReason);
+	if (RowStruct == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), StructReason);
+		return Result;
+	}
+
+	UPackage* Package = CreatePackage(*PackagePath);
+	UDataTable* DataTable = CreateDataTableAsset(Package, AssetName, RowStruct);
+	if (DataTable == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("DataTable creation failed at '%s'"), *PackagePath));
+		return Result;
+	}
+
+	FAssetRegistryModule::AssetCreated(DataTable);
+	DataTable->MarkPackageDirty();
+
+	Result->SetBoolField(TEXT("created"), true);
+	Result->SetBoolField(TEXT("dirty"), DataTable->GetPackage()->IsDirty());
+	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
+	Result->SetStringField(TEXT("rowStruct"), RowStruct->GetPathName());
+	Result->SetNumberField(TEXT("rowCount"), DataTable->GetRowMap().Num());
 	return Result;
 }
 
@@ -1190,6 +1233,11 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleRemoveStructMember(const T
 // Payload keys:
 //   path        — project asset path of the enum, e.g. /Game/Blueprints/EMyEnum
 //   name        — display name for the new enumerator
+//   value       — explicit numeric value for the new enumerator; omit for
+//                 the auto-incremented index. Bitmask entries need explicit
+//                 powers of two (1/2/4): the auto-added entry always takes
+//                 the next sequential value (0,1,2...), so an OR-combination
+//                 like "A|C" would collide with a different entry.
 //
 // The enum is left dirty — save_asset to persist.
 // ---------------------------------------------------------------------------
@@ -1225,10 +1273,45 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddEnumEntry(const TShared
 		return Result;
 	}
 
+	// AddNewEnumeratorForUserDefinedEnum re-sequences EVERY entry's value to its
+	// index (0,1,2...) as it appends, so a bitmask enum built one entry at a time
+	// (A=1,B=2,C=4) would end up A=0,B=1,C=4 - every earlier explicit value wiped
+	// by the next add. Capture the current values first, add the entry, then rebuild
+	// the whole list through SetEnums restoring each prior value and giving the new
+	// entry its explicit value. Raw entry names are reused unchanged, so the
+	// DisplayNameMap (keyed by raw name) survives.
+	TArray<int64> PriorValues;
+	const int32 PriorCount = Enum->NumEnums() - 1; // exclude the trailing _MAX
+	PriorValues.Reserve(PriorCount);
+	for (int32 i = 0; i < PriorCount; ++i)
+	{
+		PriorValues.Add(Enum->GetValueByIndex(i));
+	}
+
 	FEnumEditorUtils::AddNewEnumeratorForUserDefinedEnum(Enum);
-	// The new enumerator is appended at the end, so its index is
-	// Enum->NumEnums() - 2 (the last slot is always _MAX).
 	const int32 NewIndex = Enum->NumEnums() - 2;
+
+	double ExplicitValueDouble = 0;
+	const bool bHasExplicitValue = Payload->TryGetNumberField(TEXT("value"), ExplicitValueDouble);
+	const int64 NewValue = bHasExplicitValue
+		? static_cast<int64>(ExplicitValueDouble)
+		: (PriorCount > 0 ? PriorValues.Last() + 1 : 0);
+
+	TArray<TPair<FName, int64>> NewNames;
+	const int32 NonMaxCount = Enum->NumEnums() - 1;
+	NewNames.Reserve(NonMaxCount);
+	for (int32 i = 0; i < NonMaxCount; ++i)
+	{
+		const int64 Value = (i < PriorCount) ? PriorValues[i] : NewValue;
+		NewNames.Emplace(Enum->GetNameByIndex(i), Value);
+	}
+	if (!Enum->SetEnums(NewNames, Enum->GetCppForm()))
+	{
+		Result->SetBoolField(TEXT("added"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("failed to add enumerator '%s' (the enum rejected the name/value list)"), *EntryName));
+		return Result;
+	}
+	FEnumEditorUtils::EnsureAllDisplayNamesExist(Enum);
 	FEnumEditorUtils::SetEnumeratorDisplayName(Enum, NewIndex, FText::FromString(EntryName));
 
 	Enum->MarkPackageDirty();

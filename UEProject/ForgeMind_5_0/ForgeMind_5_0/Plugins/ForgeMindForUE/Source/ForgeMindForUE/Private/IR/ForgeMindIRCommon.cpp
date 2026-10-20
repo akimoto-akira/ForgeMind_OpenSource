@@ -13,6 +13,7 @@
 #include "Factories/Factory.h"
 #include "IAssetTools.h"
 #include "Misc/PackageName.h"
+#include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "ObjectTools.h"
 #include "UObject/Package.h"
@@ -630,6 +631,121 @@ bool ForgeMindIR::IsDeletePatch(const TSharedPtr<FJsonObject>& Patch)
 		return true;
 	}
 	return false;
+}
+
+bool ForgeMindIR::AssetMatchesType(UObject* Asset, const FString& AssetType, FString& OutActualType)
+{
+	if (Asset == nullptr)
+	{
+		OutActualType = TEXT("(null)");
+		return false;
+	}
+
+	// Class name chain, concrete class first. UClass::GetName() drops the
+	// U/A/F prefix, so blueprint assets report "Blueprint", not "UBlueprint".
+	TArray<FString> Chain;
+	for (UClass* Cls = Asset->GetClass(); Cls != nullptr; Cls = Cls->GetSuperClass())
+	{
+		Chain.Add(Cls->GetName());
+	}
+	OutActualType = Chain.Num() > 0 ? Chain[0] : TEXT("(unknown)");
+
+	const auto DerivesFrom = [&Chain](const TCHAR* ClassName) -> bool
+	{
+		return Chain.Contains(FString(ClassName));
+	};
+
+	if (AssetType == TEXT("blueprint")
+		|| AssetType == TEXT("blueprint_function_library")
+		|| AssetType == TEXT("blueprint_macro_library")
+		|| AssetType == TEXT("blueprint_interface")
+		|| AssetType == TEXT("level_blueprint")
+		|| AssetType == TEXT("widget_blueprint")
+		|| AssetType == TEXT("widget_animation")
+		|| AssetType == TEXT("anim_blueprint"))
+	{
+		return DerivesFrom(TEXT("Blueprint"));
+	}
+	if (AssetType == TEXT("material")
+		|| AssetType == TEXT("material_function")
+		|| AssetType == TEXT("material_instance_constant"))
+	{
+		return DerivesFrom(TEXT("MaterialInterface"));
+	}
+	if (AssetType == TEXT("user_defined_struct"))
+	{
+		return DerivesFrom(TEXT("UserDefinedStruct"));
+	}
+	if (AssetType == TEXT("user_defined_enum"))
+	{
+		return DerivesFrom(TEXT("UserDefinedEnum"));
+	}
+	if (AssetType == TEXT("behavior_tree"))
+	{
+		return DerivesFrom(TEXT("BehaviorTree"));
+	}
+	if (AssetType == TEXT("blackboard") || AssetType == TEXT("blackboard_data"))
+	{
+		return DerivesFrom(TEXT("BlackboardData"));
+	}
+	if (AssetType == TEXT("physics_asset"))
+	{
+		return DerivesFrom(TEXT("PhysicsAsset"));
+	}
+	if (AssetType == TEXT("niagara_system"))
+	{
+		return DerivesFrom(TEXT("NiagaraSystem"));
+	}
+	if (AssetType == TEXT("niagara_emitter"))
+	{
+		return DerivesFrom(TEXT("NiagaraEmitter"));
+	}
+	if (AssetType == TEXT("paper_sprite"))
+	{
+		return DerivesFrom(TEXT("PaperSprite"));
+	}
+	if (AssetType == TEXT("paper_flipbook"))
+	{
+		return DerivesFrom(TEXT("PaperFlipbook"));
+	}
+	if (AssetType == TEXT("paper_tile_map"))
+	{
+		return DerivesFrom(TEXT("PaperTileMap"));
+	}
+	if (AssetType == TEXT("level_sequence"))
+	{
+		return DerivesFrom(TEXT("LevelSequence"));
+	}
+	if (AssetType == TEXT("landscape"))
+	{
+		return DerivesFrom(TEXT("Landscape"));
+	}
+
+	// Domains not named above keep the previous behaviour: the handler owns
+	// any deeper validation. Guarding only what we can name avoids false
+	// rejections on module specific classes.
+	return true;
+}
+
+void ForgeMindIR::WarnIfAssetLocked(UObject* Asset, FIRApplyContext& Ctx)
+{
+	if (Asset == nullptr)
+	{
+		return;
+	}
+
+	UPackage* Package = Asset->GetOutermost();
+	if (Package != nullptr)
+	{
+		// UE 5.0 has no UPackage::IsReadOnly(); check the underlying file's
+		// read-only bit instead (the 5.1+ API folds this plus PKG_ReadOnly in).
+		const FString PackageFilePath = Package->GetLoadedPath().GetLocalFullPath();
+		if (!PackageFilePath.IsEmpty() && IFileManager::Get().IsReadOnly(*PackageFilePath))
+		{
+			Ctx.Warn(TEXT("ASSET_LOCKED"),
+				FString::Printf(TEXT("asset at %s lives in a read-only package - applied edits may not persist"), *Ctx.Path));
+		}
+	}
 }
 
 void ForgeMindIR::FinalizeAsset(UObject* Asset, bool bSave)

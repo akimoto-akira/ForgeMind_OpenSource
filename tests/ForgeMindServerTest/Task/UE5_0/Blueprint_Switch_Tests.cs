@@ -116,8 +116,8 @@ public sealed class Blueprint_Switch : ITestCase
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
 
-        // ApplyDsl only compiles + saves assets with assetType == "blueprint"; the DSL-created
-        // EState_B is not included — add an explicit save instruction
+        // ApplyDsl compiles + saves only blueprint-backed asset types; the DSL-created enum is
+        // "user_defined_enum" (no compile concept, not saved on apply) — save it explicitly
         SaveAsset(ctx, "/Game/Tests/UE5_0/EState_B");
         BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/EState_B");
 

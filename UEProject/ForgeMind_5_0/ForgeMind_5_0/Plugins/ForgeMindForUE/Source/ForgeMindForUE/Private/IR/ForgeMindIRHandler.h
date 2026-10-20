@@ -81,7 +81,7 @@ struct FIRApplyContext
 	 * the op it actually inferred so the AI can confirm its diff.
 	 */
 	void AddPatchResult(const FString& ActualOp, const FString& PatchType, const FString& Name,
-		bool bOk, const FString& Message = FString())
+		bool bOk, const FString& Message = FString(), const FString& InErrorCode = FString())
 	{
 		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
 		Entry->SetStringField(TEXT("actualOp"), ActualOp);
@@ -94,6 +94,12 @@ struct FIRApplyContext
 		if (!Message.IsEmpty())
 		{
 			Entry->SetStringField(TEXT("message"), Message);
+		}
+		// IR rules.md section 8.3: machine-readable code on a failed patch so the
+		// AI can branch on it instead of parsing message prose.
+		if (!ErrorCode.IsEmpty())
+		{
+			Entry->SetStringField(TEXT("errorCode"), InErrorCode);
 		}
 		PatchResults.Add(MakeShared<FJsonValueObject>(Entry));
 	}
@@ -246,6 +252,25 @@ namespace ForgeMindIR
 
 	/** IR rules.md patch delete flag: "delete": true. */
 	bool IsDeletePatch(const TSharedPtr<FJsonObject>& Patch);
+
+	/**
+	 * IR rules.md section 4.2 — domain guard for update: does the loaded asset
+	 * actually belong to the requested assetType? Matching is done on the class
+	 * name chain (no per-domain module link required). Domains that are not
+	 * covered by the table below return true, i.e. they keep the previous
+	 * behaviour instead of blocking an update the handler might legitimately
+	 * accept. OutActualType receives the asset's concrete class name.
+	 */
+	bool AssetMatchesType(UObject* Asset, const FString& AssetType, FString& OutActualType);
+
+	/**
+	 * IR rules.md section 4.2 / 8.3 — emits a non-fatal ASSET_LOCKED warning when
+	 * the target lives in a read-only package. Warning (not failure): the apply
+	 * still proceeds, but the AI is told its edits may not persist. A hard lock
+	 * failure would reject legitimate programmatic edits made while the asset is
+	 * open in the editor.
+	 */
+	void WarnIfAssetLocked(UObject* Asset, FIRApplyContext& Ctx);
 
 	/** Marks the asset modified and (optionally) persists it. */
 	void FinalizeAsset(UObject* Asset, bool bSave);

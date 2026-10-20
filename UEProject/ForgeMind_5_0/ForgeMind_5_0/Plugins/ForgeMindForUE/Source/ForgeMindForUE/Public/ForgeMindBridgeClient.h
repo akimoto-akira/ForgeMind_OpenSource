@@ -122,6 +122,7 @@ public:
 	TSharedPtr<FJsonObject> HandleCreateBlueprintStruct(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateBlueprintEnum(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateBlueprintInterface(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleCreateDataTable(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleAddStructMember(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleUpdateStructMember(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleRemoveStructMember(const TSharedPtr<FJsonObject>& Payload);
@@ -165,6 +166,10 @@ public:
 
 	// Editor settings
 	TSharedPtr<FJsonObject> HandleListEditorSettings(const TSharedPtr<FJsonObject>& Payload);
+
+	// Input Settings (action / axis key mappings registration)
+	TSharedPtr<FJsonObject> HandleAddActionMapping(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleAddAxisMapping(const TSharedPtr<FJsonObject>& Payload);
 
 	// UMG Widget child management (Widget Blueprint designer hierarchy)
 	TSharedPtr<FJsonObject> HandleAddWidgetChild(const TSharedPtr<FJsonObject>& Payload);

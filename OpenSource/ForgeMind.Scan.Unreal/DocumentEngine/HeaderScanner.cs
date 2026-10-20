@@ -112,7 +112,7 @@ internal static partial class HeaderScanner
     /// the two branch initial character sets are mutually exclusive, no backtracking explosion risk.
     /// </para>
     /// </summary>
-    [GeneratedRegex(@"(?<static>\bstatic\s+)?(?:virtual\s+)?(?:[A-Z][A-Z_0-9]*\s+)?(?<ret>[\w:<>&*\s]+?)\s+(?<name>\w+)\s*\((?<params>(?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*)\)")]
+    [GeneratedRegex(@"(?<static>\bstatic\s+)?(?:virtual\s+)?(?:[A-Z][A-Z_0-9]*\s+)?(?<ret>[\w:<>&*\s]+?)\s+(?<name>\w+)\s*\((?<params>(?:[^()]|\((?:[^()]|\((?:[^()]|\([^()]*\))*\))*\))*)\)(?<const>\s*const)?")]
     private static partial Regex FunctionSignatureRegex();
 
     /// <summary>Property declaration: type + name (+ optional bitfield / initializer).</summary>
@@ -262,6 +262,12 @@ internal static partial class HeaderScanner
                 LineNumber = line,
             };
             FillSpecifiers(match.Groups["spec"].Value, function.Specifiers, function.Metadata);
+            // Record C++ const modifier into Specifiers so IsPure can detect const
+            // BlueprintCallable (engine generates Pure nodes for those, same as BlueprintPure
+            // — e.g. UCurveFloat::GetFloatValue). The const is on the declaration, not in
+            // the UFUNCTION macro, so FillSpecifiers (which parses the macro spec) can't see it.
+            if (signature.Value.IsConst)
+                function.Specifiers.Add("const");
             foreach (UeParameterInfo parameter in ParseParameters(signature.Value.Parameters))
                 function.Parameters.Add(parameter);
 
@@ -312,7 +318,7 @@ internal static partial class HeaderScanner
 
     // ---- Internal helpers ----
 
-    private readonly record struct SignatureMatch(string Name, bool IsStatic, string? ReturnType, string Parameters);
+    private readonly record struct SignatureMatch(string Name, bool IsStatic, string? ReturnType, string Parameters, bool IsConst);
 
     private static SignatureMatch? MatchFunctionSignature(string body)
     {
@@ -329,7 +335,8 @@ internal static partial class HeaderScanner
             return null;
 
         return new SignatureMatch(name, match.Groups["static"].Success,
-            match.Groups["ret"].Value.Trim(), match.Groups["params"].Value);
+            match.Groups["ret"].Value.Trim(), match.Groups["params"].Value,
+            match.Groups["const"].Success);
     }
 
     /// <summary>Parse parameter list: split by top-level commas (considering angle / round / square bracket nesting), extract type + name + default value per segment.</summary>
@@ -365,10 +372,25 @@ internal static partial class HeaderScanner
                 Name = name,
                 Type = type.Length > 0 ? type : null,
                 DefaultValue = defaultValue,
+                // Non-const reference (T&) is an out parameter (UHT: CPF_OutParm -> Blueprint
+                // output pin); const reference (const T&) or const-by-value stays an input.
+                IsOut = IsOutParameter(type),
             });
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Out-parameter detection from the C++ parameter type text: a reference ("&amp;") that is
+    /// not const. Examples: "FHitResult&amp;" / "TArray&lt;FHitResult&gt;&amp;" → out;
+    /// "const TArray&lt;AActor*&gt;&amp;" / "const FVector" / "AActor*" → input.
+    /// </summary>
+    private static bool IsOutParameter(string type)
+    {
+        if (!type.Contains('&'))
+            return false;                                   // by value / pointer → input
+        return !type.Contains("const", StringComparison.Ordinal);   // const & → input
     }
 
     private static List<string> SplitTopLevel(string text)

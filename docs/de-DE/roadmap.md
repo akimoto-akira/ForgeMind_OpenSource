@@ -1,27 +1,27 @@
-# ForgeMind-Fahrplan
+﻿# ForgeMind-Fahrplan
 
-Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von ForgeMind, gruppiert nach Bereich und Status, und wird mit dem Fortschritt kontinuierlich aktualisiert. Datenquelle: neuester Asset-Sammlungssnapshot (2026-10-08).
+Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von ForgeMind, gruppiert nach Bereich und Status, und wird mit dem Fortschritt kontinuierlich aktualisiert. Datenquelle: neuester Asset-Sammlungssnapshot (2026-10-19).
 
 ## Übersicht
 
 | Status | Anzahl |
 | --- | ---: |
-| Abgeschlossen | 30 |
-| In Entwicklung | 11 |
-| Geplant | 118 |
+| Abgeschlossen | 59 |
+| In Entwicklung | 4 |
+| Geplant | 96 |
 | Gesamt | 159 |
 
 ## Nach Bereich
 
 | Bereich | Abgeschlossen | In Entwicklung | Geplant |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Sonstiges | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Abgeschlossen (30)
+### Abgeschlossen (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von
 - Blueprint Instanzereignis binden
 - Blueprint Debug-Zeichnung
 - Blueprint Auswahlknoten
-
-### In Entwicklung (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Geplant (43)
+### In Entwicklung (3)
 
-- Blueprint Bitmaske
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Geplant (21)
+
 - Blueprint Vektor
 - Blueprint Erweiterte Eingabe
-- Blueprint Delegatbindung
 - Blueprint Subsystem
-- Blueprint Container Map/Set
-- Blueprint Linienabfrage
 - Blueprint Verzögerung
 - Blueprint Asynchrones Laden
 - Blueprint Referenz
 - Blueprint Formabfrage
-- Blueprint Mathematikbibliothek
-- Blueprint Mathematischer Ausdruck
-- Blueprint Datentabelle
-- Blueprint Daten-Asset
-- Blueprint Array-Operationen
 - Blueprint Textformatierung
 - Blueprint Rotation
-- Blueprint Timeline
-- Blueprint Kurve
-- Blueprint Enum
-- Blueprint Enum-Iteration
 - Blueprint Spline
-- Blueprint Ablaufsteuerung
 - Blueprint Physik
 - Blueprint Kamera
-- Blueprint Kollisionsereignisse
-- Blueprint Klassenvorgaben
-- Blueprint Partikel
 - Blueprint Komponenten
-- Blueprint Netzwerkreplikation
 - Blueprint Charakterbewegung
 - Blueprint Konvertierung
-- Blueprint Soft-Referenzen
-- Blueprint Eingabeereignisse
 - Blueprint Operatoren
 - Blueprint Laufzeitkomponenten
 - Blueprint Auswahlknoten
 - Blueprint Zerstören
-- Blueprint Gate
-- Blueprint Zufall
 - Blueprint Sound
 - Blueprint Flugbahnvorhersage
 

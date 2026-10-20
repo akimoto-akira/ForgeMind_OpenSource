@@ -6,7 +6,12 @@ namespace ForgeMind.Scan.Abstractions;
 /// <summary>One parameter (pin) of a function signature.</summary>
 /// <param name="Name">Parameter name, which is also the pin name.</param>
 /// <param name="Type">Declared type; null when unknown.</param>
-public sealed record ScanParameterSignature(string Name, string? Type = null);
+/// <param name="IsOut">
+/// Whether it is an out parameter (a non-const C++ reference "T&amp;"): an out parameter is an
+/// OUTPUT pin on the call node, so a call-site out argument must be wired as
+/// "call node out pin → variable write", never as a positional input.
+/// </param>
+public sealed record ScanParameterSignature(string Name, string? Type = null, bool IsOut = false);
 
 /// <summary>
 /// A function signature as consumed for call-site wiring: it is what lets a consumer map

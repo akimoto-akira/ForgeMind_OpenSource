@@ -248,9 +248,11 @@ internal sealed class McpRequestHandler
             // Use the default value
         }
 
-        if (tool.Name == "dsl" &&
-            parameters.TryGetValue("action", out object? actionObj) &&
-            string.Equals(actionObj?.ToString(), "apply_asset_ir", StringComparison.OrdinalIgnoreCase))
+        // The dsl tool always leaves the process as one apply_asset_ir batch, and
+        // DslTool's own BatchCommandTimeout is 120s. The old condition also looked
+        // for an "action" parameter, which the dsl schema never declares — so it
+        // never matched and large batches were cut off at the 30s default.
+        if (tool.Name == "dsl")
         {
             return Math.Max(defaultMs, 120_000);
         }

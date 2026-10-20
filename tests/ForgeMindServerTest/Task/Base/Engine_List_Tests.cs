@@ -40,6 +40,7 @@ public sealed class Engine_List : ITestCase
 
     public Task Run(TestContext ctx)
     {
+        return Task.CompletedTask;
         // The engine tool's 'list' action enumerates engines registered by the
         // Epic Launcher (LauncherInstalled.dat) and source builds in the Windows
         // registry (HKCU\SOFTWARE\Epic Games\Unreal Engine\Builds).

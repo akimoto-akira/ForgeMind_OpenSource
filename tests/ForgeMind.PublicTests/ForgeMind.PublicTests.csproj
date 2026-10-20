@@ -19,9 +19,11 @@
     <ProjectReference Include="..\..\OpenSource\ForgeMind.Speedy\ForgeMind.Speedy.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Embedded SPK for FromEmbeddedResource test (refactor plan §6). -->
-    <EmbeddedResource Include="test-bundle.spk" />
-  </ItemGroup>
+  <!--
+    No embedded SPK fixture: "test-bundle.spk" was never committed, and the pack writer now
+    lives in the engine scanner (outside this project's dependency boundary), so no binary
+    bundle can be produced here. EmbeddedSpkTests builds its bundle in-test and loads it
+    through the stream-backed reader — the same code path FromEmbeddedResource uses.
+  -->
 
 </Project>

@@ -69,14 +69,22 @@ public static class BlueprintTestHelper
     /// For blueprint parents, pass the generated class name - after compilation, BP_Base asset's generated class is "BP_Base_C".
     /// create_blueprint resolves class names via FindObject(ANY_PACKAGE) (already loaded objects).
     /// </summary>
-    public static void CreateBlueprint(TestContext ctx, string assetPath, string parentClass)
+    public static void CreateBlueprint(TestContext ctx, string assetPath, string parentClass, bool replicates = false)
     {
-        var r = EditorCall(ctx, "create_blueprint", new { path = assetPath, parentClass });
+        var payload = new Dictionary<string, object>
+        {
+            ["path"] = assetPath,
+            ["parentClass"] = parentClass,
+        };
+        if (replicates)
+            payload["replicates"] = true;
+        var r = EditorCall(ctx, "create_blueprint", payload);
         ctx.AssertTrue(GetBool(r, "created"), $"create_blueprint: {assetPath} (parent {parentClass})");
     }
 
     public static void AddVariable(TestContext ctx, string assetPath,
-        string name, string type, object? defaultValue = null)
+        string name, string type, object? defaultValue = null, bool instanceEditable = false,
+        bool bitmask = false, string? bitmaskEnum = null)
     {
         var payload = new Dictionary<string, object>
         {
@@ -89,10 +97,52 @@ public static class BlueprintTestHelper
         // Passing defaultValue is silently ignored by bridge -> variable default not assigned (Var_Edit_A visual feedback).
         if (defaultValue != null)
             payload["default"] = defaultValue;
+        // instanceEditable clears CPF_DisableEditOnInstance (AddMemberVariable's default).
+        // Data-asset class variables need this to show up in the Data Asset editor at all
+        // (user constraint 2026-10-14: only editable variables are discovered there).
+        if (instanceEditable)
+            payload["instanceEditable"] = true;
+        // Bitmask metadata: MD_Bitmask (property is a bitmask) + MD_BitmaskEnum (associated flag enum).
+        if (bitmask)
+            payload["bitmask"] = true;
+        if (bitmaskEnum != null)
+            payload["bitmaskEnum"] = bitmaskEnum;
 
         var r = EditorCallRaw(ctx, "add_blueprint_variable", payload);
         ctx.AssertTrue(GetBool(r, "added"),
             $"add_blueprint_variable {name} ({type}): {GetStr(r, "reason")}");
+    }
+
+    /// <summary>
+    /// Read back a variable's bitmaskEnum metadata via list_blueprint_variables. This is
+    /// the exact short-name value the editor's "Bitmask Enum" combo matches against, so
+    /// it lets a test assert the association landed (A/B equivalence) without eyeballing
+    /// the details panel. Returns "" when the variable has no bitmaskEnum.
+    /// </summary>
+    public static string GetVariableBitmaskEnum(TestContext ctx, string assetPath, string varName)
+        => GetVariableField(ctx, assetPath, varName, "bitmaskEnum");
+
+    /// <summary>
+    /// Read back one reported field of a named variable via list_blueprint_variables
+    /// (e.g. "bitmaskEnum", "defaultValue"). The defaultValue is read off the compiled
+    /// CDO, so it reflects the value the bitmask/enum resolution actually wrote. Returns
+    /// "" when the variable or field is absent.
+    /// </summary>
+    public static string GetVariableField(TestContext ctx, string assetPath, string varName, string field)
+    {
+        var r = EditorCall(ctx, "list_blueprint_variables", new { path = assetPath });
+        var vars = r?["response"]?["variables"]?.AsArray();
+        if (vars != null)
+        {
+            foreach (var v in vars)
+            {
+                if (v?["name"]?.GetValue<string>() == varName)
+                {
+                    return v?[field]?.GetValue<string>() ?? "";
+                }
+            }
+        }
+        return "";
     }
 
     public static FuncInfo CreateFunction(TestContext ctx, string assetPath, string funcName,
@@ -264,7 +314,8 @@ public static class BlueprintTestHelper
         int[]? intCases = null, string[]? stringCases = null,
         string? enumName = null, object[]? eventParams = null,
         string? function = null, string? component = null,
-        string? targetClass = null)
+        string? targetClass = null, int? outputs = null,
+        object[]? tracks = null, string? rpc = null, bool? reliable = null)
     {
         // companion's add_blueprint_node fields are name / x / y (not nodeType / nodePos)
         var payload = new Dictionary<string, object>
@@ -312,6 +363,13 @@ public static class BlueprintTestHelper
         {
             payload["cases"] = intCases;
         }
+        if (outputs != null)
+        {
+            // MultiGate / Sequence: number of execution output pins. The bridge allocates two by
+            // default and adds the rest via UK2Node_ExecutionSequence::AddInputPin -- without it
+            // a third output ("Out 2" / "then_2") simply does not exist on the node.
+            payload["outputs"] = outputs.Value;
+        }
         if (stringCases != null)
         {
             payload["cases"] = stringCases;
@@ -323,6 +381,14 @@ public static class BlueprintTestHelper
         if (eventParams != null)
         {
             payload["params"] = eventParams;
+        }
+        if (rpc != null)
+        {
+            // Replication on a custom event (blueprint RPC): bridge sets
+            // UK2Node_CustomEvent::FunctionFlags (FUNC_Net | direction | Reliable).
+            payload["rpc"] = rpc;
+            if (reliable is true)
+                payload["reliable"] = true;
         }
         if (function != null)
         {
@@ -340,6 +406,13 @@ public static class BlueprintTestHelper
             // targetClass field (LowerAddComponent), **not** pin default value (verified
             // 'AddActorComponent' node has no Class pin, see Ctor_Loop_A).
             payload["targetClass"] = targetClass;
+        }
+        if (tracks != null)
+        {
+            // Timeline tracks (kind=timeline only): [{name, type, keys:[{t,v}] | times:[...] | curveAsset}].
+            // The bridge never invents keyframes - curve data must come from the caller, on BOTH
+            // the MCP A side and the DSL B side, so the two produce identical keys (count / time / value).
+            payload["tracks"] = tracks;
         }
 
         var r = EditorCallRaw(ctx, "add_blueprint_node", payload);
@@ -521,6 +594,39 @@ public static class BlueprintTestHelper
     }
 
     // =====================================================================
+    // Input Settings registration (action / axis key mappings)
+    // =====================================================================
+
+    public static void AddActionMapping(TestContext ctx, string action, string key,
+        bool shift = false, bool ctrl = false, bool alt = false, bool cmd = false)
+    {
+        var r = EditorCall(ctx, "add_action_mapping", new
+        {
+            action,
+            key,
+            shift,
+            ctrl,
+            alt,
+            cmd,
+        });
+        ctx.AssertTrue(GetBool(r, "added"),
+            $"add_action_mapping {action}/{key}: {GetStr(r, "reason")}");
+    }
+
+    public static void AddAxisMapping(TestContext ctx, string axis, string key,
+        double scale = 1.0)
+    {
+        var r = EditorCall(ctx, "add_axis_mapping", new
+        {
+            axis,
+            key,
+            scale,
+        });
+        ctx.AssertTrue(GetBool(r, "added"),
+            $"add_axis_mapping {axis}/{key}/{scale}: {GetStr(r, "reason")}");
+    }
+
+    // =====================================================================
     // DSL distribution
     // =====================================================================
 
@@ -552,7 +658,16 @@ public static class BlueprintTestHelper
         {
             foreach (var asset in assetResults)
             {
-                if (asset?["assetType"]?.GetValue<string>() is not ("blueprint" or "blueprint_function_library" or "level_blueprint"))
+                // Blueprint-backed asset types: anything not listed here exists only in memory
+                // after apply (a macro library's DSL side used to be skipped here, so its B side
+                // never reached disk while its A side -- CompileAndSave -- did).
+                // Interfaces ("blueprint_interface"), structs ("user_defined_struct") and enums
+                // ("user_defined_enum") are deliberately absent: they have no compile concept, so
+                // compile_blueprint must not be sent. The bridge does not save them on apply either
+                // -- the owning test case saves them explicitly (local SaveAsset helper in
+                // Blueprint_Interface_Tests / Blueprint_Struct_Tests / Blueprint_Switch_Tests).
+                if (asset?["assetType"]?.GetValue<string>() is not ("blueprint" or "blueprint_function_library"
+                    or "level_blueprint" or "blueprint_macro_library"))
                     continue;
 
                 // Check bridge warnings: BP_NODE_NOT_FOUND etc. means node creation failed;
@@ -687,9 +802,15 @@ public static class BlueprintTestHelper
     private static readonly Regex StructVarGuidTail = new(@"_[0-9A-F]{32}$", RegexOptions.Compiled);
 
     /// <summary>
-    /// Strip that GUID tail from every string "name" field of the IR (struct definition.members[]
-    /// and graph nodes[].pins[]). Only "name" fields are touched: a real member rename / pin
-    /// rename must still surface as a diff, and values such as defaultValue are left alone.
+    /// Strip that GUID tail from every string "name" / "fromPin" / "toPin" field of the IR
+    /// (struct definition.members[], graph nodes[].pins[].name, and graph connections[]
+    /// endpoints). Connections' fromPin/toPin carry the same VarName when the pin belongs
+    /// to a K2Node_MakeStruct/K2Node_BreakStruct (pin named after the struct member), and
+    /// NormalizeIrGraph only re-keys fromNode/toNode — without scrubbing the pin endpoints
+    /// the connection diff still fails (observed TestRuns/20261014_0220: baseline
+    /// Value_2_7C1517AE… vs actual Value_2_A23C13B9…). Only the 32-hex tail is removed:
+    /// a real member rename / pin rename must still surface as a diff, and values such as
+    /// defaultValue are left alone.
     /// </summary>
     private static void ScrubVolatileGuidTails(JsonNode? node)
     {
@@ -700,7 +821,7 @@ public static class BlueprintTestHelper
                 foreach (string key in obj.Select(kvp => kvp.Key).ToList())
                 {
                     var value = obj[key];
-                    if (key == "name" && value is JsonValue jv
+                    if ((key == "name" || key == "fromPin" || key == "toPin") && value is JsonValue jv
                         && jv.TryGetValue<string>(out var text) && text != null)
                     {
                         string scrubbed = StructVarGuidTail.Replace(text, "");
@@ -749,6 +870,14 @@ public static class BlueprintTestHelper
             if (guidToKey.TryGetValue(from, out var fk)) w["fromNode"] = fk;
             if (guidToKey.TryGetValue(to, out var tk)) w["toNode"] = tk;
         }
+
+        // Recurse into nested subgraphs: a UK2Node_MathExpression's bound graph is exported
+        // as node.subgraph (added 2026-10-15). Its nodes carry volatile NodeGuids too, so
+        // without re-keying them the mis-touch snapshot compares raw guids and fails on every
+        // re-run (observed TestRuns/20261015_1422: MExpr_Basic_MathNodes 12 diffs, all in
+        // subgraph node ids / connection endpoints). Each subgraph re-keys independently.
+        foreach (var n in nodes)
+            NormalizeIrGraph(n?["subgraph"]);
     }
 
     /// <summary>Full structural comparison: objects compare key sets and values, arrays compare counts and per-position elements,

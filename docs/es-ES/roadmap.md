@@ -1,27 +1,27 @@
-# Hoja de ruta de desarrollo de ForgeMind
+﻿# Hoja de ruta de desarrollo de ForgeMind
 
-Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de generación de activos de ForgeMind, agrupada por dominio y estado, y se actualiza continuamente a medida que avanza el desarrollo. Fuente de datos: instantánea más reciente de recopilación de activos (2026-10-08).
+Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de generación de activos de ForgeMind, agrupada por dominio y estado, y se actualiza continuamente a medida que avanza el desarrollo. Fuente de datos: instantánea más reciente de recopilación de activos (2026-10-19).
 
 ## Resumen
 
 | Estado | Cantidad |
 | --- | ---: |
-| Completado | 30 |
-| En desarrollo | 11 |
-| Planificado | 118 |
+| Completado | 59 |
+| En desarrollo | 4 |
+| Planificado | 96 |
 | Total | 159 |
 
 ## Explorar por dominio
 
 | Dominio | Completado | En desarrollo | Planificado |
 | --- | ---: | ---: | ---: |
-| Blueprint | 30 | 10 | 43 |
+| Blueprint | 59 | 3 | 21 |
 | Material | 0 | 0 | 57 |
 | Otros | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Completado (30)
+### Completado (59)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -53,9 +53,6 @@ Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de genera
 - Blueprint Vincular evento de instancia
 - Blueprint Dibujo de depuración
 - Blueprint Nodo de selección
-
-### En desarrollo (10)
-
 - Blueprint ClassDefault
 - Blueprint Collision
 - Blueprint ContainerMapSet
@@ -66,50 +63,53 @@ Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de genera
 - Blueprint Gate
 - Blueprint Particle
 - Blueprint SoftRef
+- Blueprint ArrayOps
+- Blueprint Bitmask
+- Blueprint DataAsset
+- Blueprint DataTable
+- Blueprint Delay
+- Blueprint DelegateBind
+- Blueprint Destroy
+- Blueprint Input
+- Blueprint LineTrace
+- Blueprint Math
+- Blueprint MathExpr
+- Blueprint NetReplication
+- Blueprint Random
+- Blueprint Rotation
+- Blueprint Select
+- Blueprint ShapeTrace
+- Blueprint Spline
+- Blueprint Timeline
+- Blueprint Vector
 
-### Planificado (43)
+### En desarrollo (3)
 
-- Blueprint Máscara de bits
+- Blueprint Camera
+- Blueprint Physics
+- Blueprint Text
+
+### Planificado (21)
+
 - Blueprint Vector
 - Blueprint Entrada mejorada
-- Blueprint Vinculación de delegados
 - Blueprint Subsistema
-- Blueprint Contenedor Map/Set
-- Blueprint Trazado de línea
 - Blueprint Retardo
 - Blueprint Carga asíncrona
 - Blueprint Referencia
 - Blueprint Trazado de forma
-- Blueprint Biblioteca matemática
-- Blueprint Expresión matemática
-- Blueprint Tabla de datos
-- Blueprint Activo de datos
-- Blueprint Operaciones con matrices
 - Blueprint Formato de texto
 - Blueprint Rotación
-- Blueprint Línea de tiempo
-- Blueprint Curva
-- Blueprint Enum
-- Blueprint Iteración de enum
 - Blueprint Spline
-- Blueprint Control de flujo
 - Blueprint Física
 - Blueprint Cámara
-- Blueprint Eventos de colisión
-- Blueprint Valores predeterminados de clase
-- Blueprint Partículas
 - Blueprint Componentes
-- Blueprint Replicación de red
 - Blueprint Movimiento de personaje
 - Blueprint Conversión
-- Blueprint Referencias suaves
-- Blueprint Eventos de entrada
 - Blueprint Operadores
 - Blueprint Componentes en tiempo de ejecución
 - Blueprint Nodo de selección
 - Blueprint Destruir
-- Blueprint Compuerta
-- Blueprint Aleatorio
 - Blueprint Sonido
 - Blueprint Predicción de trayectoria
 

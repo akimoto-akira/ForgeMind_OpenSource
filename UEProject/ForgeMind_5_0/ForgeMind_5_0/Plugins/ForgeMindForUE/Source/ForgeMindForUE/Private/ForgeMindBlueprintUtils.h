@@ -16,6 +16,9 @@ class UClass;
 class UEnum;
 class FJsonObject;
 class UUserDefinedStruct;
+class UDataTable;
+class UPackage;
+class UScriptStruct;
 struct FBPVariableDescription;
 
 /**
@@ -34,6 +37,26 @@ namespace ForgeMindBlueprintUtils
 	 * (the same write path the Details panel uses for existing variables).
 	 */
 	bool EnsureCompiledVariableDefault(UBlueprint* Blueprint, const FString& VarName, const FString& ExpectedDefault, FString& OutReason);
+
+	/**
+	 * Translates a blueprint-facing enum default into the engine-internal
+	 * entry name that pin/property default validation accepts. Accepted
+	 * authored forms: display/authored name ("Red"), numeric enum value
+	 * ("0"), or the internal entry name ("NewEnumerator0") itself. Returns
+	 * false with OutReason listing the valid entries when unknown.
+	 *
+	 * Bitmask combination defaults ("A|C" / "EMyFlags.A | EMyFlags.C") are
+	 * also accepted: the tokens are split on "|", the optional "EnumName."
+	 * prefix is stripped from each segment, every entry is resolved and the
+	 * values are OR-ed into *OutCombinedValue. A combination has no single
+	 * entry name and the engine's text chain never parses one, so
+	 * OutInternalName comes back empty for combinations and the caller is
+	 * expected to write the byte straight into the property (the editor's
+	 * bitmask checkbox is the same OR-per-flag write). Callers that can only
+	 * take a text default (set_pin_default_value) pass null for
+	 * OutCombinedValue and treat an empty OutInternalName as unsupported.
+	 */
+	bool TranslateEnumDefaultText(const UEnum* Enum, const FString& AuthoredDefault, FString& OutInternalName, FString& OutReason, int64* OutCombinedValue = nullptr);
 
 	/**
 	 * Where a variable name lives on a blueprint's class. This is the single
@@ -172,6 +195,47 @@ namespace ForgeMindBlueprintUtils
 	UBlueprint* ResolveBlueprint(const FString& AssetPath);
 
 	/**
+	 * Single entry point for "where does a newly created /Game asset live":
+	 * strips the optional ".asset" suffix, rejects anything outside the
+	 * project's content root and refuses to clobber an asset that already
+	 * exists on disk.
+	 *
+	 * create_blueprint / create_blueprint_struct / create_blueprint_enum /
+	 * create_blueprint_interface each carried their own copy of this chain;
+	 * a new asset type had to copy it again, and a copy that drifted (an
+	 * omitted existence check, a different prefix rule) is exactly the kind
+	 * of silent divergence that lets an overwrite through or rejects a valid
+	 * path. Every create_* command goes through here instead.
+	 *
+	 * PathExample only feeds the rejection message ("path must be a project
+	 * content path like <example>"), so each command keeps its own wording.
+	 */
+	bool PrepareNewAssetLocation(const FString& AssetPath, const TCHAR* PathExample,
+		FString& OutPackagePath, FString& OutAssetName, FString& OutReason);
+
+	/**
+	 * Single entry point for "which struct does a DataTable row-struct
+	 * reference denote". Accepts the package form (/Game/Dir/FItemRow), the
+	 * full object form (/Game/Dir/FItemRow.FItemRow) and native struct paths
+	 * (/Script/Module.FStruct).
+	 *
+	 * The package form carries no object name, so a bare LoadObject on it
+	 * resolves nothing - and a null there is not an error anyone sees: the
+	 * DataTable is created with no RowStruct at all and every row read fails
+	 * much later. Completing the path here is what makes that impossible.
+	 */
+	UScriptStruct* ResolveDataTableRowStruct(const FString& StructRef, FString& OutReason);
+
+	/**
+	 * Single entry point for "make a DataTable asset with this row struct" -
+	 * the same UDataTableFactory path the content browser and apply_asset_ir
+	 * use. The factory only assigns RowStruct on top of a plain NewObject,
+	 * but keeping one call site is what stops the two from drifting apart
+	 * (a row struct set on one path and forgotten on the other).
+	 */
+	UDataTable* CreateDataTableAsset(UPackage* Package, const FString& AssetName, UScriptStruct* RowStruct);
+
+	/**
 	 * Generic asset resolver: loads any UObject from the given asset path
 	 * (e.g. /Game/Folder/MyAsset or /Game/Folder/MyAsset.MyAsset).
 	 * Works for blueprints, structs, enums, input actions, data assets,
@@ -221,6 +285,18 @@ namespace ForgeMindBlueprintUtils
 	 * Resolve enum asset by the alias registered above (LoadObject); returns nullptr if no alias or load fails.
 	 */
 	UEnum* ResolveUserTypeEnumAlias(const FString& DeclaredName);
+
+	/**
+	 * Single entry point for resolving any user-enum reference the bridge
+	 * accepts, in order: /Game|/Script asset or object path (LoadObject), UEnum
+	 * short name, E-prefixed short name, DSL user-enum declaration alias
+	 * (RegisterUserTypeEnumAlias). The bitmask enum metadata (MD_BitmaskEnum)
+	 * must carry the resolved enum's SHORT name (GetName) - the variable details
+	 * panel's "Bitmask Enum" combo matches its options by enum FName, so raw
+	 * asset paths or declaration names show as None. Returns nullptr when
+	 * unresolvable.
+	 */
+	UEnum* ResolveUserEnumReference(const FString& InName);
 
 	/**
 	 * Compile + dirty, mirroring the variable commands, then harvest the

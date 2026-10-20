@@ -14,6 +14,26 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleApplyAssetIR(const TShared
 {
 	if (!FForgeMindIRRegistry::Get().IsNewFormat(Payload))
 	{
+		// IR rules.md section 2.2: a payload that carries assets[] entries but
+		// no snake_case assetType on any of them is an unknown-domain request,
+		// NOT a legacy v2 request. Falling through to the old pipeline applied
+		// such IRs with unpredictable results instead of reporting
+		// UNSUPPORTED_ASSET_TYPE, which is exactly the silent-fallback failure
+		// mode section 2.2 exists to prevent.
+		const TArray<TSharedPtr<FJsonValue>>* Assets = nullptr;
+		const bool bHasEntries = Payload.IsValid()
+			&& Payload->TryGetArrayField(TEXT("assets"), Assets)
+			&& Assets->Num() > 0;
+
+		if (bHasEntries)
+		{
+			TSharedRef<FJsonObject> Failure = MakeShared<FJsonObject>();
+			Failure->SetBoolField(TEXT("success"), false);
+			Failure->SetStringField(TEXT("error"),
+				TEXT("asset IR entries are missing the required 'assetType' field"));
+			Failure->SetStringField(TEXT("errorCode"), TEXT("UNSUPPORTED_ASSET_TYPE"));
+			return Failure;
+		}
 		return HandleApplyAssetIRLegacy(Payload);
 	}
 	return FForgeMindIRRegistry::Get().ApplyBatch(Payload);

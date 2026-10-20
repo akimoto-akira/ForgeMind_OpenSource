@@ -38,8 +38,9 @@ using Task = System.Threading.Tasks.Task;
 //   reference. Connecting it to a message node's self pin (PC_Object + UObject) works through
 //   the engine's own Conv_InterfaceToObject autocast (EdGraphSchema_K2.cpp L2502-2513).
 //   The test passes the interface generated class path (/Game/.../IDamageable.IDamageable_C).
-// - DSL side: ParserFactory.DomainMap has no blueprint_interface domain
-//   ([BlueprintInterface] would be rejected by DetectAssetType -> batch aborted); method-level
+// - DSL side: ParserFactory.DomainMap carries BlueprintInterface -> blueprint_interface
+//   (entry 50, added when the interface translator was wired in), so [BlueprintInterface] is
+//   no longer rejected by DetectAssetType; method-level
 //   interface implementation marked by [InterfaceImplementation] (BlueprintTranslator puts method
 //   into InterfaceGraph per this and produces interfaceImplementation patch); doc's [Function]
 //   would fall into custom event rather than interface implementation -- written directly as supported
@@ -84,8 +85,9 @@ public sealed class Blueprint_Interface : ITestCase
     /// <summary>
     /// Save non-blueprint assets (interfaces): interfaces have no compile concept, so CompileAndSave
     /// cannot be used (it would send compile_blueprint). Neither creation path saves either --
-    /// create_blueprint_interface only marks the package dirty, and ApplyDsl only compiles + saves
-    /// assets with assetType == "blueprint" (interfaces are "blueprint_interface") -- so an explicit
+    /// create_blueprint_interface only marks the package dirty, and ApplyDsl compiles + saves only
+    /// blueprint-backed asset types (blueprint / level_blueprint / blueprint_function_library /
+    /// blueprint_macro_library) -- interfaces are "blueprint_interface", so an explicit
     /// save is required, otherwise the asset lingers in memory dirty and the IR snapshot below is
     /// taken against unsaved state. Same as Blueprint_Switch_Tests' SaveAsset.
     /// </summary>
@@ -147,8 +149,8 @@ public sealed class Blueprint_Interface : ITestCase
         // IDamageable_B asset (file-level `using IDamageable = "path";` alias is
         // core syntax section 11.5's established mechanism) pending verification -- test is spec)
         BlueprintTestHelper.ApplyDsl(ctx, "");
-        // ApplyDsl only compiles + saves assets with assetType == "blueprint"; the DSL-created
-        // interface has assetType "blueprint_interface" -- add an explicit save instruction.
+        // ApplyDsl compiles + saves only blueprint-backed asset types; the DSL-created interface
+        // is "blueprint_interface" (no compile concept) -- add an explicit save instruction.
         const string ifaceB = "/Game/Tests/UE5_0/IDamageable_B";
         SaveAsset(ctx, ifaceB);
         BlueprintTestHelper.VerifyIrSnapshot(ctx, ifaceB);
