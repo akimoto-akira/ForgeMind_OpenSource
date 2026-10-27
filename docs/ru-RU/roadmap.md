@@ -1,27 +1,27 @@
 ﻿# Дорожная карта развития ForgeMind
 
-Эта дорожная карта отражает прогресс разработки функций генерации ассетов ForgeMind, сгруппированных по областям и статусам, и непрерывно обновляется по мере развития. Источник данных: последний снимок сбора ассетов (2026-10-19).
+Эта дорожная карта отражает прогресс разработки функций генерации ассетов ForgeMind, сгруппированных по областям и статусам, и непрерывно обновляется по мере развития. Источник данных: снимок ассетов шага 3 (2026-10-26).
 
 ## Обзор
 
 | Статус | Количество |
 | --- | ---: |
-| Завершено | 59 |
+| Завершено | 77 |
 | В разработке | 4 |
-| Запланировано | 96 |
-| Всего | 159 |
+| Запланировано | 73 |
+| Всего | 154 |
 
 ## Обзор по областям
 
 | Область | Завершено | В разработке | Запланировано |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Прочее | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Завершено (59)
+### Завершено (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### В разработке (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Запланировано (21)
-
-- Blueprint Вектор
-- Blueprint Расширенный ввод
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
 - Blueprint Subsystem
-- Blueprint Задержка
-- Blueprint Асинхронная загрузка
-- Blueprint Ссылка
-- Blueprint Трассировка формы
-- Blueprint Форматирование текста
-- Blueprint Поворот
-- Blueprint Spline
-- Blueprint Физика
-- Blueprint Камера
-- Blueprint Компоненты
-- Blueprint Движение персонажа
-- Blueprint Преобразование
-- Blueprint Операторы
-- Blueprint Компоненты времени выполнения
-- Blueprint Узел выбора
-- Blueprint Уничтожение
-- Blueprint Звук
-- Blueprint Прогнозирование траектории
+- Blueprint Transform
+
+### В разработке (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Запланировано (57)
+### Завершено (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### В разработке (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Запланировано (55)
 
 - Material AR-камера / Вектор атмосферного света
 - Material Decal
-- Material Условная ветвь if
 - Material Мировая позиция и камера
 - Material Объём / Облака
 - Material Вектор света / Модель затенения
@@ -138,7 +137,6 @@
 - Material Волосы (Hair)
 - Material Шрифты / Инструменты текстур
 - Material Слои / Параметры каналов
-- Material Константа
 - Material Переключатель / Switch
 - Material Интерполяция / Lerp
 - Material Математические функции

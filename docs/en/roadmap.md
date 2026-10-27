@@ -1,27 +1,27 @@
 ﻿# ForgeMind Development Roadmap
 
-This roadmap reflects the development progress of ForgeMind asset generation capabilities, grouped by domain and status, and is continuously updated as development proceeds. Data source: latest asset collection snapshot (2026-10-19).
+This roadmap reflects the development progress of ForgeMind asset generation capabilities, grouped by domain and status, and is continuously updated as development proceeds. Data source: Step 3 asset snapshot (2026-10-26).
 
 ## Overview
 
 | Status | Count |
 | --- | ---: |
-| Completed | 59 |
+| Completed | 77 |
 | In Progress | 4 |
-| Planned | 96 |
-| Total | 159 |
+| Planned | 73 |
+| Total | 154 |
 
 ## Browse by Domain
 
 | Domain | Completed | In Progress | Planned |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Other | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Completed (59)
+### Completed (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ This roadmap reflects the development progress of ForgeMind asset generation cap
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### In Progress (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Planned (21)
-
-- Blueprint Vector
-- Blueprint Enhanced Input
-- Blueprint Subsystem
-- Blueprint Delay
 - Blueprint Async Load
-- Blueprint Reference
-- Blueprint Shape Trace
-- Blueprint Text Formatting
-- Blueprint Rotation
-- Blueprint Spline
-- Blueprint Physics
-- Blueprint Camera
-- Blueprint Components
+- Blueprint Audio
 - Blueprint Character Movement
-- Blueprint Conversion
+- Blueprint Components
+- Blueprint Enhanced Input
 - Blueprint Operators
-- Blueprint Runtime Components
-- Blueprint Switch Node
-- Blueprint Destroy
-- Blueprint Sound
 - Blueprint Predict Trajectory
+- Blueprint Reference
+- Blueprint Subsystem
+- Blueprint Transform
+
+### In Progress (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Planned (57)
+### Completed (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### In Progress (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Planned (55)
 
 - Material AR Camera / Atmosphere Light Vector
 - Material Decal
-- Material If Conditional Branch
 - Material World Position & Camera
 - Material Volume / Cloud
 - Material Light Vector / Shading Model
@@ -138,7 +137,6 @@ This roadmap reflects the development progress of ForgeMind asset generation cap
 - Material Hair
 - Material Font / Texture Tools
 - Material Layer / Channel Parameters
-- Material Constant
 - Material Switch
 - Material Lerp
 - Material Math Functions

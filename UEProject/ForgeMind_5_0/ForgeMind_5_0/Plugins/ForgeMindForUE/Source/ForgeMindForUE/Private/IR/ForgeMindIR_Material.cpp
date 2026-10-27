@@ -6,9 +6,16 @@
 //
 // Expression graphs are built in two passes (create → wire) because the
 // IR allows forward references between nodes.
+//
+// Expression creation, registration, pin lookup and constant wiring come from
+// ForgeMindMaterialOps, the same layer the material step commands
+// (create_material / add_material_expression / connect_material_pins) use, so a
+// graph built from an IR definition and one built step by step end up identical -
+// the property a task doc verifies by comparing the IR of its A and B assets.
 
 #include "ForgeMindIRHandler.h"
 #include "ForgeMindIRGeneric.h"
+#include "ForgeMindMaterialOps.h"
 
 #include "AssetToolsModule.h"
 #include "Engine/Texture.h"
@@ -16,93 +23,98 @@
 #include "IAssetTools.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
-#include "Materials/MaterialExpressionConstant.h"
+#include "Materials/MaterialExpressionParameter.h"
+#include "Materials/MaterialExpressionStaticBool.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "RHI.h"
 #include "UObject/UnrealType.h"
 
 namespace
 {
-	/** "TextureSample" → "MaterialExpressionTextureSample". */
-	FString ExpressionClassName(const FString& Type)
+	/** Node properties that are part of the IR schema rather than expression state. */
+	bool IsStructuralNodeKey(const FString& Key)
 	{
-		if (Type.IsEmpty())
-		{
-			return Type;
-		}
-		if (Type.StartsWith(TEXT("MaterialExpression")))
-		{
-			return Type;
-		}
-		if (Type == TEXT("LinearInterpolate") || Type == TEXT("Lerp")) return TEXT("MaterialExpressionLinearInterpolate");
-		if (Type == TEXT("Fractional") || Type == TEXT("Frac"))        return TEXT("MaterialExpressionFrac");
-		return TEXT("MaterialExpression") + Type;
+		return Key == TEXT("id") || Key == TEXT("type") || Key == TEXT("inputs") || Key == TEXT("functionAsset");
 	}
 
-	/** Resolves the editor-only data object without naming its type. */
-	UObject* GetEditorOnlyData(UObject* Material)
+	/** Properties read back per expression node when the caller asks for a graph/full IR. */
+	void CollectExpressionProperties(UMaterialExpression* Expression, TSharedRef<FJsonObject> Entry)
 	{
-		if (Material == nullptr)
+		const FString ClassName = ForgeMindMaterial::ExpressionTypeName(Expression);
+		if (Expression->IsA(UMaterialExpressionParameter::StaticClass()))
 		{
-			return nullptr;
-		}
-		FProperty* Property = FindFProperty<FProperty>(Material->GetClass(), TEXT("EditorOnlyData"));
-		FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property);
-		if (ObjectProperty == nullptr)
-		{
-			return nullptr;
-		}
-		return ObjectProperty->GetObjectPropertyValue(ObjectProperty->ContainerPtrToValuePtr<void>(Material));
-	}
-
-	FExpressionInput* GetExpressionInput(UObject* Owner, const FString& Name)
-	{
-		FProperty* Property = ForgeMindIR::FindProperty(Owner, Name);
-		FStructProperty* StructProperty = CastField<FStructProperty>(Property);
-		if (StructProperty == nullptr || StructProperty->Struct == nullptr
-			|| StructProperty->Struct->GetName() != TEXT("ExpressionInput"))
-		{
-			return nullptr;
-		}
-		return reinterpret_cast<FExpressionInput*>(StructProperty->ContainerPtrToValuePtr<void>(Owner));
-	}
-
-	UMaterialExpressionConstant* CreateConstantExpression(UObject* EditorData, double Value)
-	{
-		UMaterialExpressionConstant* Const = NewObject<UMaterialExpressionConstant>(EditorData, UMaterialExpressionConstant::StaticClass(), NAME_None, RF_Transactional);
-		Const->R = static_cast<float>(Value);
-		Const->Material = Cast<UMaterial>(EditorData);
-
-		// Register in the material's expression collection so the compiler can reach it.
-		FProperty* ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("ExpressionCollection"));
-		if (ListProperty == nullptr)
-		{
-			ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("Expressions"));
-		}
-		if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(ListProperty))
-		{
-			FObjectProperty* Inner = CastField<FObjectProperty>(ArrayProperty->Inner);
-			if (Inner != nullptr)
+			if (const TSharedPtr<FJsonValue> Name = ForgeMindMaterial::GetValue(Expression, TEXT("ParameterName")))
 			{
-				FScriptArrayHelper Helper(ArrayProperty, ArrayProperty->ContainerPtrToValuePtr<void>(EditorData));
-				Inner->SetObjectPropertyValue(Helper.GetRawPtr(Helper.AddValue()), Const);
+				Entry->SetStringField(TEXT("parameterName"), Name->AsString());
+			}
+			if (const TSharedPtr<FJsonValue> Default = ForgeMindMaterial::GetValue(Expression, TEXT("DefaultValue")))
+			{
+				Entry->SetField(TEXT("defaultValue"), Default);
 			}
 		}
-		return Const;
+		// Constant family: the value the node carries (R / R,G / Constant colour).
+		if (ClassName.Contains(TEXT("Constant"), ESearchCase::CaseSensitive))
+		{
+			if (const TSharedPtr<FJsonValue> Constant = ForgeMindMaterial::GetValue(Expression, TEXT("Constant")))
+			{
+				Entry->SetField(TEXT("constant"), Constant);
+			}
+			else
+			{
+				TArray<TSharedPtr<FJsonValue>> Components;
+				for (const TCHAR* Key : { TEXT("R"), TEXT("G") })
+				{
+					if (const TSharedPtr<FJsonValue> Component = ForgeMindMaterial::GetValue(Expression, Key))
+					{
+						Components.Add(Component);
+					}
+				}
+				if (Components.Num() > 0)
+				{
+					Entry->SetArrayField(TEXT("constant"), Components);
+				}
+			}
+		}
+		// StaticBool carries its value in the Value bitfield; the node-level
+		// "constant" field is what the IR schema and the write side use for it.
+		else if (Expression->IsA(UMaterialExpressionStaticBool::StaticClass()))
+		{
+			if (const TSharedPtr<FJsonValue> Constant = ForgeMindMaterial::GetValue(Expression, TEXT("Value")))
+			{
+				Entry->SetField(TEXT("constant"), Constant);
+			}
+		}
+		// Texture family: the referenced asset (null when the path did not resolve).
+		if (const TSharedPtr<FJsonValue> Texture = ForgeMindMaterial::GetValue(Expression, TEXT("Texture")))
+		{
+			Entry->SetField(TEXT("texture"), Texture);
+		}
 	}
 
-	bool SetInputConstant(FExpressionInput* Input, UObject* EditorData, double Value)
+	/** Connected FExpressionInput members of one object, as IR input entries. */
+	void CollectExpressionInputs(UObject* Owner, TArray<TSharedPtr<FJsonValue>>& OutInputs,
+		const TMap<UMaterialExpression*, FString>& Ids)
 	{
-		if (Input == nullptr || EditorData == nullptr)
+		for (TFieldIterator<FProperty> It(Owner->GetClass()); It; ++It)
 		{
-			return false;
+			const FStructProperty* StructProperty = CastField<FStructProperty>(*It);
+			if (StructProperty == nullptr || StructProperty->Struct == nullptr
+				|| !StructProperty->Struct->GetName().Equals(TEXT("ExpressionInput")))
+			{
+				continue;
+			}
+			const void* ValueData = StructProperty->ContainerPtrToValuePtr<void>(Owner);
+			const FExpressionInput* Input = static_cast<const FExpressionInput*>(ValueData);
+			if (Input == nullptr || Input->Expression == nullptr)
+			{
+				continue;
+			}
+			TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("name"), StructProperty->GetName());
+			Entry->SetStringField(TEXT("expression"), Ids.FindRef(Input->Expression));
+			Entry->SetNumberField(TEXT("outputIndex"), Input->OutputIndex);
+			OutInputs.Add(MakeShared<FJsonValueObject>(Entry));
 		}
-		if (UMaterialExpressionConstant* Const = CreateConstantExpression(EditorData, Value))
-		{
-			Input->Connect(0, Const);
-			return true;
-		}
-		return false;
 	}
 }
 
@@ -126,9 +138,9 @@ private:
 	UObject* CreateMaterialInstance(FIRApplyContext& Ctx);
 
 	void ApplyMaterialSettings(UMaterial* Material, FIRApplyContext& Ctx);
-	void ApplyParameters(UObject* Material, UObject* EditorData, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut);
-	void ApplyGraph(UObject* Material, UObject* EditorData, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut);
-	void ApplyOutputs(UObject* Material, UObject* EditorData, FIRApplyContext& Ctx, const TMap<FString, UMaterialExpression*>& Nodes);
+	void ApplyParameters(UObject* Material, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut);
+	void ApplyGraph(UObject* Material, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut);
+	void ApplyOutputs(UObject* Material, FIRApplyContext& Ctx, const TMap<FString, UMaterialExpression*>& Nodes);
 };
 
 UObject* FMaterialIRHandler::Create(FIRApplyContext& Ctx)
@@ -155,14 +167,16 @@ UObject* FMaterialIRHandler::CreateMaterial(FIRApplyContext& Ctx)
 	}
 
 	UMaterial* Material = Cast<UMaterial>(Asset);
-	UObject* EditorData = GetEditorOnlyData(Material);
 
 	ApplyMaterialSettings(Material, Ctx);
 
 	TMap<FString, UMaterialExpression*> Nodes;
-	ApplyParameters(Material, EditorData, Ctx, Nodes);
-	ApplyGraph(Material, EditorData, Ctx, Nodes);
-	ApplyOutputs(Material, EditorData, Ctx, Nodes);
+	ApplyParameters(Material, Ctx, Nodes);
+	ApplyGraph(Material, Ctx, Nodes);
+	ApplyOutputs(Material, Ctx, Nodes);
+	// Tidy the freshly built graph through the same operation the material step commands
+	// run, so the two channels also leave the asset in the same visual state.
+	ForgeMindMaterial::ArrangeLayout(Material);
 
 	Ctx.Extra->SetNumberField(TEXT("expressionCount"), Nodes.Num());
 	return Material;
@@ -184,7 +198,8 @@ UObject* FMaterialIRHandler::CreateMaterialFunction(FIRApplyContext& Ctx)
 	}
 
 	TMap<FString, UMaterialExpression*> Nodes;
-	ApplyGraph(Asset, GetEditorOnlyData(Asset), Ctx, Nodes);
+	ApplyGraph(Asset, Ctx, Nodes);
+	ForgeMindMaterial::ArrangeLayout(Asset);
 	Ctx.Extra->SetNumberField(TEXT("expressionCount"), Nodes.Num());
 	return Asset;
 }
@@ -333,12 +348,13 @@ void FMaterialIRHandler::ApplyMaterialSettings(UMaterial* Material, FIRApplyCont
 	for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : (*Settings)->Values)
 	{
 		FString Error;
-		if (!ForgeMindIR::SetProperty(Material, Pair.Key, Pair.Value, Error))
+		if (!ForgeMindMaterial::SetValue(Material, Pair.Key, Pair.Value, Error))
 		{
-			// Retry on the editor-only data (some settings moved there).
-			if (UObject* EditorData = GetEditorOnlyData(Material))
+			// Retry on the editor-only data object, which is where later engine
+			// versions moved some of these settings to.
+			if (UObject* EditorData = ForgeMindMaterial::GetEditorOnlyData(Material))
 			{
-				if (!ForgeMindIR::SetProperty(EditorData, Pair.Key, Pair.Value, Error))
+				if (!ForgeMindMaterial::SetValue(EditorData, Pair.Key, Pair.Value, Error))
 				{
 					Ctx.Warn(TEXT("PROPERTY_NOT_FOUND"), Error);
 				}
@@ -351,7 +367,7 @@ void FMaterialIRHandler::ApplyMaterialSettings(UMaterial* Material, FIRApplyCont
 	}
 }
 
-void FMaterialIRHandler::ApplyParameters(UObject* Material, UObject* EditorData, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut)
+void FMaterialIRHandler::ApplyParameters(UObject* Material, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut)
 {
 	if (!Ctx.Definition.IsValid())
 	{
@@ -379,6 +395,7 @@ void FMaterialIRHandler::ApplyParameters(UObject* Material, UObject* EditorData,
 		}
 
 		FString ClassName = TEXT("MaterialExpressionScalarParameter");
+		bool bTextureParameter = false;
 		if (Type == TEXT("Vector") || Type == TEXT("LinearColor") || Type == TEXT("Vector4"))
 		{
 			ClassName = TEXT("MaterialExpressionVectorParameter");
@@ -386,6 +403,7 @@ void FMaterialIRHandler::ApplyParameters(UObject* Material, UObject* EditorData,
 		else if (Type == TEXT("Texture2D") || Type == TEXT("Texture") || Type == TEXT("TextureCube"))
 		{
 			ClassName = TEXT("MaterialExpressionTextureSampleParameter2D");
+			bTextureParameter = true;
 		}
 		else if (Type == TEXT("Bool"))
 		{
@@ -399,68 +417,51 @@ void FMaterialIRHandler::ApplyParameters(UObject* Material, UObject* EditorData,
 			continue;
 		}
 
-		UMaterialExpression* Expression = NewObject<UMaterialExpression>(Material, Class, NAME_None, RF_Transactional);
+		// CreateExpression owns the shared parameter plumbing: name, GUID refresh and
+		// registration in the expression list - identical to add_material_expression.
+		UMaterialExpression* Expression = ForgeMindMaterial::CreateExpression(Material, Class, Name);
 		if (Expression == nullptr)
 		{
+			Ctx.Warn(TEXT("MAT_INVALID_EXPRESSION"), FString::Printf(TEXT("failed to create parameter '%s'"), *Name));
 			continue;
 		}
-		if (EditorData != nullptr)
-		{
-			Expression->Material = Cast<UMaterial>(Material);
-			Expression->Function = nullptr;
-		}
-		Expression->UpdateParameterGuid(true, true);
 
 		FString Error;
-		ForgeMindIR::SetProperty(Expression, TEXT("ParameterName"), MakeShared<FJsonValueString>(Name), Error);
 		FString Group;
 		if (Parameter->TryGetStringField(TEXT("group"), Group))
 		{
-			ForgeMindIR::SetProperty(Expression, TEXT("Group"), MakeShared<FJsonValueString>(Group), Error);
+			ForgeMindMaterial::SetValue(Expression, TEXT("Group"), MakeShared<FJsonValueString>(Group), Error);
 		}
 		if (Parameter->HasField(TEXT("defaultValue")))
 		{
-			ForgeMindIR::SetProperty(Expression, TEXT("DefaultValue"), Parameter->TryGetField(TEXT("defaultValue")), Error);
+			// A texture parameter's default is its texture; the other families keep the
+			// DefaultValue property the IR names.
+			const TCHAR* ValueProperty = bTextureParameter ? TEXT("Texture") : TEXT("DefaultValue");
+			if (!ForgeMindMaterial::SetValue(Expression, ValueProperty, Parameter->TryGetField(TEXT("defaultValue")), Error))
+			{
+				Ctx.Warn(TEXT("PROPERTY_NOT_FOUND"), Error);
+			}
 		}
 		double Min = 0.0, Max = 0.0;
 		if (Parameter->TryGetNumberField(TEXT("min"), Min))
 		{
-			ForgeMindIR::SetProperty(Expression, TEXT("SliderMin"), MakeShared<FJsonValueNumber>(Min), Error);
+			ForgeMindMaterial::SetValue(Expression, TEXT("SliderMin"), MakeShared<FJsonValueNumber>(Min), Error);
 		}
 		if (Parameter->TryGetNumberField(TEXT("max"), Max))
 		{
-			ForgeMindIR::SetProperty(Expression, TEXT("SliderMax"), MakeShared<FJsonValueNumber>(Max), Error);
+			ForgeMindMaterial::SetValue(Expression, TEXT("SliderMax"), MakeShared<FJsonValueNumber>(Max), Error);
 		}
 		FString SamplerType;
 		if (Parameter->TryGetStringField(TEXT("samplerType"), SamplerType))
 		{
-			ForgeMindIR::SetProperty(Expression, TEXT("SamplerType"), MakeShared<FJsonValueString>(SamplerType), Error);
-		}
-
-		// Register the parameter in the material's expression list.
-		if (EditorData != nullptr)
-		{
-			FProperty* ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("ExpressionCollection"));
-			if (ListProperty == nullptr)
-			{
-				ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("Expressions"));
-			}
-			if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(ListProperty))
-			{
-				FObjectProperty* Inner = CastField<FObjectProperty>(ArrayProperty->Inner);
-				if (Inner != nullptr)
-				{
-					FScriptArrayHelper Helper(ArrayProperty, ArrayProperty->ContainerPtrToValuePtr<void>(EditorData));
-					Inner->SetObjectPropertyValue(Helper.GetRawPtr(Helper.AddValue()), Expression);
-				}
-			}
+			ForgeMindMaterial::SetValue(Expression, TEXT("SamplerType"), MakeShared<FJsonValueString>(SamplerType), Error);
 		}
 
 		NodesOut.Add(TEXT("param_") + Name, Expression);
 	}
 }
 
-void FMaterialIRHandler::ApplyGraph(UObject* Material, UObject* EditorData, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut)
+void FMaterialIRHandler::ApplyGraph(UObject* Material, FIRApplyContext& Ctx, TMap<FString, UMaterialExpression*>& NodesOut)
 {
 	if (!Ctx.Definition.IsValid())
 	{
@@ -501,48 +502,35 @@ void FMaterialIRHandler::ApplyGraph(UObject* Material, UObject* EditorData, FIRA
 			continue;
 		}
 
-		UClass* Class = ForgeMindIR::ResolveClass(ExpressionClassName(Type));
+		UClass* Class = ForgeMindIR::ResolveClass(ForgeMindMaterial::ExpressionClassName(Type));
 		if (Class == nullptr)
 		{
 			Ctx.Warn(TEXT("MAT_INVALID_EXPRESSION"), FString::Printf(TEXT("expression class for '%s' not found"), *Type));
 			continue;
 		}
 
-		UMaterialExpression* Expression = NewObject<UMaterialExpression>(Material, Class, NAME_None, RF_Transactional);
+		// CreateExpression is the single construction point shared with the material
+		// step commands, so an IR node and the same node added step by step are the
+		// same object: same outer, same material link, same expression list slot.
+		UMaterialExpression* Expression = ForgeMindMaterial::CreateExpression(Material, Class, FString());
 		if (Expression == nullptr)
 		{
+			Ctx.Warn(TEXT("MAT_INVALID_EXPRESSION"), FString::Printf(TEXT("failed to create node '%s' (%s)"), *Id, *Type));
 			continue;
-		}
-		if (EditorData != nullptr)
-		{
-			Expression->Material = Cast<UMaterial>(Material);
-
-			// Register the node in the material's expression list (mirrors parameter handling above).
-			FProperty* ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("ExpressionCollection"));
-			if (ListProperty == nullptr)
-			{
-				ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("Expressions"));
-			}
-			if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(ListProperty))
-			{
-				FObjectProperty* Inner = CastField<FObjectProperty>(ArrayProperty->Inner);
-				if (Inner != nullptr)
-				{
-					FScriptArrayHelper Helper(ArrayProperty, ArrayProperty->ContainerPtrToValuePtr<void>(EditorData));
-					Inner->SetObjectPropertyValue(Helper.GetRawPtr(Helper.AddValue()), Expression);
-				}
-			}
 		}
 
 		// Node level scalar properties (constant, texture, function asset...).
 		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Node->Values)
 		{
-			if (Pair.Key == TEXT("id") || Pair.Key == TEXT("type") || Pair.Key == TEXT("inputs"))
+			if (IsStructuralNodeKey(Pair.Key))
 			{
 				continue;
 			}
 			FString Error;
-			ForgeMindIR::SetProperty(Expression, Pair.Key, Pair.Value, Error);
+			if (!ForgeMindMaterial::SetValue(Expression, Pair.Key, Pair.Value, Error))
+			{
+				Ctx.Warn(TEXT("PROPERTY_NOT_FOUND"), FString::Printf(TEXT("node '%s': %s"), *Id, *Error));
+			}
 		}
 
 		const TArray<TSharedPtr<FJsonValue>>* Inputs = nullptr;
@@ -580,11 +568,16 @@ void FMaterialIRHandler::ApplyGraph(UObject* Material, UObject* EditorData, FIRA
 		{
 			if (UMaterialExpression* Source = NodesOut.FindRef(SourceId))
 			{
-				int32 OutputIndex = 0;
-				Pending.Input->TryGetNumberField(TEXT("outputIndex"), OutputIndex);
-				if (FExpressionInput* Input = GetExpressionInput(Target, Pending.InputName))
+				if (FExpressionInput* Input = ForgeMindMaterial::GetExpressionInput(Target, Pending.InputName))
 				{
-					Input->Connect(OutputIndex, Source);
+					int32 OutputIndex = 0;
+					Pending.Input->TryGetNumberField(TEXT("outputIndex"), OutputIndex);
+					FString Error;
+					if (!ForgeMindMaterial::ConnectOutputInput(Material, Input, Source, OutputIndex, Error))
+					{
+						Ctx.Warn(TEXT("MAT_PIN_NOT_AVAILABLE"),
+							FString::Printf(TEXT("input '%s' on node '%s': %s"), *Pending.InputName, *Pending.Id, *Error));
+					}
 				}
 				else
 				{
@@ -603,22 +596,27 @@ void FMaterialIRHandler::ApplyGraph(UObject* Material, UObject* EditorData, FIRA
 		if (Pending.Input->HasField(TEXT("value")))
 		{
 			const TSharedPtr<FJsonValue> ConstantValue = Pending.Input->TryGetField(TEXT("value"));
-			if (FExpressionInput* Input = GetExpressionInput(Target, Pending.InputName))
+			if (FExpressionInput* Input = ForgeMindMaterial::GetExpressionInput(Target, Pending.InputName))
 			{
-				if (ConstantValue->Type == EJson::Number)
+				// A literal on an expression input becomes the constant node the editor
+				// would show - scalar, 2/3/4-component colour - which is exactly what
+				// connect_material_pins does with its "constant" field.
+				FString Error;
+				if (!ForgeMindMaterial::ConnectConstant(Input, Material, ConstantValue, Error))
 				{
-					SetInputConstant(Input, EditorData, ConstantValue->AsNumber());
-				}
-				else
-				{
-					FString Error;
-					ForgeMindIR::SetProperty(Target, Pending.InputName, ConstantValue, Error);
+					Ctx.Warn(TEXT("MAT_PIN_NOT_AVAILABLE"),
+						FString::Printf(TEXT("input '%s' on node '%s': %s"), *Pending.InputName, *Pending.Id, *Error));
 				}
 			}
 			else
 			{
+				// Not an expression input: a plain property carrying the same name
+				// (SamplerType, ConstB, ...) is what the value addresses.
 				FString Error;
-				ForgeMindIR::SetProperty(Target, Pending.InputName, ConstantValue, Error);
+				if (!ForgeMindMaterial::SetValue(Target, Pending.InputName, ConstantValue, Error))
+				{
+					Ctx.Warn(TEXT("PROPERTY_NOT_FOUND"), Error);
+				}
 			}
 			continue;
 		}
@@ -626,7 +624,7 @@ void FMaterialIRHandler::ApplyGraph(UObject* Material, UObject* EditorData, FIRA
 		if (Pending.Input->HasField(TEXT("asset")))
 		{
 			FString Error;
-			if (!ForgeMindIR::SetProperty(Target, Pending.InputName, Pending.Input->TryGetField(TEXT("asset")), Error))
+			if (!ForgeMindMaterial::SetValue(Target, Pending.InputName, Pending.Input->TryGetField(TEXT("asset")), Error))
 			{
 				Ctx.Warn(TEXT("PROPERTY_NOT_FOUND"), Error);
 			}
@@ -634,9 +632,9 @@ void FMaterialIRHandler::ApplyGraph(UObject* Material, UObject* EditorData, FIRA
 	}
 }
 
-void FMaterialIRHandler::ApplyOutputs(UObject* Material, UObject* EditorData, FIRApplyContext& Ctx, const TMap<FString, UMaterialExpression*>& Nodes)
+void FMaterialIRHandler::ApplyOutputs(UObject* Material, FIRApplyContext& Ctx, const TMap<FString, UMaterialExpression*>& Nodes)
 {
-	if (EditorData == nullptr || !Ctx.Definition.IsValid())
+	if (!Ctx.Definition.IsValid())
 	{
 		return;
 	}
@@ -653,7 +651,10 @@ void FMaterialIRHandler::ApplyOutputs(UObject* Material, UObject* EditorData, FI
 		{
 			continue;
 		}
-		FExpressionInput* Input = GetExpressionInput(EditorData, Pair.Key);
+		// Material outputs are not name-addressable properties on every engine
+		// version; GetMaterialOutputInput is the single place that maps a pin name
+		// (BaseColor / EmissiveColor / ...) onto the input that holds it.
+		FExpressionInput* Input = ForgeMindMaterial::GetMaterialOutputInput(Material, Pair.Key);
 		if (Input == nullptr)
 		{
 			Ctx.Warn(TEXT("MAT_PIN_NOT_AVAILABLE"), FString::Printf(TEXT("output '%s' is not available"), *Pair.Key));
@@ -667,17 +668,24 @@ void FMaterialIRHandler::ApplyOutputs(UObject* Material, UObject* EditorData, FI
 			{
 				int32 OutputIndex = 0;
 				Output->TryGetNumberField(TEXT("sourceOutputIndex"), OutputIndex);
-				Input->Connect(OutputIndex, Source);
+				FString Error;
+				if (!ForgeMindMaterial::ConnectOutputInput(Material, Input, Source, OutputIndex, Error))
+				{
+					Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"), FString::Printf(TEXT("output '%s': %s"), *Pair.Key, *Error));
+				}
 				continue;
 			}
 			Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"), FString::Printf(TEXT("output '%s' references unknown node '%s'"), *Pair.Key, *SourceId));
 			continue;
 		}
 
-		double Value = 0.0;
-		if (Output->TryGetNumberField(TEXT("value"), Value))
+		if (Output->HasField(TEXT("value")))
 		{
-			SetInputConstant(Input, EditorData, Value);
+			FString Error;
+			if (!ForgeMindMaterial::ConnectConstant(Input, Material, Output->TryGetField(TEXT("value")), Error))
+			{
+				Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"), FString::Printf(TEXT("output '%s': %s"), *Pair.Key, *Error));
+			}
 		}
 	}
 }
@@ -685,7 +693,7 @@ void FMaterialIRHandler::ApplyOutputs(UObject* Material, UObject* EditorData, FI
 bool FMaterialIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 {
 	UMaterial* Material = Cast<UMaterial>(Asset);
-	UObject* EditorData = GetEditorOnlyData(Asset);
+	UObject* EditorData = ForgeMindMaterial::GetEditorOnlyData(Asset);
 
 	for (const TSharedPtr<FJsonValue>& PatchEntry : Ctx.Patches)
 	{
@@ -707,10 +715,10 @@ bool FMaterialIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 			FString Key = ForgeMindIR::FirstString(Patch, { TEXT("settingKey"), TEXT("name") });
 			ActualOp = TEXT("replace");
 			FString Error;
-			bOk = Material != nullptr && ForgeMindIR::SetProperty(Material, Key, Patch->TryGetField(TEXT("value")), Error);
+			bOk = Material != nullptr && ForgeMindMaterial::SetValue(Material, Key, Patch->TryGetField(TEXT("value")), Error);
 			if (!bOk && EditorData != nullptr)
 			{
-				bOk = ForgeMindIR::SetProperty(EditorData, Key, Patch->TryGetField(TEXT("value")), Error);
+				bOk = ForgeMindMaterial::SetValue(EditorData, Key, Patch->TryGetField(TEXT("value")), Error);
 			}
 			if (!bOk)
 			{
@@ -723,7 +731,7 @@ bool FMaterialIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 		if (Type == TEXT("materialOutput"))
 		{
 			FString OutputName = ForgeMindIR::FirstString(Patch, { TEXT("outputName"), TEXT("name") });
-			FExpressionInput* Input = GetExpressionInput(EditorData, OutputName);
+			FExpressionInput* Input = ForgeMindMaterial::GetMaterialOutputInput(Asset, OutputName);
 			ActualOp = FGenericAssetIRHandler::InferOp(Input != nullptr, bDelete);
 			if (bDelete)
 			{
@@ -732,10 +740,37 @@ bool FMaterialIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 			}
 			else if (Input != nullptr)
 			{
-				double Value = 0.0;
-				if (Patch->TryGetNumberField(TEXT("value"), Value))
+				FString SourceId;
+				if (Patch->TryGetStringField(TEXT("sourceNodeId"), SourceId) && !SourceId.IsEmpty())
 				{
-					bOk = SetInputConstant(Input, EditorData, Value);
+					// The patch names an existing expression of the graph; resolve it by
+					// object name through the same lookup the step commands use.
+					if (UMaterialExpression* Source = ForgeMindMaterial::FindExpression(Asset, SourceId))
+					{
+						int32 OutputIndex = 0;
+						Patch->TryGetNumberField(TEXT("sourceOutputIndex"), OutputIndex);
+						FString Error;
+						bOk = ForgeMindMaterial::ConnectOutputInput(Asset, Input, Source, OutputIndex, Error);
+						if (!bOk)
+						{
+							Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"),
+								FString::Printf(TEXT("output '%s': %s"), *OutputName, *Error));
+						}
+					}
+					else
+					{
+						Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"),
+							FString::Printf(TEXT("output '%s' references unknown node '%s'"), *OutputName, *SourceId));
+					}
+				}
+				else if (Patch->HasField(TEXT("value")))
+				{
+					FString Error;
+					bOk = ForgeMindMaterial::ConnectConstant(Input, Asset, Patch->TryGetField(TEXT("value")), Error);
+					if (!bOk)
+					{
+						Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"), FString::Printf(TEXT("output '%s': %s"), *OutputName, *Error));
+					}
 				}
 				else
 				{
@@ -811,6 +846,9 @@ bool FMaterialIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 		Ctx.Warn(TEXT("UNSUPPORTED_PATCH_TYPE"),
 			FString::Printf(TEXT("patch type '%s' is not handled by the material domain"), *Type));
 	}
+	// Patches move wires and add constants, so the graph gets the same tidy pass a
+	// create or a step command gets.
+	ForgeMindMaterial::ArrangeLayout(Asset);
 	return true;
 }
 
@@ -907,36 +945,63 @@ TSharedPtr<FJsonObject> FMaterialIRHandler::Read(UObject* Asset, FIRApplyContext
 		Definition->SetObjectField(TEXT("materialSettings"), Settings);
 	}
 
-	if (UObject* EditorData = GetEditorOnlyData(Asset))
+	TArray<UMaterialExpression*> Expressions;
+	ForgeMindMaterial::GetExpressions(Asset, Expressions);
+	if (Expressions.Num() == 0 && !ForgeMindMaterial::HasExpressionList(Asset))
 	{
-		TArray<TSharedPtr<FJsonValue>> Nodes;
-		FProperty* ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("ExpressionCollection"));
-		if (ListProperty == nullptr)
+		Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"), TEXT("the asset carries no expression list to serialize"));
+	}
+
+	const bool bWithWiring = Ctx.Level == TEXT("graph") || Ctx.Level == TEXT("full");
+
+	// The object name is the identity both channels hand out (add_material_expression
+	// returns it; an IR definition's ids stay internal to that definition), so a
+	// caller comparing two independently built assets can re-key it to a stable one.
+	TMap<UMaterialExpression*, FString> Ids;
+	for (UMaterialExpression* Expression : Expressions)
+	{
+		Ids.Add(Expression, Expression->GetName());
+	}
+
+	TArray<TSharedPtr<FJsonValue>> Nodes;
+	for (UMaterialExpression* Expression : Expressions)
+	{
+		if (Expression == nullptr)
 		{
-			ListProperty = ForgeMindIR::FindProperty(EditorData, TEXT("Expressions"));
+			continue;
 		}
-		if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(ListProperty))
+		TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+		Entry->SetStringField(TEXT("type"), ForgeMindMaterial::ExpressionTypeName(Expression));
+		Entry->SetStringField(TEXT("id"), Expression->GetName());
+		if (bWithWiring)
 		{
-			FObjectProperty* Inner = CastField<FObjectProperty>(ArrayProperty->Inner);
-			FScriptArrayHelper Helper(ArrayProperty, ArrayProperty->ContainerPtrToValuePtr<void>(EditorData));
-			for (int32 i = 0; i < Helper.Num(); ++i)
+			CollectExpressionProperties(Expression, Entry);
+			TArray<TSharedPtr<FJsonValue>> Inputs;
+			CollectExpressionInputs(Expression, Inputs, Ids);
+			if (Inputs.Num() > 0)
 			{
-				UObject* Element = Inner->GetObjectPropertyValue(Helper.GetRawPtr(i));
-				if (Element == nullptr)
-				{
-					continue;
-				}
-				TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
-				Entry->SetStringField(TEXT("type"), Element->GetClass()->GetName());
-				Entry->SetStringField(TEXT("id"), Element->GetName());
-				Nodes.Add(MakeShared<FJsonValueObject>(Entry));
+				Entry->SetArrayField(TEXT("inputs"), Inputs);
 			}
 		}
-		Definition->SetArrayField(TEXT("nodes"), Nodes);
+		Nodes.Add(MakeShared<FJsonValueObject>(Entry));
 	}
-	else
+	Definition->SetArrayField(TEXT("nodes"), Nodes);
+
+	if (bWithWiring)
 	{
-		Ctx.Warn(TEXT("MAT_UNCONNECTED_OUTPUT"), TEXT("material has no editor-only data to serialize"));
+		// Material outputs in engine property order, so two assets built through
+		// different channels enumerate the same pins in the same sequence.
+		TArray<TPair<FString, FExpressionInput*>> ConnectedOutputs;
+		ForgeMindMaterial::GetConnectedMaterialOutputs(Asset, ConnectedOutputs);
+		TSharedRef<FJsonObject> Outputs = MakeShared<FJsonObject>();
+		for (const TPair<FString, FExpressionInput*>& Pair : ConnectedOutputs)
+		{
+			TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
+			Entry->SetStringField(TEXT("sourceNodeId"), Ids.FindRef(Pair.Value->Expression));
+			Entry->SetNumberField(TEXT("sourceOutputIndex"), Pair.Value->OutputIndex);
+			Outputs->SetField(Pair.Key, MakeShared<FJsonValueObject>(Entry));
+		}
+		Definition->SetObjectField(TEXT("materialOutputs"), Outputs);
 	}
 
 	return Definition;

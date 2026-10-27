@@ -52,6 +52,39 @@ public static class BlueprintTestHelper
         ctx.AssertTrue(created || loaded,
             $"create_level {levelPath}: {GetStr(r, "reason")}");
     }
+    
+    /// <summary>
+    /// Creates a UInputAction asset (Enhanced Input plugin) and saves it — the asset the
+    /// UK2Node_EnhancedInputAction event node binds (add_blueprint_node kind
+    /// "enhancedInputAction" takes it through payload targetClass). A typed variable of
+    /// class InputAction does not satisfy the node: its InputAction property is an asset
+    /// pointer (requirement doc Tasks/UE_5.0/Blueprint_EnhancedInput.md Question 1 Step 1 asks for the asset itself).
+    /// Default valueType Axis2D with the "Down" trigger: a trigger-less action reports
+    /// GetSupportedTriggerEvents() == None and every exec pin of the event node then shows
+    /// as "(Unsupported)", so the trigger is created by default.
+    /// </summary>
+    public static void CreateInputAction(TestContext ctx, string assetPath,
+        string valueType = "Axis2D", string trigger = "InputTriggerDown")
+    {
+        var r = EditorCall(ctx, "create_input_action", new { path = assetPath, valueType, trigger });
+        ctx.AssertTrue(GetBool(r, "created"), $"create_input_action {assetPath}: {GetStr(r, "reason")}");
+        var s = EditorCall(ctx, "save_asset", new { path = assetPath });
+        ctx.AssertTrue(GetBool(s, "saved"), $"save_asset {assetPath}: {GetStr(s, "reason")}");
+    }
+
+    /// <summary>
+    /// Creates a UInputMappingContext asset (Enhanced Input plugin) and saves it — the asset
+    /// the "Add Mapping Context" call feeds the enhanced-input LocalPlayer subsystem
+    /// (requirement doc Tasks/UE_5.0/Blueprint_EnhancedInput.md Question 3 Step 1). Created without key mappings: nothing
+    /// in the current requirement set binds a key to it.
+    /// </summary>
+    public static void CreateInputMappingContext(TestContext ctx, string assetPath)
+    {
+        var r = EditorCall(ctx, "create_input_mapping_context", new { path = assetPath });
+        ctx.AssertTrue(GetBool(r, "created"), $"create_input_mapping_context {assetPath}: {GetStr(r, "reason")}");
+        var s = EditorCall(ctx, "save_asset", new { path = assetPath });
+        ctx.AssertTrue(GetBool(s, "saved"), $"save_asset {assetPath}: {GetStr(s, "reason")}");
+    }
 
     /// <summary>
     /// Place a named Actor in the current editor level (spawn_actor). The name is used by level blueprint
@@ -315,7 +348,8 @@ public static class BlueprintTestHelper
         string? enumName = null, object[]? eventParams = null,
         string? function = null, string? component = null,
         string? targetClass = null, int? outputs = null,
-        object[]? tracks = null, string? rpc = null, bool? reliable = null)
+        object[]? tracks = null, string? rpc = null, bool? reliable = null,
+        int? inputs = null)
     {
         // companion's add_blueprint_node fields are name / x / y (not nodeType / nodePos)
         var payload = new Dictionary<string, object>
@@ -369,6 +403,13 @@ public static class BlueprintTestHelper
             // default and adds the rest via UK2Node_ExecutionSequence::AddInputPin -- without it
             // a third output ("Out 2" / "then_2") simply does not exist on the node.
             payload["outputs"] = outputs.Value;
+        }
+        if (inputs != null)
+        {
+            // MakeArray / MakeSet / MakeMap (UK2Node_MakeContainer): element count driving the
+            // wildcard input pin count ("[0]".."[n-1]", output "Array"). Without it the node
+            // defaults to a single input.
+            payload["inputs"] = inputs.Value;
         }
         if (stringCases != null)
         {
@@ -723,15 +764,16 @@ public static class BlueprintTestHelper
     /// Struct_Custom_B could never match their baseline.
     ///
     /// When baseline doesn't exist, save current normalized IR (first run setup, no failure).
+    ///
+    /// Optional <paramref name="crossMethodPath"/>: a task doc whose "expected verification" section asks that the
+    /// asset built step by step (A side) and the asset built from the DSL (B side) be content-equivalent passes
+    /// the counterpart here. It is the same read, the same normalization and the same comparison - one function
+    /// verifies any asset, with or without a counterpart.
     /// </summary>
-    public static void VerifyIrSnapshot(TestContext ctx, string assetPath)
+    public static void VerifyIrSnapshot(TestContext ctx, string assetPath, string? crossMethodPath = null)
     {
-        var r = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
-        ctx.AssertTrue(GetBool(r, "success"), $"get_asset_ir {assetPath}: {GetStr(r, "error")}");
-        var ir = r["response"];
-        ctx.AssertTrue(ir?["definition"] != null, $"get_asset_ir {assetPath}: response missing definition");
-
-        var normalized = NormalizeIrForSnapshot(ir!);
+        var ir = ReadIrForSnapshot(ctx, assetPath);
+        var normalized = NormalizeIrForSnapshot(ir);
         string version = ir["version"]?.GetValue<string>() ?? "unknown";
         string assetName = assetPath[(assetPath.LastIndexOf('/') + 1)..];
         string baselinePath = Path.Combine(SnapshotRoot, version, assetName + ".json");
@@ -742,24 +784,54 @@ public static class BlueprintTestHelper
             File.WriteAllText(baselinePath, normalized.ToJsonString(
                 new JsonSerializerOptions { WriteIndented = true }));
             ctx.Logger.Info(null, "[Test]     IR snapshot baseline saved: {0}", baselinePath);
-            return;
+        }
+        else
+        {
+            var baseline = JsonNode.Parse(File.ReadAllText(baselinePath))!;
+            var diffs = new List<string>();
+            DiffJson(baseline, normalized, "$", diffs);
+            if (diffs.Count > 0)
+            {
+                throw new TestFailureException(
+                    $"IR snapshot mismatch for {assetPath} (baseline: {baselinePath}) - {diffs.Count} difference(s):\n" +
+                    string.Join("\n", diffs));
+            }
+            ctx.Logger.Info(null, "[Test]     IR snapshot match: {0}", assetName);
         }
 
-        var baseline = JsonNode.Parse(File.ReadAllText(baselinePath))!;
-        var diffs = new List<string>();
-        DiffJson(baseline, normalized, "$", diffs);
-        if (diffs.Count > 0)
+        // The counterpart comparison runs even on a seeding pass: "both channels agree" must not depend on
+        // whether this asset happened to have a baseline yet.
+        if (crossMethodPath != null)
         {
-            throw new TestFailureException(
-                $"IR snapshot mismatch for {assetPath} (baseline: {baselinePath}) - {diffs.Count} difference(s):\n" +
-                string.Join("\n", diffs));
+            var counterpart = NormalizeIrForSnapshot(ReadIrForSnapshot(ctx, crossMethodPath));
+            AssertSameContentAcrossChannels(ctx, assetPath, normalized, crossMethodPath, counterpart);
         }
-        ctx.Logger.Info(null, "[Test]     IR snapshot match: {0}", assetName);
+    }
+
+    /// <summary>
+    /// Read one asset's IR the way the snapshot compares it (level=graph: structure and wiring, no coordinates)
+    /// and assert that the bridge answered with a definition.
+    /// </summary>
+    private static JsonNode ReadIrForSnapshot(TestContext ctx, string assetPath)
+    {
+        var r = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
+        ctx.AssertTrue(GetBool(r, "success"), $"get_asset_ir {assetPath}: {GetStr(r, "error")}");
+        var ir = r["response"];
+        ctx.AssertTrue(ir?["definition"] != null, $"get_asset_ir {assetPath}: response missing definition");
+
+        // Domain-neutral content rule: an expression node that carries a texture key must actually hold a
+        // resolved reference. A step command reports success even when the asset path it was given resolves to
+        // nothing, and that null is what later surfaces as a compile error on the nodes wired to the sample.
+        AssertTextureReferencesResolve(ctx, assetPath, ir!["definition"]!);
+        return ir;
     }
 
     /// <summary>
     /// Deep copy IR entry and re-key node guids to stable keys in all graphs
     /// (functions[].graph and eventGraphs[]), with connection endpoints updated accordingly.
+    /// Expression-domain definitions (material / material function) are re-keyed as well -
+    /// see <see cref="NormalizeExpressionGraphIds"/> - so a material can be snapshotted with the
+    /// same protection a blueprint has instead of freezing engine-assigned object names.
     /// User-defined struct member names additionally get their volatile GUID tail stripped
     /// (see <see cref="ScrubVolatileGuidTails"/>).
     /// </summary>
@@ -778,6 +850,7 @@ public static class BlueprintTestHelper
             // re-keying, otherwise macro body changes won't be visible to mis-touch detection.
             foreach (var m in def["macros"]?.AsArray() ?? new JsonArray())
                 NormalizeIrGraph(m?["graph"]);
+            NormalizeExpressionGraphIds(def);
             return clone;
         }
 
@@ -878,6 +951,169 @@ public static class BlueprintTestHelper
         // subgraph node ids / connection endpoints). Each subgraph re-keys independently.
         foreach (var n in nodes)
             NormalizeIrGraph(n?["subgraph"]);
+    }
+
+    /// <summary>
+    /// Re-key an expression-domain definition (material / material function). The bridge identifies an
+    /// expression by its engine object name (add_material_expression returns that name; the ids inside an
+    /// IR definition stay internal to the definition), and those names follow per-asset creation order -
+    /// so two channels that build the same graph can never spell the same ids. Node ids become
+    /// "&lt;class&gt;#&lt;occurrence within class&gt;", every reference (node input wires, material outputs) is
+    /// rewritten through that mapping, and the node list plus each node's pin list are put in a
+    /// deterministic order. This is the same approach NormalizeIrGraph uses for blueprint NodeGuids, which
+    /// is why both domains share one normalization entry point (NormalizeIrForSnapshot).
+    /// </summary>
+    private static void NormalizeExpressionGraphIds(JsonNode? definition)
+    {
+        var nodes = definition?["nodes"]?.AsArray();
+        if (nodes == null) return;
+
+        var remap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var counters = new Dictionary<string, int>(StringComparer.Ordinal);
+        var keyed = new List<(string Key, JsonNode Node)>();
+
+        foreach (var entry in nodes)
+        {
+            if (entry is not JsonObject node)
+                continue;
+
+            string type = node["type"]?.GetValue<string>() ?? "";
+            int occurrence = counters.TryGetValue(type, out int seen) ? seen : 0;
+            counters[type] = occurrence + 1;
+            string key = $"{type}#{occurrence}";
+
+            string id = node["id"]?.GetValue<string>() ?? "";
+            if (id.Length > 0)
+                remap[id] = key;
+            node["id"] = key;
+
+            if (node["inputs"] is JsonArray inputs)
+            {
+                foreach (var input in inputs)
+                    RemapIrReference(input as JsonObject, "expression", remap);
+                // Pin order comes from engine reflection here. Ordering it explicitly keeps the
+                // comparison positional and independent of property-iteration changes.
+                node["inputs"] = new JsonArray(inputs.OfType<JsonObject>()
+                    .OrderBy(i => i["name"]?.GetValue<string>() ?? "", StringComparer.Ordinal)
+                    .Select(i => (JsonNode)i.DeepClone())
+                    .ToArray());
+            }
+            keyed.Add((key, node));
+        }
+
+        definition!["nodes"] = new JsonArray(keyed
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .Select(pair => pair.Node.DeepClone())
+            .ToArray());
+
+        if (definition["materialOutputs"] is JsonObject outputs)
+            foreach (var pair in outputs)
+                RemapIrReference(pair.Value as JsonObject, "sourceNodeId", remap);
+    }
+
+    /// <summary>Rewrite one string field of an IR object through the id remap; unknown values stay as they are.</summary>
+    private static void RemapIrReference(JsonObject? target, string field, Dictionary<string, string> remap)
+    {
+        if (target is null || target[field]?.GetValueKind() != JsonValueKind.String)
+            return;
+        string old = target[field]!.GetValue<string>();
+        if (remap.TryGetValue(old, out string? key))
+            target[field] = key;
+    }
+
+    // =====================================================================
+    // Cross-method content equality - the optional counterpart leg of VerifyIrSnapshot
+    // =====================================================================
+
+    /// <summary>
+    /// Compare one task doc's A/B pair (asset built step by step vs asset built from the DSL) after both sides
+    /// went through the same normalization used for baselines, and after dropping the fields that legitimately
+    /// differ between two assets - where each of them lives.
+    ///
+    /// Both sides must also actually carry a graph: an empty definition would otherwise compare equal to an
+    /// empty definition and report the pair as verified.
+    /// </summary>
+    private static void AssertSameContentAcrossChannels(TestContext ctx, string pathA, JsonNode normalizedA,
+        string pathB, JsonNode normalizedB)
+    {
+        var defA = normalizedA["definition"];
+        var defB = normalizedB["definition"];
+        ctx.AssertTrue(defA is not null && defB is not null,
+            $"cross-method check {pathA} vs {pathB}: a side reported no definition");
+
+        ctx.AssertTrue(CountNodes(defA!) > 0, $"get_asset_ir {pathA}: definition carries no expressions");
+        ctx.AssertTrue(CountNodes(defB!) > 0, $"get_asset_ir {pathB}: definition carries no expressions");
+
+        var strippedA = StripAssetPathFields(defA.DeepClone());
+        var strippedB = StripAssetPathFields(defB.DeepClone());
+
+        var diffs = new List<string>();
+        DiffJson(strippedA, strippedB, "$", diffs);
+        ctx.AssertTrue(diffs.Count == 0,
+            $"Cross-method IR mismatch ({pathA} vs {pathB}): {diffs.Count} difference(s)\n" +
+            string.Join("\n", diffs));
+    }
+
+    private static int CountNodes(JsonNode definition)
+        => definition["nodes"] is JsonArray nodes ? nodes.Count : 0;
+
+    /// <summary>
+    /// Assert every texture-sample expression in the read-back IR references a texture.
+    ///
+    /// A sample whose asset path does not resolve keeps the property null while the command still reports
+    /// success, so the reference is verified from the asset side instead of trusting the command's own flag.
+    /// </summary>
+    private static void AssertTextureReferencesResolve(TestContext ctx, string assetPath, JsonNode definition)
+    {
+        if (definition["nodes"] is not JsonArray nodes)
+            return;
+
+        foreach (var entry in nodes)
+        {
+            if (entry is not JsonObject node)
+                continue;
+            string type = node["type"]?.GetValue<string>() ?? "";
+            if (!type.Contains("TextureSample", StringComparison.Ordinal))
+                continue;
+
+            var texture = node["texture"];
+            bool resolved = texture is not null
+                && texture.GetValueKind() == JsonValueKind.String
+                && texture.GetValue<string>().Length > 0;
+            ctx.AssertTrue(resolved,
+                $"{assetPath}: {type} '{node["id"]?.GetValue<string>() ?? "?"}' references no texture " +
+                $"(texture={texture?.ToJsonString() ?? "(absent)"}); a null sample makes the material " +
+                "fail to compile and the error lands on the nodes wired to it");
+        }
+    }
+
+    /// <summary>
+    /// Remove asset-path-bearing fields so a comparison ignores where an asset lives:
+    /// "path", "assetPath" and "packageName" at any depth.
+    /// </summary>
+    private static JsonNode StripAssetPathFields(JsonNode node)
+    {
+        switch (node)
+        {
+            case JsonObject obj:
+                var keysToRemove = obj
+                    .Where(kvp => kvp.Key is "path" or "assetPath" or "packageName")
+                    .Select(kvp => kvp.Key)
+                    .ToList();
+                foreach (var key in keysToRemove)
+                    obj.Remove(key);
+                foreach (var kvp in obj)
+                    StripAssetPathFields(kvp.Value!);
+                break;
+            case JsonArray arr:
+                foreach (var item in arr)
+                {
+                    if (item != null)
+                        StripAssetPathFields(item);
+                }
+                break;
+        }
+        return node;
     }
 
     /// <summary>Full structural comparison: objects compare key sets and values, arrays compare counts and per-position elements,
@@ -982,11 +1218,68 @@ public static class BlueprintTestHelper
 
     // SerializeResult serializes ToolResult.Data (anonymous object { projectFile, action, response }),
     // so the root node is that object directly; response is under root, not under data.
-    private static bool GetBool(JsonNode root, string field)
+    // Public so a case asserting a step command's own business flags reads them the same way
+    // (a ToolResult-level success still carries created=false / added=false with a reason).
+    public static bool GetBool(JsonNode root, string field)
         => root?["response"]?[field]?.GetValue<bool>() ?? false;
 
-    private static string GetStr(JsonNode root, string field)
+    public static string GetStr(JsonNode root, string field)
         => root?["response"]?[field]?.GetValue<string>() ?? "";
+
+    /// <summary>Assert the business flag a material step command reports (created / added / connected / compiled / saved).</summary>
+    public static void StepOk(TestContext ctx, JsonNode response, string flag, string step)
+    {
+        ctx.AssertTrue(GetBool(response, flag), $"{step} -> {flag}=false: {GetStr(response, "reason")}");
+    }
+
+    /// <summary>
+    /// Assert a material add step reported success and return the expressionId it issued.
+    /// An add step writes every extra payload key as a property and reports the ones it
+    /// could not write in propertyErrors while still answering added=true, so that field
+    /// is checked here too - a node that was created without the value the step asked for
+    /// is a failed step, not a pass.
+    /// </summary>
+    public static string ExpressionId(TestContext ctx, JsonNode response, string step)
+    {
+        ctx.AssertTrue(GetBool(response, "added"), $"{step} -> added=false: {GetStr(response, "reason")}");
+        string propertyErrors = GetStr(response, "propertyErrors");
+        ctx.AssertTrue(propertyErrors.Length == 0, $"{step} -> added, but these properties did not land: {propertyErrors}");
+        string id = MaterialExpressionIdValue(response);
+        ctx.AssertTrue(id.Length > 0, $"{step} -> response carries no expressionId: {response.ToJsonString()}");
+        return id;
+    }
+
+    /// <summary>
+    /// Read the finished material back through get_asset_ir and assert that every expression
+    /// class the task doc names is present with the expected multiplicity. This is a live
+    /// content check, not a snapshot: it fails with the missing class named, so a graph that
+    /// is missing what the doc asks for surfaces here instead of being reported as a pass.
+    /// Extra nodes are tolerated (the counts are lower bounds); the full-shape comparison is
+    /// what VerifyIrSnapshot baselines cover.
+    /// </summary>
+    public static void ExpectExpressions(TestContext ctx, string assetPath, params (string Type, int Count)[] expected)
+    {
+        var response = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
+        ctx.AssertTrue(GetBool(response, "success"), $"get_asset_ir {assetPath}: {GetStr(response, "error")}");
+        var graph = response["response"]?["definition"]?["nodes"]?.AsArray();
+        ctx.AssertTrue(graph is not null, $"get_asset_ir {assetPath}: definition carries no nodes: {response.ToJsonString()}");
+        var nodes = graph!;
+
+        foreach ((string type, int count) in expected)
+        {
+            int found = nodes.Count(n => n?["type"]?.GetValue<string>() == type);
+            ctx.AssertTrue(found >= count,
+                $"{assetPath}: expected {count} x {type}, found {found}. Built graph: {DescribeNodes(nodes)}");
+        }
+    }
+
+    private static string MaterialExpressionIdValue(JsonNode response)
+        => response?["response"]?["expressionId"]?.GetValue<string>()
+           ?? response?["response"]?["nodeId"]?.GetValue<string>()
+           ?? "";
+
+    private static string DescribeNodes(JsonArray nodes)
+        => string.Join(", ", nodes.Select(n => n?["type"]?.GetValue<string>() ?? "?"));
 
     private static string SerializeResult(ToolResult r)
     {

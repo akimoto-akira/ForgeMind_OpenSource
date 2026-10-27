@@ -128,7 +128,6 @@ public sealed class ScanPackReader : IDisposable
     /// <summary>Reads roots across every version namespace.</summary>
     public IReadOnlyList<ScanRootView> ReadRoots() =>
         Versions.SelectMany(ReadRoots).ToList();
-
     /// <summary>Reads classes across every version namespace.</summary>
     public IReadOnlyList<ScanClassView> ReadClasses() =>
         Versions.SelectMany(ReadClasses).ToList();
@@ -156,6 +155,65 @@ public sealed class ScanPackReader : IDisposable
             StringComparer.Ordinal);
     }
 
+    /// <summary>
+    /// Reads UPROPERTY members grouped by declaring class name for one version. Classes without a
+    /// property node (older packs) contribute nothing — callers must read that as "unknown",
+    /// never as "has no properties".
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<ScanPropertyView>> ReadPropertiesByClass(string version)
+    {
+        var result = new Dictionary<string, List<ScanPropertyView>>(StringComparer.Ordinal);
+        foreach (DtoRoot root in ReadEngineRoots(version))
+        {
+            foreach (DtoModule module in EnumerateModules(root))
+            {
+                foreach (DtoClass cls in module.Classes ?? [])
+                {
+                    if (cls.Properties is not { Count: > 0 } props)
+                        continue;
+
+                    if (!result.TryGetValue(cls.Name, out List<ScanPropertyView>? list))
+                    {
+                        list = new List<ScanPropertyView>();
+                        result[cls.Name] = list;
+                    }
+
+                    foreach (DtoProperty p in props)
+                        if (!string.IsNullOrWhiteSpace(p.Name))
+                            list.Add(new ScanPropertyView(p.Name, p.Type));
+                }
+            }
+        }
+
+        return result.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (IReadOnlyList<ScanPropertyView>)kvp.Value,
+            StringComparer.Ordinal);
+    }
+
+    /// <summary>Reads UPROPERTY members grouped by class name across every version namespace.</summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<ScanPropertyView>> ReadPropertiesByClass()
+    {
+        var result = new Dictionary<string, List<ScanPropertyView>>(StringComparer.Ordinal);
+        foreach (string version in Versions)
+        {
+            foreach (var (className, props) in ReadPropertiesByClass(version))
+            {
+                if (!result.TryGetValue(className, out List<ScanPropertyView>? list))
+                {
+                    list = new List<ScanPropertyView>();
+                    result[className] = list;
+                }
+                list.AddRange(props);
+            }
+        }
+
+        return result.ToDictionary(
+            kvp => kvp.Key,
+            kvp => (IReadOnlyList<ScanPropertyView>)kvp.Value,
+            StringComparer.Ordinal);
+    }
+
     /// <summary>Loads scan data for a single version.</summary>
     public (ScanManifest? Manifest, IScanData Data) LoadVersion(string version)
     {
@@ -165,6 +223,9 @@ public sealed class ScanPackReader : IDisposable
 
         foreach (var (className, funcs) in ReadFunctionsByClass(version))
             data.FunctionMap[className] = funcs.ToList();
+
+        foreach (var (className, props) in ReadPropertiesByClass(version))
+            data.PropertyMap[className] = props.ToList();
 
         return (ReadManifest(), data);
     }
@@ -178,6 +239,9 @@ public sealed class ScanPackReader : IDisposable
 
         foreach (var (className, funcs) in ReadFunctionsByClass())
             data.FunctionMap[className] = funcs.ToList();
+
+        foreach (var (className, props) in ReadPropertiesByClass())
+            data.PropertyMap[className] = props.ToList();
 
         return (ReadManifest(), data);
     }
@@ -275,6 +339,20 @@ public sealed class ScanPackReader : IDisposable
         public List<string>? BaseClasses { get; set; }
         public List<string>? Specifiers { get; set; }
         public List<DtoFunction>? Functions { get; set; }
+
+        /// <summary>
+        /// UPROPERTY members. Optional: packs built before property capture omit it, and the
+        /// scanner's own DTO (ScanCachePersistence.DtoClass) writes camelCase "properties" with
+        /// name / type — same spelling is expected here (spec §7: one index, one shape).
+        /// </summary>
+        public List<DtoProperty>? Properties { get; set; }
+    }
+
+    /// <summary>UPROPERTY node of <c>engine.json</c>.</summary>
+    public sealed class DtoProperty
+    {
+        public string Name { get; set; } = "";
+        public string? Type { get; set; }
     }
 
     /// <summary>Function node of <c>engine.json</c>.</summary>

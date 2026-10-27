@@ -1,27 +1,27 @@
 ﻿# Plán vývoje ForgeMind
 
-Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, seskupených podle domén a stavů, a je průběžně aktualizován podle postupu vývoje. Zdroj dat: nejnovější snímek sběru assetů (2026-10-19).
+Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, seskupených podle domén a stavů, a je průběžně aktualizován podle postupu vývoje. Zdroj dat: snímek assetů z kroku 3 (2026-10-26).
 
 ## Přehled
 
 | Stav | Počet |
 | --- | ---: |
-| Dokončeno | 59 |
+| Dokončeno | 77 |
 | Ve vývoji | 4 |
-| Plánováno | 96 |
-| Celkem | 159 |
+| Plánováno | 73 |
+| Celkem | 154 |
 
 ## Procházet podle domén
 
 | Doména | Dokončeno | Ve vývoji | Plánováno |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Ostatní | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Dokončeno (59)
+### Dokončeno (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, s
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### Ve vývoji (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Plánováno (21)
-
-- Blueprint Vektor
-- Blueprint Rozšířený vstup
-- Blueprint Subsystem
-- Blueprint Zpoždění
-- Blueprint Asynchronní načítání
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
 - Blueprint Reference
-- Blueprint Trasování tvaru
-- Blueprint Formátování textu
-- Blueprint Rotace
-- Blueprint Spline
-- Blueprint Fyzika
-- Blueprint Kamera
-- Blueprint Komponenty
-- Blueprint Pohyb postavy
-- Blueprint Konverze
-- Blueprint Operátory
-- Blueprint Komponenty za běhu
-- Blueprint Uzel výběru
-- Blueprint Zničení
-- Blueprint Zvuk
-- Blueprint Predikce trajektorie
+- Blueprint Subsystem
+- Blueprint Transform
+
+### Ve vývoji (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Plánováno (57)
+### Dokončeno (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### Ve vývoji (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Plánováno (55)
 
 - Material AR kamera / Vektor atmosférického světla
 - Material Decal
-- Material Podmíněná větev if
 - Material Světová pozice a kamera
 - Material Objem / Mraky
 - Material Vektor světla / Model stínování
@@ -138,7 +137,6 @@ Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, s
 - Material Vlasy (Hair)
 - Material Písma / Nástroje textur
 - Material Vrstvy / Parametry kanálů
-- Material Konstanta
 - Material Přepínač / Switch
 - Material Interpolace / Lerp
 - Material Matematické funkce

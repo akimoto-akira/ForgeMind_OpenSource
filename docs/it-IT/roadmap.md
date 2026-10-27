@@ -1,27 +1,27 @@
 ﻿# Roadmap di sviluppo di ForgeMind
 
-Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità di generazione asset di ForgeMind, raggruppata per dominio e stato, ed è aggiornata continuamente man mano che lo sviluppo procede. Origine dati: snapshot più recente della raccolta asset (2026-10-19).
+Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità di generazione asset di ForgeMind, raggruppata per dominio e stato, ed è aggiornata continuamente man mano che lo sviluppo procede. Origine dati: snapshot asset dello Step 3 (2026-10-26).
 
 ## Panoramica
 
 | Stato | Quantità |
 | --- | ---: |
-| Completato | 59 |
+| Completato | 77 |
 | In sviluppo | 4 |
-| Pianificato | 96 |
-| Totale | 159 |
+| Pianificato | 73 |
+| Totale | 154 |
 
 ## Esplora per dominio
 
 | Dominio | Completato | In sviluppo | Pianificato |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Altro | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Completato (59)
+### Completato (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità d
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### In sviluppo (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Pianificato (21)
-
-- Blueprint Vettore
-- Blueprint Input potenziato
-- Blueprint Subsystem
-- Blueprint Ritardo
-- Blueprint Caricamento asincrono
-- Blueprint Riferimento
-- Blueprint Traccia di forma
-- Blueprint Formattazione del testo
-- Blueprint Rotazione
-- Blueprint Spline
-- Blueprint Fisica
-- Blueprint Fotocamera
-- Blueprint Componenti
-- Blueprint Movimento del personaggio
-- Blueprint Conversione
-- Blueprint Operatori
-- Blueprint Componenti in esecuzione
-- Blueprint Nodo di selezione
-- Blueprint Distruggi
+- Blueprint AsyncLoad
 - Blueprint Audio
-- Blueprint Previsione della traiettoria
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
+- Blueprint Subsystem
+- Blueprint Transform
+
+### In sviluppo (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Pianificato (57)
+### Completato (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### In sviluppo (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Pianificato (55)
 
 - Material Fotocamera AR / Vettore luce atmosferica
 - Material Decal
-- Material Ramo condizionale if
 - Material Posizione mondiale e fotocamera
 - Material Volume / Nuvole
 - Material Vettore luce / Modello di ombreggiatura
@@ -138,7 +137,6 @@ Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità d
 - Material Capelli (Hair)
 - Material Font / Strumenti di texture
 - Material Livelli / Parametri di canale
-- Material Costante
 - Material Interruttore / Switch
 - Material Interpolazione / Lerp
 - Material Funzioni matematiche

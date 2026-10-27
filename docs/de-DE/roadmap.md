@@ -1,27 +1,27 @@
 ﻿# ForgeMind-Fahrplan
 
-Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von ForgeMind, gruppiert nach Bereich und Status, und wird mit dem Fortschritt kontinuierlich aktualisiert. Datenquelle: neuester Asset-Sammlungssnapshot (2026-10-19).
+Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von ForgeMind, gruppiert nach Bereich und Status, und wird mit dem Fortschritt kontinuierlich aktualisiert. Datenquelle: Asset-Snapshot aus Schritt 3 (2026-10-26).
 
 ## Übersicht
 
 | Status | Anzahl |
 | --- | ---: |
-| Abgeschlossen | 59 |
+| Abgeschlossen | 77 |
 | In Entwicklung | 4 |
-| Geplant | 96 |
-| Gesamt | 159 |
+| Geplant | 73 |
+| Gesamt | 154 |
 
 ## Nach Bereich
 
 | Bereich | Abgeschlossen | In Entwicklung | Geplant |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Sonstiges | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Abgeschlossen (59)
+### Abgeschlossen (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### In Entwicklung (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Geplant (21)
-
-- Blueprint Vektor
-- Blueprint Erweiterte Eingabe
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
 - Blueprint Subsystem
-- Blueprint Verzögerung
-- Blueprint Asynchrones Laden
-- Blueprint Referenz
-- Blueprint Formabfrage
-- Blueprint Textformatierung
-- Blueprint Rotation
-- Blueprint Spline
-- Blueprint Physik
-- Blueprint Kamera
-- Blueprint Komponenten
-- Blueprint Charakterbewegung
-- Blueprint Konvertierung
-- Blueprint Operatoren
-- Blueprint Laufzeitkomponenten
-- Blueprint Auswahlknoten
-- Blueprint Zerstören
-- Blueprint Sound
-- Blueprint Flugbahnvorhersage
+- Blueprint Transform
+
+### In Entwicklung (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Geplant (57)
+### Abgeschlossen (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### In Entwicklung (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Geplant (55)
 
 - Material AR-Kamera / Atmosphären-Lichtvektor
 - Material Decal
-- Material if-Bedingungsverzweigung
 - Material Weltposition & Kamera
 - Material Volumen / Wolken
 - Material Lichtvektor / Shading-Modell
@@ -138,7 +137,6 @@ Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von
 - Material Haar (Hair)
 - Material Schriften / Texturwerkzeuge
 - Material Ebenen / Kanalparameter
-- Material Konstanten
 - Material Schalter / Switch
 - Material Interpolation / Lerp
 - Material Mathematische Funktionen

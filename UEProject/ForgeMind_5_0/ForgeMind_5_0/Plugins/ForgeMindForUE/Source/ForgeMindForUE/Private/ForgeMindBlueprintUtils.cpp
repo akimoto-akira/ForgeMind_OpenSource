@@ -1715,6 +1715,34 @@ namespace ForgeMindBlueprintUtils
 		if (TypeLower == TEXT("soft class reference") || TypeLower == TEXT("softclass"))
 		{
 			OutPinType.PinCategory = UEdGraphSchema_K2::PC_SoftClass;
+			// Must carry a base class: the compiler's CreatePropertyOnScope treats
+			// PC_SoftClass with a null sub-object as degenerate - it substitutes
+			// UObject AND warns "Invalid property '%s' class, replaced with Object"
+			// (KismetCompilerMisc.cpp L1024-1035; user-reported run of Async_Class_A
+			// showed exactly two such warnings while the TSoftClassPtr<UObject> DSL
+			// form showed none). The editor's variable panel defaults a bare
+			// "Soft Class Reference" to the Object base, and the template form below
+			// carries the same base. Contrast PC_SoftObject: a null sub-object is
+			// silently upgraded (KismetCompilerMisc.cpp L936-940, no warning), so
+			// the softobject branch above intentionally keeps the null form.
+			OutPinType.PinSubCategoryObject = UObject::StaticClass();
+			return true;
+		}
+
+		// Class reference (UClass* / the editor's "Class" variable type, PinTypeToText
+		// emits "Class" for PC_Class via the category-name fallback). Must precede the
+		// UClass-name resolution below: FindFirstObject<UClass>("Class") hits the
+		// UClass METACLASS itself (its object name is "Class"), which would build
+		// PC_Object + Class -- a reference to an instance OF the metaclass -- and the
+		// K2 schema then refuses to wire it against real class-reference pins (PC_Class),
+		// e.g. LoadClassAsset_Blocking's UClass* return value (run 20261021_2017:
+		// "Return Value" is not compatible with "C" ("Return Value" is an object type, while "C" is a reference to an object instance).
+		// The generic form carries a UObject base, matching what the editor produces
+		// for a bare "Class" variable (EdGraphSchema_K2 type tree, base UObject).
+		if (TypeLower == TEXT("class") || TypeLower == TEXT("uclass"))
+		{
+			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Class;
+			OutPinType.PinSubCategoryObject = UObject::StaticClass();
 			return true;
 		}
 
@@ -2024,38 +2052,55 @@ namespace ForgeMindBlueprintUtils
 			return true;
 		}
 
-		// "tsoftobjectptr<X>" / "tsoftclassptr<X>" - the C++ template spellings the
-		// DSL uses for soft reference member declarations (TSoftObjectPtr<Actor>).
-		// The inner text is resolved as a base type first, then re-categorised as the
-		// matching soft reference pin category keeping its sub-object (FSoftObjectProperty
-		// / FSoftClassProperty; EdGraphSchema_K2.cpp maps property->pin at :3361/:3366).
-		struct FSoftRefForm { const TCHAR* Prefix; FName Category; };
-		static const FSoftRefForm SoftForms[] = {
+		// Wrapped template spellings the DSL uses for reference-typed member
+		// declarations: "tsoftobjectptr<X>" / "tsoftclassptr<X>" / "tsubclassof<X>".
+		// The inner text is resolved as a base type first, then only the pin category is
+		// swapped for the wrapping one (FSoftObjectProperty / FSoftClassProperty /
+		// FClassProperty; EdGraphSchema_K2.cpp maps property->pin at :3361/:3366), so the
+		// sub-category object (the referenced class) survives. TSubclassOf<X> belongs here
+		// rather than in the keyword block above: "class" / "uclass" is the *unbounded*
+		// form (UObject base), while the template form carries its base class - which is
+		// what AddComponentByClass's "Class" pin (PC_Class + UActorComponent) needs to be
+		// wireable without a type mismatch (run 20261022_1641, AddCompBy_B: the bridge
+		// refused the variable outright, so the VariableGet node had no source).
+		struct FWrappedRefForm { const TCHAR* Prefix; FName Category; };
+		static const FWrappedRefForm WrappedForms[] = {
 			{ TEXT("tsoftobjectptr<"), UEdGraphSchema_K2::PC_SoftObject },
-			{ TEXT("tsoftclassptr<"), UEdGraphSchema_K2::PC_SoftClass }
+			{ TEXT("tsoftclassptr<"), UEdGraphSchema_K2::PC_SoftClass },
+			{ TEXT("tsubclassof<"), UEdGraphSchema_K2::PC_Class }
 		};
-		for (const FSoftRefForm& SoftForm : SoftForms)
+		for (const FWrappedRefForm& WrappedForm : WrappedForms)
 		{
-			const FString SoftPrefixLower = FString(SoftForm.Prefix);
-			if (!Lower.StartsWith(SoftPrefixLower) || !Lower.EndsWith(TEXT(">")))
+			const FString WrapPrefixLower = FString(WrappedForm.Prefix);
+			if (!Lower.StartsWith(WrapPrefixLower) || !Lower.EndsWith(TEXT(">")))
 			{
 				continue;
 			}
-			if (Trimmed.Len() <= SoftPrefixLower.Len() + 1)
+			if (Trimmed.Len() <= WrapPrefixLower.Len() + 1)
 			{
 				OutReason = FString::Printf(TEXT("'%s' is missing its base type"), *Trimmed);
 				return false;
 			}
-			const FString SoftInner = Trimmed.Mid(SoftPrefixLower.Len(), Trimmed.Len() - SoftPrefixLower.Len() - 1);
+			const FString WrapInner = Trimmed.Mid(WrapPrefixLower.Len(), Trimmed.Len() - WrapPrefixLower.Len() - 1).TrimStartAndEnd();
 			FEdGraphPinType BasePin;
 			FString BaseReason;
-			if (!BaseTypeTextToPinType(SoftInner, BasePin, BaseReason))
+			if (!BaseTypeTextToPinType(WrapInner, BasePin, BaseReason))
 			{
-				OutReason = FString::Printf(TEXT("soft reference base: %s"), *BaseReason);
+				OutReason = FString::Printf(TEXT("wrapped reference base: %s"), *BaseReason);
+				return false;
+			}
+			// A class reference must wrap a class: TSubclassOf<int> or TSubclassOf<EColor>
+			// would otherwise silently become PC_Class with a script struct / enum
+			// sub-category object, which the K2 schema refuses at connect time with a
+			// message that no longer names the real mistake.
+			if (WrappedForm.Category == UEdGraphSchema_K2::PC_Class
+				&& Cast<UClass>(BasePin.PinSubCategoryObject.Get()) == nullptr)
+			{
+				OutReason = FString::Printf(TEXT("'%s' needs a class as its base type"), *Trimmed);
 				return false;
 			}
 			OutPinType = BasePin;
-			OutPinType.PinCategory = SoftForm.Category;
+			OutPinType.PinCategory = WrappedForm.Category;
 			return true;
 		}
 

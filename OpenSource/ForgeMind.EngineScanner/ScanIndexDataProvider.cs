@@ -78,6 +78,18 @@ internal sealed class ScanIndexDataProvider : ScanSignatureCatalog, IScanDataPro
     public string? ResolveEventFunctionName(string? name, string? projectPath, string? parentClassName) =>
         Store.ResolveEventFunctionName(name, projectPath, parentClassName);
 
+    /// <inheritdoc />
+    public IReadOnlyList<ScanPropertyView> CollectProperties(string className)
+    {
+        // Same aggregation as CollectFunctions: resolve flexibly, then own + inherited (the store
+        // documents CollectProperties with "rules same as CollectFunctions"). This is the path that
+        // lets the DSL write a property of an inherited engine component without re-declaring it.
+        UeClassInfo? cls = Store.FindClassesFlexible(className).FirstOrDefault() as UeClassInfo;
+        return cls is null ? [] : Store.CollectProperties(cls).Select(ToPropertyView).ToArray();
+    }
+
+    private static ScanPropertyView ToPropertyView(UePropertyInfo p) => new(p.Name, p.Type);
+
     // Parent-member shapes are source 2 (bridge reflection) and live in the host; this
     // provider does not own them, so it reports "unknown" rather than inventing data.
     public ScanParentMemberKind? GetParentMemberKind(string parentRef, string member) => null;

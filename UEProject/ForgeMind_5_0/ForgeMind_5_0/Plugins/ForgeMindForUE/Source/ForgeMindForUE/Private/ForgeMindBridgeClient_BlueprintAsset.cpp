@@ -33,6 +33,9 @@
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UObjectIterator.h"
+// FEnumProperty / FArrayProperty / FScriptArrayHelper - used by create_input_action to
+// write a plugin asset's properties through reflection only.
+#include "UObject/UnrealType.h"
 
 using namespace ForgeMindBlueprintUtils;
 
@@ -838,6 +841,218 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateDataTable(const TSha
 	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
 	Result->SetStringField(TEXT("rowStruct"), RowStruct->GetPathName());
 	Result->SetNumberField(TEXT("rowCount"), DataTable->GetRowMap().Num());
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// create_input_action
+//
+// Creates a UInputAction asset (Enhanced Input plugin) - the asset the
+// UK2Node_EnhancedInputAction event node binds. The command name was already in
+// AdvertisedCommands but had no handler, and the asset-IR path only classifies
+// "inputAction" for ordering without a creation branch - so an Enhanced Input
+// case could not get its prerequisite asset (requirement doc Question 1 Step 1 "Create
+// InputAction asset", run 20261022_1955 / No. 70).
+//
+// Payload keys:
+//   path      - project asset path, e.g. /Game/Tests/UE5_0/IA_Move
+//   valueType - optional EInputActionValueType name: Boolean / Axis1D / Axis2D /
+//               Axis3D. Default Axis2D (the movement action the doc describes).
+//   trigger   - optional InputTrigger class short name, default "InputTriggerDown"
+//               ("Down", which supports the triggered / completed events). Pass
+//               "None" for a trigger-less action - but note UInputAction then
+//               reports GetSupportedTriggerEvents() == None and every exec pin of
+//               the event node is labelled "(Unsupported)", so a trigger is created
+//               by default instead of leaving a pin-degenerate asset behind.
+//
+// The action class and the trigger class are resolved softly by object path
+// (/Script/EnhancedInput.*) and their properties are written through reflection:
+// ForgeMindForUE must not gain a compile-time dependency on an experimental
+// plugin. With the plugin off the request is refused with a reason.
+// The asset is left dirty - the caller persists it with save_asset.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateInputAction(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	if (!Payload.IsValid()
+		|| (!Payload->TryGetStringField(TEXT("path"), AssetPath)
+			&& !Payload->TryGetStringField(TEXT("assetPath"), AssetPath)) || AssetPath.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("Required field: path (project asset path, e.g. /Game/Tests/UE5_0/IA_Move)"));
+		return Result;
+	}
+
+	// Path normalisation + clobber check: same shared entry as every other create_*
+	// asset command (PrepareNewAssetLocation).
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Tests/UE5_0/IA_Move"), PackagePath, AssetName, PathReason))
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), PathReason);
+		return Result;
+	}
+
+	UClass* ActionClass = FindObject<UClass>(nullptr, TEXT("/Script/EnhancedInput.InputAction"));
+	if (ActionClass == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("InputAction class is not loaded - the EnhancedInput plugin is not enabled in this project (add \"Name\": \"EnhancedInput\", \"Enabled\": true to the .uproject)"));
+		return Result;
+	}
+
+	FString ValueTypeName = TEXT("Axis2D");
+	Payload->TryGetStringField(TEXT("valueType"), ValueTypeName);
+	FString TriggerName = TEXT("InputTriggerDown");
+	Payload->TryGetStringField(TEXT("trigger"), TriggerName);
+
+	UClass* TriggerClass = nullptr;
+	if (!TriggerName.IsEmpty() && TriggerName != TEXT("None"))
+	{
+		const FString TriggerObjectPath = FString::Printf(TEXT("/Script/EnhancedInput.%s"), *TriggerName);
+		TriggerClass = FindObject<UClass>(nullptr, *TriggerObjectPath);
+		if (TriggerClass == nullptr)
+		{
+			Result->SetBoolField(TEXT("created"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown InputTrigger class '%s' - expected an /Script/EnhancedInput trigger name (InputTriggerDown, InputTriggerPressed, InputTriggerReleased, InputTriggerHold, InputTriggerTap, InputTriggerPulse, ...)"), *TriggerName));
+			return Result;
+		}
+	}
+
+	UPackage* Package = CreatePackage(*PackagePath);
+	// RF_Standalone is what keeps an asset object alive next to its package (see
+	// CreateDataTableAsset, which uses the same flag set): without it the freshly created
+	// asset has no referencer once save_asset clears the dirty flag, the garbage collector
+	// collects it, and the leftover in-memory package (no linker) then makes every later
+	// lookup by path miss - the enhanced-input node could not load an asset that was
+	// provably on disk with correct contents (runs 20261023_0001 / 1132).
+	UObject* ActionAsset = NewObject<UObject>(Package, ActionClass, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
+	if (ActionAsset == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("UInputAction creation failed at '%s'"), *PackagePath));
+		return Result;
+	}
+
+	// ValueType is an enum property stored in its underlying integer width, so write
+	// through GetUnderlyingProperty() instead of assuming a byte.
+	if (FEnumProperty* ValueTypeProp = CastField<FEnumProperty>(ActionClass->FindPropertyByName(TEXT("ValueType"))))
+	{
+		UEnum* ValueTypeEnum = ValueTypeProp->GetEnum();
+		const int64 ValueTypeValue = ValueTypeEnum != nullptr ? ValueTypeEnum->GetValueByNameString(ValueTypeName) : INDEX_NONE;
+		if (ValueTypeValue == INDEX_NONE)
+		{
+			Result->SetBoolField(TEXT("created"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown value type '%s' - EInputActionValueType takes Boolean / Axis1D / Axis2D / Axis3D"), *ValueTypeName));
+			return Result;
+		}
+		ValueTypeProp->GetUnderlyingProperty()->SetIntPropertyValue(
+			ValueTypeProp->ContainerPtrToValuePtr<void>(ActionAsset), ValueTypeValue);
+	}
+
+	// Triggers is an array of object pointers: append through FScriptArrayHelper and
+	// set the element through the inner object property - no plugin type named here.
+	FString CreatedTriggerName;
+	if (TriggerClass != nullptr)
+	{
+		if (FArrayProperty* TriggersProp = CastField<FArrayProperty>(ActionClass->FindPropertyByName(TEXT("Triggers"))))
+		{
+			// The helper takes the address of the array property value inside the container,
+			// not the container itself.
+			FScriptArrayHelper Helper(TriggersProp, TriggersProp->ContainerPtrToValuePtr<void>(ActionAsset));
+			const int32 Index = Helper.AddValue();
+			UObject* TriggerObject = NewObject<UObject>(ActionAsset, TriggerClass, *FString::Printf(TEXT("%s_%d"), *TriggerName, Index), RF_Transactional);
+			if (FObjectProperty* Inner = CastField<FObjectProperty>(TriggersProp->Inner))
+			{
+				Inner->SetObjectPropertyValue(Helper.GetRawPtr(Index), TriggerObject);
+				CreatedTriggerName = TriggerName;
+			}
+		}
+	}
+
+	FAssetRegistryModule::AssetCreated(ActionAsset);
+	ActionAsset->MarkPackageDirty();
+
+	Result->SetBoolField(TEXT("created"), true);
+	Result->SetBoolField(TEXT("dirty"), ActionAsset->GetPackage()->IsDirty());
+	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
+	Result->SetStringField(TEXT("valueType"), ValueTypeName);
+	Result->SetStringField(TEXT("trigger"), CreatedTriggerName);
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// create_input_mapping_context
+//
+// Creates a UInputMappingContext asset (Enhanced Input plugin) - the asset the
+// "Add Mapping Context" call feeds the enhanced-input LocalPlayer subsystem with
+// (requirement doc Tasks/UE_5.0/Blueprint_EnhancedInput.md Question 3 Step 1 "Create InputMappingContext asset
+// IMC_Default"). Like create_input_action the command was advertised long before a
+// handler existed, and the asset-IR path only reads IMC "mappings" as ordering
+// dependencies without any creation branch.
+//
+// Payload keys:
+//   path - project asset path, e.g. /Game/Tests/UE5_0/IMC_Default
+//
+// The context is created with no key mappings: adding a mapping writes an
+// FEnhancedActionKeyMapping (soft action pointer + key) into the asset's Mappings
+// array, which is a separate capability (the doc's add_input_mapping command) and
+// nothing in the current requirement set needs a bound key. The asset is left
+// dirty - the caller persists it with save_asset.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateInputMappingContext(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	if (!Payload.IsValid()
+		|| (!Payload->TryGetStringField(TEXT("path"), AssetPath)
+			&& !Payload->TryGetStringField(TEXT("assetPath"), AssetPath)) || AssetPath.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("Required field: path (project asset path, e.g. /Game/Tests/UE5_0/IMC_Default)"));
+		return Result;
+	}
+
+	FString PackagePath;
+	FString AssetName;
+	FString PathReason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Tests/UE5_0/IMC_Default"), PackagePath, AssetName, PathReason))
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), PathReason);
+		return Result;
+	}
+
+	// Soft resolution by object path: no compile-time dependency on the experimental plugin.
+	UClass* MappingContextClass = FindObject<UClass>(nullptr, TEXT("/Script/EnhancedInput.InputMappingContext"));
+	if (MappingContextClass == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("InputMappingContext class is not loaded - the EnhancedInput plugin is not enabled in this project (add \"Name\": \"EnhancedInput\", \"Enabled\": true to the .uproject)"));
+		return Result;
+	}
+
+	UPackage* Package = CreatePackage(*PackagePath);
+	// Same RF_Standalone requirement as the action above.
+	UObject* MappingContextAsset = NewObject<UObject>(Package, MappingContextClass, *AssetName, RF_Public | RF_Standalone | RF_Transactional);
+	if (MappingContextAsset == nullptr)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("UInputMappingContext creation failed at '%s'"), *PackagePath));
+		return Result;
+	}
+
+	FAssetRegistryModule::AssetCreated(MappingContextAsset);
+	MappingContextAsset->MarkPackageDirty();
+
+	Result->SetBoolField(TEXT("created"), true);
+	Result->SetBoolField(TEXT("dirty"), MappingContextAsset->GetPackage()->IsDirty());
+	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
 	return Result;
 }
 

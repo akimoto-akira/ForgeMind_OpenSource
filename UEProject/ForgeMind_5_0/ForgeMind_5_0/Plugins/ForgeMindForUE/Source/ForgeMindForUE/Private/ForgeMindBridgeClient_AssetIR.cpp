@@ -1113,15 +1113,25 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleApplyAssetIRLegacy(const T
 								NodePayload->SetStringField(TEXT("class"), NodeClass);
 							}
 
-							// Timeline length in seconds (DSL [Timeline("T", 1.0f)]):
-							// forwarded as a top-level number so the timeline kind can
-							// size the template. Properties alone cannot carry it -
-							// they are applied as pin defaults after node creation.
-							double TimelineLengthValue = 0.0;
-							if (NodeDef->TryGetNumberField(TEXT("length"), TimelineLengthValue))
-							{
-								NodePayload->SetNumberField(TEXT("length"), TimelineLengthValue);
-							}
+						// Timeline length in seconds (DSL [Timeline("T", 1.0f)]):
+						// forwarded as a top-level number so the timeline kind can
+						// size the template. Properties alone cannot carry it -
+						// they are applied as pin defaults after node creation.
+						double TimelineLengthValue = 0.0;
+						if (NodeDef->TryGetNumberField(TEXT("length"), TimelineLengthValue))
+						{
+							NodePayload->SetNumberField(TEXT("length"), TimelineLengthValue);
+						}
+
+						// MakeContainer element count (MakeArray/MakeSet/MakeMap): the DSL
+						// translator emits "inputs" for auto-generated MakeArray nodes (e.g. the
+						// PredictProjectilePath family's ObjectTypes array pin - array input pins
+						// reject literal defaults and must be wired to a MakeArray).
+						double InputsValue = 0.0;
+						if (NodeDef->TryGetNumberField(TEXT("inputs"), InputsValue) && InputsValue > 0)
+						{
+							NodePayload->SetNumberField(TEXT("inputs"), InputsValue);
+						}
 
 							// Custom event parameters: forward the IR node's
 							// 'params' array ([{name, type}, ...]) so

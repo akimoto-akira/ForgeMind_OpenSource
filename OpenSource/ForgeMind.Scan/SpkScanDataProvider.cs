@@ -32,6 +32,7 @@ public sealed class SpkScanDataProvider : IScanDataProvider, IDisposable
         _roots = data.Roots;
         _classes = data.Classes;
         _functionsByClass = data.FunctionsByClass;
+        _propertiesByClass = data.PropertiesByClass;
         _classByName = new Dictionary<string, ScanClassView>(StringComparer.Ordinal);
         foreach (ScanClassView cls in _classes)
             _classByName.TryAdd(cls.Name, cls);
@@ -52,6 +53,7 @@ public sealed class SpkScanDataProvider : IScanDataProvider, IDisposable
         _roots = data.Roots;
         _classes = data.Classes;
         _functionsByClass = data.FunctionsByClass;
+        _propertiesByClass = data.PropertiesByClass;
         _classByName = new Dictionary<string, ScanClassView>(StringComparer.Ordinal);
         foreach (ScanClassView cls in _classes)
             _classByName.TryAdd(cls.Name, cls);
@@ -340,6 +342,43 @@ public sealed class SpkScanDataProvider : IScanDataProvider, IDisposable
                 return result;
         }
         return [];
+    }
+
+    /// <summary>
+    /// UPROPERTY members by declaring class, straight from the pack. Empty when the pack predates
+    /// property capture — CollectProperties then reports "unknown" (empty), never a guess.
+    /// </summary>
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<ScanPropertyView>> _propertiesByClass;
+
+    /// <inheritdoc />
+    public IReadOnlyList<ScanPropertyView> CollectProperties(string className)
+    {
+        // Same resolution rules as CollectFunctions: flexible class lookup, then own + inherited.
+        ScanClassView? cls = FindClassesFlexibleCore(className).FirstOrDefault();
+        if (cls is null)
+            return [];
+
+        var result = new List<ScanPropertyView>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        CollectOwnAndInheritedProperties(cls, result, seen);
+        return result;
+    }
+
+    private void CollectOwnAndInheritedProperties(
+        ScanClassView cls, List<ScanPropertyView> result, HashSet<string> seen)
+    {
+        if (_propertiesByClass.TryGetValue(cls.Name, out IReadOnlyList<ScanPropertyView>? own))
+        {
+            foreach (ScanPropertyView p in own)
+                if (seen.Add(p.Name))
+                    result.Add(p);
+        }
+
+        foreach (string baseName in cls.AllBaseClasses)
+        {
+            if (_classByName.TryGetValue(baseName, out ScanClassView? baseCls))
+                CollectOwnAndInheritedProperties(baseCls, result, seen);
+        }
     }
 
     private void CollectOwnAndInherited(ScanClassView cls, List<ScanFunctionView> result, HashSet<string> seen)

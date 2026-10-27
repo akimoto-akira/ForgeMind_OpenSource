@@ -404,6 +404,12 @@ if (NodeType == TEXT("MacroInstance") || NodeType == TEXT("ForLoop")
 	|| NodeType == TEXT("Gate"))
 	return TEXT("macro");
 if (NodeType == TEXT("Self")) return TEXT("self");
+// Subsystem getter (UK2Node_GetSubsystem): the DSL emits it as the receiver of a
+// subsystem-qualified call (EnhancedInputLocalPlayerSubsystem.AddMappingContext(...)),
+// because such a function needs the subsystem object as self and cannot be a static call.
+// Missing this branch made the node fall through to "function", where the class lookup on
+// the bare name fails - the same "new form, missed one dispatch place" trap as Timeline above.
+if (NodeType == TEXT("Subsystem")) return TEXT("subsystem");
 if (NodeType == TEXT("MathExpression")) return TEXT("mathexpression");
 // Call parent function implementation in subclass (DSL `base.X()`): must be built as callParentFunction
 // UK2Node_CallParentFunction. Previously missing this branch -> falls into default "function", creates
@@ -431,6 +437,10 @@ if (NodeType == TEXT("LevelLiteral")) return TEXT("levelliteral");
 if (NodeType == TEXT("Timeline")) return TEXT("timeline");
 		if (NodeType == TEXT("Event")) return TEXT("event");
 		if (NodeType == TEXT("InputAction")) return TEXT("inputAction");
+		// Enhanced Input action event (UK2Node_EnhancedInputAction): a specialized event
+		// node, not a UFunction call - BindAction has no UFUNCTION in 5.0.3, so the
+		// fall-through to "function" below would leave an unresolved zero-pin node.
+		if (NodeType == TEXT("EnhancedInputAction")) return TEXT("enhancedInputAction");
 		if (NodeType == TEXT("InputAxis")) return TEXT("inputAxis");
 		if (NodeType == TEXT("InputKey")) return TEXT("inputkey");
 		if (NodeType == TEXT("CustomEvent")) return TEXT("customevent");
@@ -1397,6 +1407,7 @@ void FBlueprintIRHandler::ApplyBlueprintDefinition(UBlueprint* Blueprint, FIRApp
 				return Kind == TEXT("customevent")
 					|| NodeType == TEXT("CustomEvent")
 					|| NodeType == TEXT("InputAction")
+					|| NodeType == TEXT("EnhancedInputAction")
 					|| NodeType == TEXT("InputAxis");
 			};
 
@@ -1749,6 +1760,15 @@ bool FBlueprintIRHandler::Update(UObject* Asset, FIRApplyContext& Ctx)
 					Patch->TryGetStringField(TEXT("type"), ComponentType);
 				}
 				Payload->SetStringField(TEXT("class"), ComponentType);
+				// parent (DSL [Component(Attach = "...")]) - same field the create-mode component loop
+				// already forwards. Without it here, an update-mode blueprint would add the component at
+				// root level and the Components panel shows siblings, which is exactly the symptom the
+				// create-mode gap produced (user visual check 2026-10-23).
+				FString PatchCompParent;
+				if (Patch->TryGetStringField(TEXT("parent"), PatchCompParent) && !PatchCompParent.IsEmpty())
+				{
+					Payload->SetStringField(TEXT("parent"), PatchCompParent);
+				}
 				bOk = BridgeBool(Client->HandleAddBlueprintComponent(Payload), TEXT("added"));
 			}
 
@@ -2077,6 +2097,35 @@ TSharedPtr<FJsonObject> FBlueprintIRHandler::Read(UObject* Asset, FIRApplyContex
 	TArray<TSharedPtr<FJsonValue>> Components;
 	if (Blueprint->SimpleConstructionScript != nullptr)
 	{
+		// Parent map (same construction as list_blueprint_components): the attach relation lives on
+		// the SCS node graph while GetAllNodes() returns a flat list, so without this map the
+		// read-back lost the hierarchy that apply mode had just written - definition.components
+		// carried name/type only, and an IR snapshot could not tell "Mesh under Pivot" from
+		// "Mesh beside Pivot" (No. 73, user visual check 2026-10-23).
+		//
+		// The field is written only for a NON-DEFAULT parent: add_blueprint_component without
+		// an explicit "parent" hangs the node under the default scene root, and reading such
+		// a blueprint back re-applies with the same default, so reporting it would state what
+		// the input never specified. Default-attached components therefore produce the same
+		// JSON as before hierarchy reporting (user ruling 2026-10-25: baselines of cases
+		// before No. 70 must keep matching untouched; only an explicit attach to a
+		// non-default component carries information the IR cannot reconstruct).
+		TMap<USCS_Node*, USCS_Node*> ComponentParentMap;
+		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
+		{
+			if (Node == nullptr)
+			{
+				continue;
+			}
+			for (USCS_Node* Child : Node->ChildNodes)
+			{
+				if (Child != nullptr)
+				{
+					ComponentParentMap.Add(Child, Node);
+				}
+			}
+		}
+
 		for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
 		{
 			if (Node == nullptr || Node->ComponentTemplate == nullptr)
@@ -2086,6 +2135,11 @@ TSharedPtr<FJsonObject> FBlueprintIRHandler::Read(UObject* Asset, FIRApplyContex
 			TSharedRef<FJsonObject> Entry = MakeShared<FJsonObject>();
 			Entry->SetStringField(TEXT("name"), Node->GetVariableName().ToString());
 			Entry->SetStringField(TEXT("type"), Node->ComponentTemplate->GetClass()->GetName());
+			if (USCS_Node** Parent = ComponentParentMap.Find(Node); Parent != nullptr && *Parent != nullptr
+				&& *Parent != Blueprint->SimpleConstructionScript->GetDefaultSceneRootNode())
+			{
+				Entry->SetStringField(TEXT("parent"), (*Parent)->GetVariableName().ToString());
+			}
 			Components.Add(MakeShared<FJsonValueObject>(Entry));
 		}
 	}

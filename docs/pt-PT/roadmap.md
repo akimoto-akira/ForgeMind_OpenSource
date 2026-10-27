@@ -1,27 +1,27 @@
 ﻿# Roteiro de desenvolvimento do ForgeMind
 
-Este roteiro apresenta o progresso do desenvolvimento das capacidades de geração de ativos do ForgeMind, agrupado por domínio e estado, e é atualizado continuamente à medida que o desenvolvimento avança. Fonte de dados: instantâneo mais recente da recolha de ativos (2026-10-19).
+Este roteiro apresenta o progresso do desenvolvimento das capacidades de geração de ativos do ForgeMind, agrupado por domínio e estado, e é atualizado continuamente à medida que o desenvolvimento avança. Fonte de dados: instantâneo de ativos do passo 3 (2026-10-26).
 
 ## Resumo
 
 | Estado | Quantidade |
 | --- | ---: |
-| Concluído | 59 |
+| Concluído | 77 |
 | Em desenvolvimento | 4 |
-| Planeado | 96 |
-| Total | 159 |
+| Planeado | 73 |
+| Total | 154 |
 
 ## Explorar por domínio
 
 | Domínio | Concluído | Em desenvolvimento | Planeado |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Outro | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Concluído (59)
+### Concluído (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Este roteiro apresenta o progresso do desenvolvimento das capacidades de geraç�
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### Em desenvolvimento (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Planeado (21)
-
-- Blueprint Vetor
-- Blueprint Entrada melhorada
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
 - Blueprint Subsystem
-- Blueprint Atraso
-- Blueprint Carregamento assíncrono
-- Blueprint Referência
-- Blueprint Traçado de forma
-- Blueprint Formatação de texto
-- Blueprint Rotação
-- Blueprint Spline
-- Blueprint Física
-- Blueprint Câmara
-- Blueprint Componentes
-- Blueprint Movimento de personagem
-- Blueprint Conversão
-- Blueprint Operadores
-- Blueprint Componentes em tempo de execução
-- Blueprint Nó de seleção
-- Blueprint Destruir
-- Blueprint Som
-- Blueprint Previsão de trajetória
+- Blueprint Transform
+
+### Em desenvolvimento (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Planeado (57)
+### Concluído (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### Em desenvolvimento (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Planeado (55)
 
 - Material Câmara AR / Vetor de luz atmosférica
 - Material Decal
-- Material Ramo condicional if
 - Material Posição mundial e câmara
 - Material Volume / Nuvens
 - Material Vetor de luz / Modelo de sombreamento
@@ -138,7 +137,6 @@ Este roteiro apresenta o progresso do desenvolvimento das capacidades de geraç�
 - Material Cabelo (Hair)
 - Material Fontes / Ferramentas de textura
 - Material Camadas / Parâmetros de canal
-- Material Constante
 - Material Interruptor / Switch
 - Material Interpolação / Lerp
 - Material Funções matemáticas

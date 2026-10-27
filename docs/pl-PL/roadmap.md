@@ -1,27 +1,27 @@
 ﻿# Plan rozwoju ForgeMind
 
-Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, pogrupowany według dziedziny i statusu, i jest aktualizowany w sposób ciągły wraz z postępem prac. Źródło danych: najnowszy zrzut zbierania assetów (2026-10-19).
+Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, pogrupowany według dziedziny i statusu, i jest aktualizowany w sposób ciągły wraz z postępem prac. Źródło danych: zrzut assetów z kroku 3 (2026-10-26).
 
 ## Przegląd
 
 | Status | Liczba |
 | --- | ---: |
-| Ukończone | 59 |
+| Ukończone | 77 |
 | W trakcie | 4 |
-| Planowane | 96 |
-| Razem | 159 |
+| Planowane | 73 |
+| Razem | 154 |
 
 ## Przeglądaj według dziedziny
 
 | Dziedzina | Ukończone | W trakcie | Planowane |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Inne | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Ukończone (59)
+### Ukończone (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, 
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### W trakcie (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Planowane (21)
-
-- Blueprint Wektor
-- Blueprint Ulepszone wejście
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
 - Blueprint Subsystem
-- Blueprint Opóźnienie
-- Blueprint Ładowanie asynchroniczne
-- Blueprint Odniesienie
-- Blueprint Śledzenie kształtu
-- Blueprint Formatowanie tekstu
-- Blueprint Obrót
-- Blueprint Spline
-- Blueprint Fizyka
-- Blueprint Kamera
-- Blueprint Komponenty
-- Blueprint Ruch postaci
-- Blueprint Konwersja
-- Blueprint Operatory
-- Blueprint Komponenty w czasie wykonywania
-- Blueprint Węzeł wyboru
-- Blueprint Zniszczenie
-- Blueprint Dźwięk
-- Blueprint Przewidywanie trajektorii
+- Blueprint Transform
+
+### W trakcie (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Planowane (57)
+### Ukończone (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### W trakcie (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Planowane (55)
 
 - Material Kamera AR / Wektor światła atmosferycznego
 - Material Decal
-- Material gałąź warunkowa if
 - Material Pozycja świata i kamera
 - Material Objętość / Chmury
 - Material Wektor światła / Model cieniowania
@@ -138,7 +137,6 @@ Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, 
 - Material Włosy (Hair)
 - Material Czcionki / Narzędzia tekstur
 - Material Warstwy / Parametry kanałów
-- Material Stała
 - Material Przełącznik / Switch
 - Material Interpolacja / Lerp
 - Material Funkcje matematyczne

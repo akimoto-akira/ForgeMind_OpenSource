@@ -35,6 +35,16 @@ public sealed record ScanClassView(
         : string.IsNullOrWhiteSpace(SuperClass) ? [] : [SuperClass];
 }
 
+/// <summary>
+/// A UPROPERTY declared on a scanned class. Only scan facts (name + declared type text); no
+/// inference. Consumed by the DSL member-assignment lowering, which needs the declared component
+/// type of an inherited engine member (e.g. <c>CharacterMovement</c> → UCharacterMovementComponent)
+/// so a blueprint can write a property of a component it already inherits without re-declaring it.
+/// </summary>
+/// <param name="Name">Property name as declared (pin / member-access name).</param>
+/// <param name="Type">Declared type text; may be empty when the scan did not record it.</param>
+public sealed record ScanPropertyView(string Name, string? Type);
+
 /// <summary>A single parameter (pin) of a function.</summary>
 /// <param name="Name">Parameter name, which is also the pin name.</param>
 /// <param name="Type">Declared type; null when the index does not carry it.</param>
@@ -116,9 +126,9 @@ public static class ScanTypeCompatibility
 
     /// <summary>
     /// Reduces a declared or inferred type text to a comparable bare name:
-    /// <c>TSubclassOf&lt;X&gt;</c> unwrapped, <c>const</c> / <c>class</c> / <c>struct</c> keywords
-    /// and trailing <c>*</c> / <c>&amp;</c> markers removed, DSL aliases canonicalised, then
-    /// the C++ reflection class prefix (U / A) stripped.
+    /// <c>UPARAM(...)</c> decorators removed, <c>TSubclassOf&lt;X&gt;</c> unwrapped, <c>const</c> /
+    /// <c>class</c> / <c>struct</c> keywords and trailing <c>*</c> / <c>&amp;</c> markers removed,
+    /// DSL aliases canonicalised, then the C++ reflection class prefix (U / A) stripped.
     /// <para>Order matters: the markers must be removed <b>before</b> the prefix, otherwise
     /// "const FString&amp;" keeps its F and can never equal "FString".</para>
     /// </summary>
@@ -128,7 +138,7 @@ public static class ScanTypeCompatibility
         if (string.IsNullOrWhiteSpace(type))
             return "";
 
-        string t = type.Trim();
+        string t = StripUParamDecorator(type.Trim());
         t = UnwrapTSubclassOf(t);
 
         if (t.StartsWith("class ", StringComparison.OrdinalIgnoreCase))
@@ -278,6 +288,49 @@ public static class ScanTypeCompatibility
         => name.Length > 1 && (name[0] == 'U' || name[0] == 'A') && char.IsUpper(name[1])
             ? name[1..]
             : name;
+
+    /// <summary>
+    /// Remove <c>UPARAM(...)</c> parameter decorators from a declared type text.
+    /// <para>The scanner keeps the declaration verbatim, and engine headers glue the decorator
+    /// in front of the type — <c>AActor::AddComponentByClass</c> declares its first parameter as
+    /// <c>UPARAM(meta = (AllowAbstract = "false")) TSubclassOf&lt;UActorComponent&gt; Class</c>
+    /// (@Actor.h:1556). Left in place the "bare name" of that parameter is the whole decorator
+    /// text, so no argument can ever fit it: host-class arbitration reports "the scan index has
+    /// same-named declarations but none matches the call site" (FM1002) or the caller degrades
+    /// to positional <c>__argN</c> pins instead of the engine pin name "Class" (run 20261022_1641,
+    /// AddCompBy_B). Removal is paren-balanced because the decorator carries a nested list.</para>
+    /// </summary>
+    private static string StripUParamDecorator(string type)
+    {
+        const string Marker = "UPARAM";
+        for (int start = type.IndexOf(Marker, StringComparison.OrdinalIgnoreCase);
+             start >= 0;
+             start = type.IndexOf(Marker, StringComparison.OrdinalIgnoreCase))
+        {
+            int open = start + Marker.Length;
+            if (open >= type.Length || type[open] != '(')
+                return type;
+
+            int depth = 0;
+            int close = -1;
+            for (int i = open; i < type.Length; i++)
+            {
+                if (type[i] == '(')
+                    depth++;
+                else if (type[i] == ')' && --depth == 0)
+                {
+                    close = i;
+                    break;
+                }
+            }
+            if (close < 0)
+                return type;
+
+            type = (type[..start] + type[(close + 1)..]).Trim();
+        }
+
+        return type;
+    }
 
     /// <summary>
     /// Unwrap a <c>TSubclassOf&lt;X&gt;</c> type string to its inner class name (dropping any

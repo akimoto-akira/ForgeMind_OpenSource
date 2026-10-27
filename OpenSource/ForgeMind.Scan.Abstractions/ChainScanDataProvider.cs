@@ -203,6 +203,21 @@ public sealed class ChainScanDataProvider : IScanDataProvider
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<ScanPropertyView> CollectProperties(string className)
+    {
+        // First provider that actually has the member wins; an empty answer from one provider means
+        // "not in this data source", not "the class has no properties" — keep asking (spec §7).
+        foreach (IScanDataProvider provider in _providers)
+        {
+            IReadOnlyList<ScanPropertyView> props = provider.CollectProperties(className);
+            if (props.Count > 0)
+                return props;
+        }
+
+        return [];
+    }
+
+    /// <inheritdoc />
     public ScanParentMemberKind? GetParentMemberKind(string parentRef, string member)
     {
         foreach (IScanDataProvider provider in _providers)

@@ -167,17 +167,31 @@ bool ForgeMindIR::AssetExists(const FString& Path)
 UObject* ForgeMindIR::LoadAsset(const FString& Path)
 {
 	const FString Normalized = NormalizePath(Path);
-	if (UObject* Found = FindObject<UObject>(nullptr, *Normalized))
+
+	// A bare package path resolves to the UPackage itself as soon as that package is in
+	// memory (the package carries the long package name as its object name), and a
+	// freshly created - not yet reloaded - package has no linker to disambiguate through.
+	// Every caller of LoadAsset wants the asset, never the container, so a package result
+	// is skipped and the explicit "Package.Object" form is tried instead.
+	auto Acceptable = [](UObject* Found) -> UObject*
+	{
+		return (Found != nullptr && !Found->IsA<UPackage>()) ? Found : nullptr;
+	};
+
+	if (UObject* Found = Acceptable(FindObject<UObject>(nullptr, *Normalized)))
 	{
 		return Found;
 	}
-	if (UObject* Loaded = LoadObject<UObject>(nullptr, *Normalized))
+	const FString ObjectForm = Normalized + TEXT(".") + AssetNameOf(Normalized);
+	if (UObject* Found = Acceptable(FindObject<UObject>(nullptr, *ObjectForm)))
+	{
+		return Found;
+	}
+	if (UObject* Loaded = Acceptable(LoadObject<UObject>(nullptr, *Normalized)))
 	{
 		return Loaded;
 	}
-	// Tolerate the "Package.Object" spelling.
-	const FString ObjectForm = Normalized + TEXT(".") + AssetNameOf(Normalized);
-	return LoadObject<UObject>(nullptr, *ObjectForm);
+	return Acceptable(LoadObject<UObject>(nullptr, *ObjectForm));
 }
 
 UObject* ForgeMindIR::CreateAssetInstance(UClass* AssetClass, const FString& Path, bool bOverwrite)

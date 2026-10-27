@@ -14,12 +14,20 @@ using Task = System.Threading.Tasks.Task;
 // calls, BlueprintCallable (not pure) -- component getter -> "__target" (same
 // form as Spline/Curve member calls). All have exec pins; exec chains through
 // the call node. Vector literals (new Vector(0,0,100)) are set as pin defaults
-// on the Impulse/Force pins in UE struct-literal format.
+// on the Impulse/Force pins in the engine's bare three-number comma form
+// (e.g. "0,0,100") — parenthesised struct-literal like "(X=0,Y=0,Z=100)" is
+// rejected by the bridge-side Vector/Rotator strict check.
 //
 // Tasks (each one-task-two-assets: MCP A + DSL B, Q4):
 //   Task 1 - Mesh.AddImpulse(0, 0, 100) in Push()
 //   Task 2 - Mesh.SetSimulatePhysics(true) in Enable()
 //   Task 3 - Mesh.AddForce(0, 0, 50) in Pull()
+//
+// False-touch comparison (VerifyIrSnapshot): inserted 2026-10-20 per user instruction.
+// One per asset -- A side after CompileAndSave, DSL side after ApplyDsl (6 total:
+// Phys_Impulse_A/B, Phys_Sim_A/B, Phys_Force_A/B). Same convention as
+// Blueprint_ShapeTrace_Tests / Blueprint_Select_Tests.
+// Baselines are seeded on the first run; from the second run onward they actually diff.
 // =========================================================================
 
 public sealed class Blueprint_Physics : ITestCase
@@ -49,13 +57,16 @@ public sealed class Blueprint_Physics : ITestCase
                 "PrimitiveComponent");
             BlueprintTestHelper.Connect(ctx, a1, getMesh.nodeId, "Mesh", imp.nodeId, "__target");
             BlueprintTestHelper.SetPinDefault(ctx, a1, imp.nodeId, "Impulse",
-                "(X=0.000000,Y=0.000000,Z=100.000000)");
+                "0.000000,0.000000,100.000000");
             BlueprintTestHelper.Connect(ctx, a1, f1.entryId, "then", imp.nodeId, "execute");
             BlueprintTestHelper.Connect(ctx, a1, imp.nodeId, "then", f1.resultId, "execute");
             BlueprintTestHelper.CompileAndSave(ctx, a1);
+            // False-touch comparison
+            BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
         }
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Phys_Impulse_B");
     }
 
     private static void BuildTask2(TestContext ctx)
@@ -70,13 +81,16 @@ public sealed class Blueprint_Physics : ITestCase
             var sim = BlueprintTestHelper.AddNode(ctx, a2, "Enable", "SetSimulatePhysics", 300, 0,
                 "PrimitiveComponent");
             BlueprintTestHelper.Connect(ctx, a2, getMesh.nodeId, "Mesh", sim.nodeId, "__target");
-            BlueprintTestHelper.SetPinDefault(ctx, a2, sim.nodeId, "bSimulatePhysics", "true");
+            BlueprintTestHelper.SetPinDefault(ctx, a2, sim.nodeId, "bSimulate", "true");
             BlueprintTestHelper.Connect(ctx, a2, f2.entryId, "then", sim.nodeId, "execute");
             BlueprintTestHelper.Connect(ctx, a2, sim.nodeId, "then", f2.resultId, "execute");
             BlueprintTestHelper.CompileAndSave(ctx, a2);
+            // False-touch comparison
+            BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
         }
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Phys_Sim_B");
     }
 
     private static void BuildTask3(TestContext ctx)
@@ -92,12 +106,15 @@ public sealed class Blueprint_Physics : ITestCase
                 "PrimitiveComponent");
             BlueprintTestHelper.Connect(ctx, a3, getMesh.nodeId, "Mesh", force.nodeId, "__target");
             BlueprintTestHelper.SetPinDefault(ctx, a3, force.nodeId, "Force",
-                "(X=0.000000,Y=0.000000,Z=50.000000)");
+                "0.000000,0.000000,50.000000");
             BlueprintTestHelper.Connect(ctx, a3, f3.entryId, "then", force.nodeId, "execute");
             BlueprintTestHelper.Connect(ctx, a3, force.nodeId, "then", f3.resultId, "execute");
             BlueprintTestHelper.CompileAndSave(ctx, a3);
+            // False-touch comparison
+            BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
         }
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Phys_Force_B");
     }
 }

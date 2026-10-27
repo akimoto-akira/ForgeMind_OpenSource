@@ -54,6 +54,40 @@ internal static partial class HeaderScanner
     private static partial Regex TypeDeclRegex();
 
     /// <summary>
+    /// UE interface <b>companion class</b>: <c>class ENHANCEDINPUT_API IEnhancedInputSubsystemInterface {</c>.
+    /// <para>
+    /// The UINTERFACE macro only covers the two-line shell (<c>class UName : public UInterface</c> with
+    /// GENERATED_BODY); every UFUNCTION of an interface is declared in this plain C++ companion, which
+    /// carries <b>no U macro at all</b>. Position-ordered host tracking ("member belongs to the last
+    /// declared host type") therefore never saw the interface as a host and left those functions
+    /// attached to whatever USTRUCT was declared earlier in the same file. Verified on
+    /// EnhancedInputSubsystemInterface.h: <c>AddMappingContext</c> (UFUNCTION at :116, inside the
+    /// companion opened at :60) was indexed with host <c>FModifyContextOptions</c> (the USTRUCT at :40,
+    /// named only because it is that function's own parameter type), so the DSL resolved
+    /// AddMappingContext against a struct and the bridge refused the node with
+    /// "No class named 'FModifyContextOptions' found" (run 20261023_1146, EInput_CTX_B).
+    /// </para>
+    /// <para>
+    /// Reflection registers those UFUNCTIONs on the interface's U-name class, so the companion is not a
+    /// new type: it only re-opens the existing UINTERFACE host (see the ReopenInterface branch of the
+    /// ordered loop below). Rehosting happens only when the file also declares the matching
+    /// <c>U</c>-prefixed interface, so an ordinary C++ class that merely starts with "I" stays inert.
+    /// </para>
+    /// <para>
+    /// The terminator must be reachable across line breaks: UE writes the companion as
+    /// <c>class ENHANCEDINPUT_API IEnhancedInputSubsystemInterface</c> with the <c>{</c> on the
+    /// <b>next line</b> (block comments were already blanked to spaces that keep their newlines,
+    /// so [ \t\r\n] also skips them). A same-line-only character class matched nothing at all —
+    /// verified against this exact header: 0 matches with <c>[ \t]*</c>, 1 match with
+    /// <c>[ \t\r\n]*</c>.
+    /// </para>
+    /// </summary>
+    [GeneratedRegex(
+        @"^[ \t]*class[ \t]+(?:[A-Z][A-Z_0-9]*[ \t]+)*(?<name>I[A-Z]\w*)[ \t\r\n]*(?:final[ \t\r\n]*)?(?:[:;{])",
+        RegexOptions.Multiline)]
+    private static partial Regex InterfaceCompanionDeclRegex();
+
+    /// <summary>
     /// Delegate declaration macro DECLARE_*DELEGATE* (non-_RetVal variant): delegate name is the <b>first</b> macro parameter.
     /// <para>
     /// Previously always used the "second macro parameter" for naming: parameterized variants
@@ -193,7 +227,9 @@ internal static partial class HeaderScanner
 
         // Collect all matches (types / delegates / functions / properties), sort by occurrence position, process in order.
         // Member ownership = most recently declared host type (C++ members always appear after host declaration)
-        var entries = new List<(int Index, Action<UeClassInfo?> Apply, bool isHost)>();
+        // ReopenInterface: a UE interface companion class body — it re-opens the file's UINTERFACE host
+        // instead of declaring a new type (see InterfaceCompanionDeclRegex).
+        var entries = new List<(int Index, Action<UeClassInfo?> Apply, bool isHost, string? ReopenInterface)>();
 
         foreach (Match match in TypeDeclRegex().Matches(text))
         {
@@ -221,7 +257,15 @@ internal static partial class HeaderScanner
                 FillSpecifiers(match.Groups["spec"].Value, info.Specifiers, info.Metadata);
                 FillBaseClasses(match.Groups["base"].Value, info.BaseClasses);
                 output.Add(info);
-            }, isHost: true));
+            }, isHost: true, ReopenInterface: null));
+        }
+
+        foreach (Match match in InterfaceCompanionDeclRegex().Matches(text))
+        {
+            string companion = match.Groups["name"].Value;
+            entries.Add((match.Index, _ =>
+            {
+            }, isHost: false, ReopenInterface: companion));
         }
 
         // Delegate macros: normal variant (delegate name = first macro param) and _RetVal variant
@@ -242,7 +286,7 @@ internal static partial class HeaderScanner
                         LineNumber = line,
                         Scope = scope,
                     });
-                }, isHost: false));
+                }, isHost: false, ReopenInterface: null));
             }
         }
 
@@ -275,7 +319,7 @@ internal static partial class HeaderScanner
             {
                 if (host is not null)
                     host.Functions.Add(function);
-            }, isHost: false));
+            }, isHost: false, ReopenInterface: null));
         }
 
         foreach (Match match in PropertyDeclRegex().Matches(text))
@@ -297,13 +341,27 @@ internal static partial class HeaderScanner
             {
                 if (host is not null)
                     host.Properties.Add(property);
-            }, isHost: false));
+            }, isHost: false, ReopenInterface: null));
         }
 
         // Process in position order: type becomes current host (added to output); members attach to current host
         UeClassInfo? currentHost = null;
         foreach (var entry in entries.OrderBy(e => e.Index))
         {
+            if (entry.ReopenInterface is not null)
+            {
+                // Interface companion body: redirect ownership to the UINTERFACE declared in this
+                // file ("I" + rest == "U" + rest). No type entry is added — the interface class is
+                // the reflection owner. A companion with no matching UINTERFACE changes nothing.
+                UeClassInfo? interfaceHost = output.Find(c => c.Name == "U" + entry.ReopenInterface[1..]);
+                if (interfaceHost is not null)
+                {
+                    currentHost = interfaceHost;
+                }
+
+                continue;
+            }
+
             if (entry.isHost)
             {
                 entry.Apply(currentHost);

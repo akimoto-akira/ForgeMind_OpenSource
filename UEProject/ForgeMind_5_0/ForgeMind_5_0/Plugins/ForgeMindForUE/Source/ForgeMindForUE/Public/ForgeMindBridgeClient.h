@@ -123,6 +123,12 @@ public:
 	TSharedPtr<FJsonObject> HandleCreateBlueprintEnum(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateBlueprintInterface(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateDataTable(const TSharedPtr<FJsonObject>& Payload);
+	// Creates a UInputAction asset (Enhanced Input plugin) - the prerequisite the
+	// UK2Node_EnhancedInputAction event node binds.
+	TSharedPtr<FJsonObject> HandleCreateInputAction(const TSharedPtr<FJsonObject>& Payload);
+	// Creates a UInputMappingContext asset (Enhanced Input plugin) - the asset
+	// "Add Mapping Context" feeds to the enhanced-input LocalPlayer subsystem.
+	TSharedPtr<FJsonObject> HandleCreateInputMappingContext(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleAddStructMember(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleUpdateStructMember(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleRemoveStructMember(const TSharedPtr<FJsonObject>& Payload);
@@ -174,6 +180,13 @@ public:
 	// UMG Widget child management (Widget Blueprint designer hierarchy)
 	TSharedPtr<FJsonObject> HandleAddWidgetChild(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleListWidgetChildren(const TSharedPtr<FJsonObject>& Payload);
+
+	// Material step commands (requirement docs 'one command per step' A side) - they build
+	// the same expression graph as the Asset IR material handler, see Private/IR.
+	TSharedPtr<FJsonObject> HandleCreateMaterial(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleAddMaterialExpression(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleConnectMaterialPins(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleCompileMaterial(const TSharedPtr<FJsonObject>& Payload);
 
 	// --- AssetIR v2 batch operations ---
 

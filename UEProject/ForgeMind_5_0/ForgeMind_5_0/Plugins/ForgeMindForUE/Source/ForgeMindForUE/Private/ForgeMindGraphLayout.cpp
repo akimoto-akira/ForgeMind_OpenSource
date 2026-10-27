@@ -21,6 +21,8 @@
 #include "K2Node_MakeStruct.h"
 #include "K2Node_VariableGet.h"
 #include "Layout/ChildrenBase.h"
+#include "Materials/MaterialExpression.h"
+#include "Materials/MaterialExpressionComment.h"
 #include "MaterialGraph/MaterialGraph.h"
 #include "MaterialGraph/MaterialGraphSchema.h"
 #include "MaterialGraph/MaterialGraphNode.h"
@@ -755,78 +757,60 @@ namespace
 	}
 
 	/**
-	 * Material graph layout: data-flow tree from right to left.
+	 * One item of the identity-agnostic material layout model.
 	 *
-	 * Material graphs have no execution wires.  The Root node (material
-	 * output) is the sink; every other node is a data provider feeding
-	 * into it, directly or transitively.  The layout places the Root at
-	 * the rightmost X and expands each node's data providers to its LEFT,
-	 * stacked vertically aligned to the consumer pin they feed.
-	 *
-	 * This mirrors the blueprint LayoutSubtree but uses data pins instead
-	 * of exec pins and grows leftward instead of rightward.
-	 *
-	 * Returns the total vertical span consumed by this subtree (from the
-	 * node top to the bottom of its deepest provider subtree).
+	 * The material placement rule is the same whether the graph is the material
+	 * editor's transient UEdGraph or a plain UMaterialExpression list read straight
+	 * off the asset (bridge / Asset IR built assets have no editor graph at all),
+	 * so both front-ends reduce to this: an item with a size and a list of data
+	 * providers, each tagged with the y-offset of the input pin it feeds.
 	 */
-	int32 LayoutMaterialSubtree(UEdGraphNode* Node, int32 NodeLeftX, int32 Y,
-		const TMap<UEdGraphNode*, TArray<FChildSlot>>& DataChildrenByParent,
-		TSet<UEdGraphNode*>& Placed,
-		TMap<UEdGraphNode*, FIntPoint>& OutPositions)
+	struct FLayoutItem
 	{
-		// Place this node: NodeLeftX is its LEFT edge.
-		OutPositions.Add(Node, FIntPoint(NodeLeftX, Y));
-		Placed.Add(Node);
+		int32 Width = FallbackWidth;
+		int32 Height = EstimatedTitleHeight;
+		/** <provider item index, y-offset of this item's input pin that wire lands in> */
+		TArray<TPair<int32, int32>> Providers;
+	};
 
-		const int32 NodeW = GetNodeWidth(Node);
-		const int32 NodeH = GetNodeHeight(Node);
-		int32 Bottom = Y + NodeH;
+	/**
+	 * Material layout core: data-flow tree from right to left.
+	 *
+	 * Material graphs have no execution wires - every connection is a data wire - so
+	 * the exec-chain logic used for blueprint graphs would treat every node as an
+	 * independent root and effectively do nothing. Instead the item being placed keeps
+	 * its left edge at LeftX and each of its providers is placed one column further
+	 * left, stacked vertically in consumer-pin order, the whole subtree span being
+	 * consumed before the next provider starts so branches never overlap.
+	 *
+	 * Returns the vertical span consumed by this subtree.
+	 */
+	int32 LayoutMaterialItems(int32 Index, int32 LeftX, int32 Y,
+		const TArray<FLayoutItem>& Items, TSet<int32>& Placed, TArray<FIntPoint>& OutPositions)
+	{
+		OutPositions[Index] = FIntPoint(LeftX, Y);
+		Placed.Add(Index);
 
-		// Gather data providers feeding this node's input pins.
-		const TArray<FChildSlot>* Slots = DataChildrenByParent.Find(Node);
-		if (Slots == nullptr || Slots->Num() == 0)
-		{
-			return Bottom - Y;
-		}
+		const FLayoutItem& Item = Items[Index];
+		int32 Bottom = Y + Item.Height;
 
-		// Sort providers by the consumer (this node's) input pin Y offset
-		// so each wire stays near-horizontal and doesn't cross siblings.
-		TArray<FChildSlot> SortedSlots = *Slots;
-		SortedSlots.Sort([&Node](const FChildSlot& Lhs, const FChildSlot& Rhs)
-		{
-			return GetPinOffsetY(Node, Lhs.ChildPin) < GetPinOffsetY(Node, Rhs.ChildPin);
-		});
-
-		// Place each provider to the LEFT of this node, stacked vertically.
-		// Each provider's RIGHT edge aligns near the consumer's input pin.
-		// We track the bottom of each placed subtree to prevent the next
-		// provider from overlapping it.
+		// Cursor tracks the bottom of the previously placed provider subtree so the
+		// next one can never overlap it, however deep its own subtree turns out.
 		int32 CursorY = Y;
-		for (const FChildSlot& Slot : SortedSlots)
+		for (const TPair<int32, int32>& Provider : Item.Providers)
 		{
-			if (Placed.Contains(Slot.Child))
+			const int32 Child = Provider.Key;
+			if (Child == Index || !Items.IsValidIndex(Child) || Placed.Contains(Child))
 			{
 				continue;
 			}
-			const int32 ProviderW = GetNodeWidth(Slot.Child);
-			// Target Y: align to the consumer pin so the wire is near-horizontal.
-			int32 TargetY = Y + GetPinOffsetY(Node, Slot.ChildPin);
-			// Never overlap the previous subtree.
-			TargetY = FMath::Max(TargetY, CursorY);
-
-			// Provider's right edge sits GapX to the left of this node's left edge.
-			const int32 ProviderRightX = NodeLeftX - GapX;
-			const int32 ProviderLeftX = ProviderRightX - ProviderW;
-
-			// Recursively layout the provider subtree.  The provider's
-			// left edge is where its own children will attach.
-			const int32 SubtreeSpan = LayoutMaterialSubtree(
-				Slot.Child, ProviderLeftX, TargetY,
-				DataChildrenByParent, Placed, OutPositions);
-
-			// Advance cursor by the ACTUAL subtree span, not just node height.
-			CursorY = TargetY + SubtreeSpan + GapY;
-			Bottom = FMath::Max(Bottom, TargetY + SubtreeSpan);
+			// Align to the consumer pin so the wire stays near-horizontal, but never
+			// climb back over an already placed sibling.
+			const int32 TargetY = FMath::Max(Y + Provider.Value, CursorY);
+			const int32 ProviderLeftX = LeftX - GapX - Items[Child].Width;
+			const int32 Span = LayoutMaterialItems(Child, ProviderLeftX, TargetY, Items, Placed, OutPositions);
+			CursorY = TargetY + Span + GapY;
+			Bottom = FMath::Max(Bottom, TargetY + Span);
 		}
 
 		return Bottom - Y;
@@ -835,106 +819,109 @@ namespace
 
 void FForgeMindGraphLayout::ArrangeMaterialGraph(UEdGraph* Graph, const TArray<UEdGraphNode*>& Nodes)
 {
-	// Build a data-dependency tree: for each node, find the provider that
-	// feeds each of its data input pins.  Each node is anchored to ONE
-	// consumer (the first one found in node list order) so it appears in
-	// exactly one place.  The anchor pin pair is recorded for alignment.
-	TMap<UEdGraphNode*, TArray<FChildSlot>> DataChildrenByParent;
-	TSet<UEdGraphNode*> HasConsumer;
-	for (UEdGraphNode* Consumer : Nodes)
+	// Front-end over the material editor's graph: nodes and pins are reduced to the
+	// shared layout model, the placement math itself lives in LayoutMaterialItems only.
+	TMap<UEdGraphNode*, int32> IndexOf;
+	TArray<UEdGraphNode*> Ordered;
+	TArray<FLayoutItem> Items;
+	for (UEdGraphNode* Node : Nodes)
 	{
+		if (Node == nullptr || IndexOf.Contains(Node))
+		{
+			continue;
+		}
+		IndexOf.Add(Node, Ordered.Num());
+		Ordered.Add(Node);
+
+		FLayoutItem Item;
+		Item.Width = GetNodeWidth(Node);
+		Item.Height = GetNodeHeight(Node);
+		Items.Add(MoveTemp(Item));
+	}
+	if (Ordered.Num() == 0)
+	{
+		return;
+	}
+
+	// Data wires: each provider is anchored to exactly one consumer (first one found in
+	// node list order), so it appears in exactly one place in the layout.
+	TSet<int32> Claimed;
+	for (UEdGraphNode* Consumer : Ordered)
+	{
+		const int32 ConsumerIndex = IndexOf[Consumer];
+		// Pins iterate in declaration order, which keeps the provider list sorted by the
+		// consumer pin offset it lands in - wires stay near-horizontal and never cross
+		// their own siblings.
 		for (const UEdGraphPin* InputPin : Consumer->Pins)
 		{
-			if (InputPin == nullptr || InputPin->Direction != EGPD_Input)
-			{
-				continue;
-			}
-			// Skip exec pins - they are not data wires.
-			if (IsExecPin(InputPin))
+			if (InputPin == nullptr || InputPin->Direction != EGPD_Input || IsExecPin(InputPin))
 			{
 				continue;
 			}
 			for (const UEdGraphPin* Link : InputPin->LinkedTo)
 			{
 				UEdGraphNode* Provider = Link != nullptr ? Link->GetOwningNode() : nullptr;
-				if (Provider == nullptr || Provider == Consumer || Provider->GetGraph() != Graph)
+				const int32* ProviderIndex = Provider != nullptr ? IndexOf.Find(Provider) : nullptr;
+				if (ProviderIndex == nullptr || *ProviderIndex == ConsumerIndex || Claimed.Contains(*ProviderIndex))
 				{
 					continue;
 				}
-				if (HasConsumer.Contains(Provider))
-				{
-					continue;
-				}
-				HasConsumer.Add(Provider);
-				DataChildrenByParent.FindOrAdd(Consumer).Add(FChildSlot{
-					const_cast<UEdGraphPin*>(Link),    // parent output pin
-					const_cast<UEdGraphPin*>(InputPin), // child input pin (on consumer)
-					Provider
-				});
+				Claimed.Add(*ProviderIndex);
+				Items[ConsumerIndex].Providers.Add(TPair<int32, int32>(*ProviderIndex, GetPinOffsetY(Consumer, InputPin)));
 			}
 		}
 	}
 
-	// Roots: nodes with no consumer (nothing consumes their output).
-	// The Material Root node is always a root (it has no output pins).
-	// If there is a Material Root, it is the sole layout root; otherwise
-	// every unclaimed node is a root.
-	TArray<UEdGraphNode*> Roots;
-	UMaterialGraphNode_Root* MaterialRoot = nullptr;
-	for (UEdGraphNode* Node : Nodes)
+	// Roots: the Material Root node (the output sink, no output pins) when the editor
+	// graph has one, otherwise every node nothing consumes (material functions have no
+	// root node). Unclaimed nodes are laid out in ascending Y order.
+	TArray<int32> Roots;
+	for (int32 Index = 0; Index < Ordered.Num(); ++Index)
 	{
-		if (IsMaterialRootNode(Node))
+		if (IsMaterialRootNode(Ordered[Index]))
 		{
-			MaterialRoot = Cast<UMaterialGraphNode_Root>(Node);
-			Roots.Add(Node);
+			Roots.Add(Index);
 		}
 	}
-	if (MaterialRoot == nullptr)
+	if (Roots.Num() == 0)
 	{
-		// No root node (e.g. material function): use unclaimed nodes.
-		for (UEdGraphNode* Node : Nodes)
+		for (int32 Index = 0; Index < Ordered.Num(); ++Index)
 		{
-			if (!HasConsumer.Contains(Node))
+			if (!Claimed.Contains(Index))
 			{
-				Roots.Add(Node);
+				Roots.Add(Index);
 			}
 		}
-		Roots.Sort([](const UEdGraphNode& Lhs, const UEdGraphNode& Rhs)
+		Roots.Sort([&Ordered](const int32& Lhs, const int32& Rhs)
 		{
-			return Lhs.NodePosY < Rhs.NodePosY;
+			return Ordered[Lhs]->NodePosY < Ordered[Rhs]->NodePosY;
 		});
 	}
 
-	TMap<UEdGraphNode*, FIntPoint> Positions;
-	TSet<UEdGraphNode*> Placed;
-	int32 CursorY = Roots.Num() > 0 ? Roots[0]->NodePosY : 0;
-	for (UEdGraphNode* Root : Roots)
+	TArray<FIntPoint> Positions;
+	Positions.SetNumUninitialized(Ordered.Num());
+	TSet<int32> Placed;
+	int32 CursorY = Roots.Num() > 0 ? Ordered[Roots[0]]->NodePosY : 0;
+	for (const int32 Root : Roots)
 	{
 		if (Placed.Contains(Root))
 		{
 			continue;
 		}
-		// Root sits at X = 0; providers expand to the LEFT (negative X).
-		const int32 Span = LayoutMaterialSubtree(Root, 0, CursorY,
-			DataChildrenByParent, Placed, Positions);
+		// The root stays at X = 0; its providers expand to the LEFT (negative X).
+		const int32 Span = LayoutMaterialItems(Root, 0, CursorY, Items, Placed, Positions);
 		CursorY += Span + BlockGap;
 	}
 
-	// Catch-all: any node not yet placed (e.g. cycles or orphans).
-	for (UEdGraphNode* Node : Nodes)
+	// Catch-all: anything not reached (cycles, orphans).
+	for (int32 Index = 0; Index < Ordered.Num(); ++Index)
 	{
-		if (Placed.Contains(Node))
+		if (Placed.Contains(Index))
 		{
 			continue;
 		}
-		const int32 Span = LayoutMaterialSubtree(Node, 0, CursorY,
-			DataChildrenByParent, Placed, Positions);
+		const int32 Span = LayoutMaterialItems(Index, 0, CursorY, Items, Placed, Positions);
 		CursorY += Span + BlockGap;
-	}
-
-	if (Positions.Num() == 0)
-	{
-		return;
 	}
 
 	// Snapshot comment box membership BEFORE moving nodes so that the
@@ -942,11 +929,15 @@ void FForgeMindGraphLayout::ArrangeMaterialGraph(UEdGraph* Graph, const TArray<U
 	const FCommentSnapshot CommentSnap = SnapshotCommentMembers(Graph);
 
 	const FScopedTransaction Transaction(NSLOCTEXT("ForgeMindGraphLayout", "ArrangeNodes", "Arrange Graph Nodes"));
-	for (const TPair<UEdGraphNode*, FIntPoint>& Pair : Positions)
+	for (int32 Index = 0; Index < Ordered.Num(); ++Index)
 	{
-		Pair.Key->Modify();
-		Pair.Key->NodePosX = Pair.Value.X;
-		Pair.Key->NodePosY = Pair.Value.Y;
+		if (!Placed.Contains(Index))
+		{
+			continue;
+		}
+		Ordered[Index]->Modify();
+		Ordered[Index]->NodePosX = Positions[Index].X;
+		Ordered[Index]->NodePosY = Positions[Index].Y;
 	}
 
 	// Re-fit comment boxes to their original members' new positions.
@@ -954,6 +945,141 @@ void FForgeMindGraphLayout::ArrangeMaterialGraph(UEdGraph* Graph, const TArray<U
 
 	Graph->Modify();
 	Graph->NotifyGraphChanged();
+}
+
+void FForgeMindGraphLayout::ArrangeMaterialExpressions(UObject* Asset, const TArray<UMaterialExpression*>& Expressions)
+{
+	if (Asset == nullptr)
+	{
+		return;
+	}
+
+	// Same layout as the editor-graph front-end above, over the durable expression data:
+	// the comment boxes are not part of the data flow and keep their own positions,
+	// exactly like the pinless nodes ArrangeGraph leaves alone.
+	TMap<UMaterialExpression*, int32> IndexOf;
+	TArray<UMaterialExpression*> Ordered;
+	TArray<FLayoutItem> Items;
+	for (UMaterialExpression* Expression : Expressions)
+	{
+		if (Expression == nullptr || Cast<UMaterialExpressionComment>(Expression) != nullptr
+			|| IndexOf.Contains(Expression))
+		{
+			continue;
+		}
+		IndexOf.Add(Expression, Ordered.Num());
+		Ordered.Add(Expression);
+
+		FLayoutItem Item;
+		// Nothing has been rendered headless, so the geometry is estimated the same way
+		// the editor front-end estimates an unmeasured node: title bar plus one row per pin.
+		Item.Height = EstimatedTitleHeight
+			+ FMath::Max(1, Expression->GetInputs().Num()) * EstimatedPinRow;
+		Items.Add(MoveTemp(Item));
+	}
+	if (Ordered.Num() == 0)
+	{
+		return;
+	}
+
+	// Data wires, now that every expression has an index: a provider is anchored to its
+	// first consumer only, matching the editor-graph behaviour. Input order is the pin
+	// declaration order, so the provider list comes out sorted by consumer pin offset.
+	TSet<int32> Claimed;
+	for (int32 ConsumerIndex = 0; ConsumerIndex < Ordered.Num(); ++ConsumerIndex)
+	{
+		TArray<TPair<int32, int32>>& Providers = Items[ConsumerIndex].Providers;
+		const TArray<FExpressionInput*> Inputs = Ordered[ConsumerIndex]->GetInputs();
+		Providers.Reserve(Inputs.Num());
+		for (int32 InputIndex = 0; InputIndex < Inputs.Num(); ++InputIndex)
+		{
+			const FExpressionInput* Input = Inputs[InputIndex];
+			const int32* ProviderIndex = (Input != nullptr && Input->Expression != nullptr)
+				? IndexOf.Find(Input->Expression)
+				: nullptr;
+			if (ProviderIndex == nullptr || *ProviderIndex == ConsumerIndex || Claimed.Contains(*ProviderIndex))
+			{
+				continue;
+			}
+			Claimed.Add(*ProviderIndex);
+			Providers.Add(TPair<int32, int32>(*ProviderIndex, EstimatedTitleHeight + InputIndex * EstimatedPinRow));
+		}
+	}
+
+	// Roots are the expressions nothing consumes - the ones feeding the material output
+	// pins, or a material function's output expression. Ascending Y keeps blocks stable
+	// across repeated tidy passes.
+	TArray<int32> Roots;
+	for (int32 Index = 0; Index < Ordered.Num(); ++Index)
+	{
+		if (!Claimed.Contains(Index))
+		{
+			Roots.Add(Index);
+		}
+	}
+	Roots.Sort([&Ordered](const int32& Lhs, const int32& Rhs)
+	{
+		return Ordered[Lhs]->MaterialExpressionEditorY < Ordered[Rhs]->MaterialExpressionEditorY;
+	});
+	if (Roots.Num() == 0)
+	{
+		// Fully cyclic leftovers: start somewhere deterministic.
+		Roots.Add(0);
+	}
+
+	TArray<FIntPoint> Positions;
+	Positions.SetNumUninitialized(Ordered.Num());
+	TSet<int32> Placed;
+	int32 CursorY = Ordered[Roots[0]]->MaterialExpressionEditorY;
+	for (const int32 Root : Roots)
+	{
+		if (Placed.Contains(Root))
+		{
+			continue;
+		}
+		const int32 Span = LayoutMaterialItems(Root, 0, CursorY, Items, Placed, Positions);
+		CursorY += Span + BlockGap;
+	}
+	for (int32 Index = 0; Index < Ordered.Num(); ++Index)
+	{
+		if (Placed.Contains(Index))
+		{
+			continue;
+		}
+		const int32 Span = LayoutMaterialItems(Index, 0, CursorY, Items, Placed, Positions);
+		CursorY += Span + BlockGap;
+	}
+
+	bool bChanged = false;
+	for (int32 Index = 0; Index < Ordered.Num(); ++Index)
+	{
+		if (!Placed.Contains(Index))
+		{
+			continue;
+		}
+		UMaterialExpression* Expression = Ordered[Index];
+		const FIntPoint& Position = Positions[Index];
+		if (Expression->MaterialExpressionEditorX == Position.X && Expression->MaterialExpressionEditorY == Position.Y)
+		{
+			continue;
+		}
+		Expression->Modify();
+		Expression->MaterialExpressionEditorX = Position.X;
+		Expression->MaterialExpressionEditorY = Position.Y;
+		bChanged = true;
+	}
+	if (!bChanged)
+	{
+		return;
+	}
+
+	Asset->MarkPackageDirty();
+
+	// No touch of a material editor's live graph here on purpose: UMaterial::MaterialGraph
+	// is a raw non-UPROPERTY pointer that the editor sets when it opens and that outlives
+	// the graph's collection afterwards, so it cannot be trusted as "an editor is open".
+	// An already-open editor keeps its own node layout and is tidied by the hotkey, which
+	// runs the node-side front-end above on that graph.
 }
 
 void FForgeMindGraphLayout::ArrangeGraph(UEdGraph* Graph)

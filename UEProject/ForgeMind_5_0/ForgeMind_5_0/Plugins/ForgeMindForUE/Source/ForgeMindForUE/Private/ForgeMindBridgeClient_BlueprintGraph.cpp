@@ -40,6 +40,10 @@
 #include "K2Node_EnumInequality.h"
 #include "K2Node_EnumLiteral.h"
 #include "K2Node_BitmaskLiteral.h"
+// Format Text node (UK2Node_FormatText): pure editor K2 node with no backing
+// UFUNCTION - the engine's UKismetTextLibrary::Format is BlueprintInternalUseOnly,
+// expanded by this node at compile time.
+#include "K2Node_FormatText.h"
 // Timeline node (UK2Node_Timeline): creates the blueprint's timeline template
 // (UTimelineTemplate) plus the graph node; the node's AllocateDefaultPins
 // resolves tracks from the template.
@@ -186,7 +190,15 @@ namespace
 		// MakeBitmask: UK2Node_BitmaskLiteral ("Make Bitmask") - pure node that
 		// wraps a bitflags enum literal; expands to MakeLiteralInt at compile.
 		// BitflagsEnum is set from payload 'enum' in ConfigureNativeFlowNode.
-		|| Name == TEXT("MakeBitmask");
+		|| Name == TEXT("MakeBitmask")
+		// FormatText: UK2Node_FormatText ("Format Text") - pure editor K2 node
+		// with no backing UFUNCTION (UKismetTextLibrary::Format is
+		// BlueprintInternalUseOnly, expanded by this node at compile).
+		// "Format" text pin + "Result" output; {0}-placeholder argument pins
+		// are created by the node's PinDefaultValueChanged after the Format
+		// pin's default text is set (set_pin_default_value routes PC_Text
+		// pins through Schema->TrySetDefaultText for exactly that).
+		|| Name == TEXT("FormatText");
 	}
 
 	/**
@@ -306,6 +318,16 @@ namespace
 		if (Name == TEXT("MakeBitmask"))
 		{
 			return NewObject<UK2Node_BitmaskLiteral>(Graph);
+		}
+		// FormatText: UK2Node_FormatText (Format Text). Pins are "Format"
+		// (PC_Text) input + "Result" (PC_Text) output; {0}-placeholder argument
+		// pins (PC_Wildcard) are auto-created by the node's
+		// PinDefaultValueChanged when the Format pin's default text is set
+		// (set_pin_default_value routes PC_Text pins through
+		// Schema->TrySetDefaultText for exactly that).
+		if (Name == TEXT("FormatText"))
+		{
+			return NewObject<UK2Node_FormatText>(Graph);
 		}
 		// ConstructObjectFromClass: UK2Node_ConstructObjectFromClass is abstract,
 		// UK2Node_GenericCreateObject (its concrete subclass) has ExpandNode but
@@ -1632,6 +1654,11 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddBlueprintNode(const TSh
 	const bool bCustomEvent = Kind == TEXT("customevent");
 	const bool bInputAxis = Kind == TEXT("inputaxis");
 	const bool bInputAction = Kind == TEXT("inputaction");
+	// Enhanced Input action event (UK2Node_EnhancedInputAction, plugin module
+	// InputBlueprintNodes) - distinct from the legacy bInputAction above, which binds a
+	// name from the project's ActionMappings. Payload 'targetClass' carries the
+	// UInputAction asset.
+	const bool bEnhancedInputAction = Kind == TEXT("enhancedinputaction");
 	const bool bInputKey = Kind == TEXT("inputkey");
 	const bool bSubsystem = Kind == TEXT("subsystem");
 const bool bSelf = Kind == TEXT("self");
@@ -1663,13 +1690,13 @@ const bool bMessage = Kind == TEXT("message");
 // the UTimelineTemplate + node with a default float track.
 const bool bTimeline = Kind == TEXT("timeline");
 const bool bMathExpression = Kind == TEXT("mathexpression");
-if (!Kind.IsEmpty() && !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bInputKey && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && !bTimeline && !bMathExpression && Kind != TEXT("function") && Kind != TEXT("event"))
+if (!Kind.IsEmpty() && !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bEnhancedInputAction && !bInputKey && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && !bTimeline && !bMathExpression && Kind != TEXT("function") && Kind != TEXT("event"))
 {
 Result->SetBoolField(TEXT("added"), false);
-Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown kind '%s'; supported kinds: function (default), getter, setter, macro, customevent, inputAxis, inputAction, inputKey, subsystem, self, callDelegate, addDelegate, removeDelegate, componentBoundEvent, temporaryVariable, assignment, callParentFunction, levelLiteral, message, timeline"), *Kind));
+Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Unknown kind '%s'; supported kinds: function (default), getter, setter, macro, customevent, inputAxis, inputAction, enhancedInputAction, inputKey, subsystem, self, callDelegate, addDelegate, removeDelegate, componentBoundEvent, temporaryVariable, assignment, callParentFunction, levelLiteral, message, timeline"), *Kind));
 return Result;
 }
-const bool bFunctionKind = !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bInputKey && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && !bTimeline && !bMathExpression;
+const bool bFunctionKind = !bGetter && !bSetter && !bMacro && !bCustomEvent && !bInputAxis && !bInputAction && !bEnhancedInputAction && !bInputKey && !bSubsystem && !bSelf && !bDispatcherKind && !bComponentBoundEvent && !bTemporaryVariable && !bAssignment && !bCallParentFunction && !bLevelLiteral && !bMessage && !bTimeline && !bMathExpression;
 // Set when a function-call target resolves to a UInterface — create UK2Node_Message
 // instead of K2Node_CallFunction (DSL d.ApplyDamage(5) where d is interface-typed).
 bool bInterfaceMessage = false;
@@ -2575,6 +2602,136 @@ bool bExternalMember = false;
 		ActionNode->NodePosX = PosX;
 		ActionNode->NodePosY = PosY;
 		NewNode = ActionNode;
+	}
+	else if (bEnhancedInputAction)
+	{
+		// Enhanced Input action event (UK2Node_EnhancedInputAction).
+		// Why a dedicated kind exists at all: UEnhancedInputComponent::BindAction has no
+		// UFUNCTION in 5.0.3 (it is a set of C++ templates plus a plain UObject*/FName
+		// overload; the class's only UFUNCTION is the BlueprintInternalUseOnly
+		// GetBoundActionValue, EnhancedInputComponent.h:432), so no call node can ever be
+		// resolved by function name - asking add_blueprint_node for "BindAction" produces an
+		// unresolved zero-pin node (run 20261022_1955, EInput_Bind_A). The blueprint-facing
+		// shape of "an action fired" is this specialized event node.
+		//
+		// Resolved softly by class path: the node lives in the EnhancedInput plugin's
+		// InputBlueprintNodes module (UncookedOnly), and ForgeMindForUE must not grow a
+		// hard dependency on an experimental plugin - when the plugin is off the request is
+		// refused with a reason instead of building a fake node.
+		UClass* EnhancedActionClass = FindObject<UClass>(nullptr, TEXT("/Script/InputBlueprintNodes.K2Node_EnhancedInputAction"));
+		if (EnhancedActionClass == nullptr)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), TEXT("K2Node_EnhancedInputAction is not loaded - the EnhancedInput plugin is not enabled in this project (add \"Name\": \"EnhancedInput\", \"Enabled\": true to the .uproject)"));
+			return Result;
+		}
+		if (!Blueprint->UbergraphPages.Contains(Graph))
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Enhanced input action events can only be placed in an event graph; '%s' is not one (omit graphName to use the default event graph)"), *Graph->GetName()));
+			return Result;
+		}
+
+		// The asset to bind: payload 'targetClass' carries the UInputAction (same field the
+		// Cast / AddComponent / GetClassDefaults branches use for a class or asset reference).
+		FString ActionRef;
+		if (!Payload.IsValid() || !Payload->TryGetStringField(TEXT("targetClass"), ActionRef) || ActionRef.IsEmpty())
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), TEXT("Enhanced input action event needs the bound action: pass payload 'targetClass' = the UInputAction asset (e.g. /Game/Tests/UE5_0/IA_Move.IA_Move)"));
+			return Result;
+		}
+		FString ActionObjectPath = ActionRef;
+		ConstructorHelpers::StripObjectClass(ActionObjectPath);
+		// A DSL/MCP caller usually passes the **package** form ("/Game/Tests/UE5_0/IA_Move").
+		// That is not a valid object path, and FindObject only searches loaded objects, so the
+		// freshly created (and saved but still unloaded) asset came back null - "create it
+		// first" while it did exist (run 20261022_2342). Complete the object name and go
+		// through StaticLoadObject, which covers both the loaded and the on-disk case.
+		if (!ActionObjectPath.Contains(TEXT(".")) && !ActionObjectPath.EndsWith(TEXT("/")))
+		{
+			// Last '/'-separated segment (FPackageName has no segment helper in 5.0).
+			int32 SlashIndex = INDEX_NONE;
+			ActionObjectPath.FindLastChar(TEXT('/'), SlashIndex);
+			const FString LeafName = SlashIndex != INDEX_NONE
+				? ActionObjectPath.Mid(SlashIndex + 1)
+				: ActionObjectPath;
+			if (!LeafName.IsEmpty())
+			{
+				ActionObjectPath = FString::Printf(TEXT("%s.%s"), *ActionObjectPath, *LeafName);
+			}
+		}
+		UObject* ActionAsset = nullptr;
+		if (!ActionObjectPath.IsEmpty() && ActionObjectPath != TEXT("None"))
+		{
+			// 1) already-resident object (created earlier in this same editor session and not yet
+			//    collected), 2) the package loaded from disk and the export taken out of it,
+			//    3) the generic static load as the last resort.
+			//
+			// Step 2 is what makes this work for an asset created by create_input_action minutes
+			// earlier in the same session: its UPackage exists in memory without a linker, so
+			// FindObject misses (the object was collected — nothing else referenced it yet) and
+			// StaticLoadObject also returns null because it will not link that half-loaded
+			// package (run 20261023_0013: the .uasset on disk held a correct IA_Move export of
+			// class InputAction while both lookups came back empty). LoadPackage forces the link.
+			ActionAsset = FindObject<UObject>(nullptr, *ActionObjectPath);
+			if (ActionAsset == nullptr)
+			{
+				int32 DotIndex = INDEX_NONE;
+				if (ActionObjectPath.FindLastChar(TEXT('.'), DotIndex))
+				{
+					const FString PackagePart = ActionObjectPath.Left(DotIndex);
+					const FString ObjectPart = ActionObjectPath.Mid(DotIndex + 1);
+					if (UPackage* AssetPackage = LoadPackage(nullptr, *PackagePart, LOAD_None))
+					{
+						ActionAsset = FindObject<UObject>(AssetPackage, *ObjectPart);
+					}
+				}
+			}
+			if (ActionAsset == nullptr)
+			{
+				ActionAsset = StaticLoadObject(UObject::StaticClass(), nullptr, *ActionObjectPath);
+			}
+		}
+		if (ActionAsset == nullptr)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			// Report the path actually attempted (after the package→object completion above): the
+			// caller's spelling and the resolved one differ often enough that naming only the
+			// input made this unreadable when the asset did exist on disk (run 20261023_0001).
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Could not load the InputAction asset - requested '%s', resolved '%s'; create it before binding the action (list_assets can confirm the path)"), *ActionRef, *ActionObjectPath));
+			return Result;
+		}
+		UClass* InputActionClass = FindObject<UClass>(nullptr, TEXT("/Script/EnhancedInput.InputAction"));
+		if (InputActionClass != nullptr && !ActionAsset->IsA(InputActionClass))
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("'%s' is a %s, not a UInputAction - the enhanced input action event binds an action asset"), *ActionRef, *ActionAsset->GetClass()->GetName()));
+			return Result;
+		}
+
+		// Set the asset before AddNode/AllocateDefaultPins: the node derives its data output
+		// pin category from the action's ValueType inside AllocateDefaultPins, and it creates
+		// the 'InputAction' output pin only when InputAction is non-null.
+		UEdGraphNode* EnhancedNode = NewObject<UEdGraphNode>(Graph, EnhancedActionClass);
+		FObjectProperty* ActionProp = CastField<FObjectProperty>(EnhancedActionClass->FindPropertyByName(TEXT("InputAction")));
+		if (ActionProp == nullptr)
+		{
+			Result->SetBoolField(TEXT("added"), false);
+			Result->SetStringField(TEXT("reason"), TEXT("UK2Node_EnhancedInputAction has no 'InputAction' property in this engine version - the node shape changed, this branch needs updating"));
+			return Result;
+		}
+		ActionProp->SetObjectPropertyValue(ActionProp->ContainerPtrToValuePtr<void>(EnhancedNode), ActionAsset);
+
+		EnhancedNode->SetFlags(RF_Transactional);
+		Graph->Modify();
+		Graph->AddNode(EnhancedNode, true, true);
+		EnhancedNode->CreateNewGuid();
+		EnhancedNode->PostPlacedNewNode();
+		EnhancedNode->AllocateDefaultPins();
+		EnhancedNode->NodePosX = PosX;
+		EnhancedNode->NodePosY = PosY;
+		NewNode = EnhancedNode;
 	}
 	else if (bInputKey)
 	{
@@ -3993,6 +4150,19 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleSetPinDefaultValue(const T
 
 		// Use the schema's setter so pin-watching and validation fire.
 		Schema->TrySetDefaultObject(*Pin, ResolvedObject);
+	}
+	else if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Text)
+	{
+		// Text pins carry their value in DefaultTextValue (FText), not the
+		// DefaultValue string: TrySetDefaultValue only writes the FString
+		// field, so the node's PinDefaultValueChanged callback (e.g.
+		// UK2Node_FormatText reading FormatPin->DefaultTextValue to
+		// auto-create {0} argument pins) sees an empty text and never
+		// regenerates argument pins, and the compiled FText reads empty.
+		// Route through the schema's text setter like object pins route
+		// through TrySetDefaultObject - it validates non-transient text,
+		// writes DefaultTextValue and fires PinDefaultValueChanged.
+		Schema->TrySetDefaultText(*Pin, FText::FromString(Value));
 	}
 	else
 	{

@@ -9,14 +9,21 @@
     <RootNamespace>ForgeMind.SpkTool</RootNamespace>
     <Company>Hoshino Kennji</Company>
     <Version>1.0.0.0</Version>
-    <Description>SPK command-line read tool — opens an .spk scan bundle (default the EngineIndex engine.spk) and queries classes / functions / name-resolution arbitration for diagnosis, no UE or commercial dependency.</Description>
+    <Description>SPK command-line read tool — opens an .spk scan bundle (default the EngineIndex engine.spk) and queries classes / functions / name-resolution arbitration, plus an offline DSL-&gt;IR dump that drives the production assembler. No UE required, never contacts the bridge.</Description>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Open-source components only: the frozen-index reader chain. Same references as ForgeMind.PublicTests. -->
+    <!-- Open-source components: the frozen-index reader chain. -->
     <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan.Abstractions\ForgeMind.Scan.Abstractions.csproj" />
     <ProjectReference Include="..\..\OpenSource\ForgeMind.Scan\ForgeMind.Scan.csproj" />
     <ProjectReference Include="..\..\OpenSource\ForgeMind.Speedy\ForgeMind.Speedy.csproj" />
+
+    <!-- `translate` subcommand: calls the real DSL pipeline (DslRegistrar + BatchIRAssembler)
+         so the offline IR comes from the same code the `dsl` tool runs — nothing here
+         re-implements parsing, validation or translation. This is a developer diagnostic and
+         so does cross into Commercial + host; the bridge is never contacted (session stays
+         null), no IR is applied, and the `dsl` tool's "no dry-run" contract is intact. -->
+    <ProjectReference Include="..\..\Commercial\ForgeMind.Dsl\ForgeMind.Dsl.csproj" />
   </ItemGroup>
 
 </Project>

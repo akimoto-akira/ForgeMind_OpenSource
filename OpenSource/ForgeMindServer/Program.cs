@@ -35,6 +35,10 @@ Console.CancelKeyPress += (_, e) =>
 // Host services: the UE bridge for ForgeMindServer companions
 ForgeMindServerHost.Start();
 
+// The host never loads plugins by itself — the caller decides when, exactly like the test runner.
+// Skipping this left the tool table at its built-ins, so clients saw no plugin tool at all.
+ForgeMindServerHost.EnsurePluginsLoaded();
+
 int exitCode = 0;
 try
 {

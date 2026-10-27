@@ -1,27 +1,27 @@
 ﻿# Hoja de ruta de desarrollo de ForgeMind
 
-Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de generación de activos de ForgeMind, agrupada por dominio y estado, y se actualiza continuamente a medida que avanza el desarrollo. Fuente de datos: instantánea más reciente de recopilación de activos (2026-10-19).
+Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de generación de activos de ForgeMind, agrupada por dominio y estado, y se actualiza continuamente a medida que avanza el desarrollo. Fuente de datos: instantánea de activos del paso 3 (2026-10-26).
 
 ## Resumen
 
 | Estado | Cantidad |
 | --- | ---: |
-| Completado | 59 |
+| Completado | 77 |
 | En desarrollo | 4 |
-| Planificado | 96 |
-| Total | 159 |
+| Planificado | 73 |
+| Total | 154 |
 
 ## Explorar por dominio
 
 | Dominio | Completado | En desarrollo | Planificado |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Otros | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Completado (59)
+### Completado (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de genera
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### En desarrollo (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
+- Blueprint Subsystem
+- Blueprint Transform
 
-### Planificado (21)
+### En desarrollo (1)
 
-- Blueprint Vector
-- Blueprint Entrada mejorada
-- Blueprint Subsistema
-- Blueprint Retardo
-- Blueprint Carga asíncrona
-- Blueprint Referencia
-- Blueprint Trazado de forma
-- Blueprint Formato de texto
-- Blueprint Rotación
-- Blueprint Spline
-- Blueprint Física
-- Blueprint Cámara
-- Blueprint Componentes
-- Blueprint Movimiento de personaje
-- Blueprint Conversión
-- Blueprint Operadores
-- Blueprint Componentes en tiempo de ejecución
-- Blueprint Nodo de selección
-- Blueprint Destruir
-- Blueprint Sonido
-- Blueprint Predicción de trayectoria
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Planificado (57)
+### Completado (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### En desarrollo (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Planificado (55)
 
 - Material Cámara AR / Vector de luz atmosférica
 - Material Decal
-- Material Rama condicional if
 - Material Posición mundial y cámara
 - Material Volumen / Nubes
 - Material Vector de luz / Modelo de sombreado
@@ -138,7 +137,6 @@ Esta hoja de ruta muestra el progreso de desarrollo de las capacidades de genera
 - Material Cabello (Hair)
 - Material Fuentes / Herramientas de textura
 - Material Capas / Parámetros de canal
-- Material Constante
 - Material Conmutador / Switch
 - Material Interpolación / Lerp
 - Material Funciones matemáticas

@@ -77,4 +77,12 @@ public interface IScanData
 
     /// <summary>Functions grouped by declaring class name (ordinal lookup).</summary>
     IReadOnlyDictionary<string, IReadOnlyList<ScanFunctionView>> FunctionsByClass { get; }
+
+    /// <summary>
+    /// UPROPERTY members grouped by declaring class name (ordinal lookup). Optional: packs that
+    /// predate property capture carry none, so the default is an empty map rather than a failure.
+    /// Consumers must treat "absent" as unknown — never guess (spec §8).
+    /// </summary>
+    IReadOnlyDictionary<string, IReadOnlyList<ScanPropertyView>> PropertiesByClass
+        => new Dictionary<string, IReadOnlyList<ScanPropertyView>>();
 }

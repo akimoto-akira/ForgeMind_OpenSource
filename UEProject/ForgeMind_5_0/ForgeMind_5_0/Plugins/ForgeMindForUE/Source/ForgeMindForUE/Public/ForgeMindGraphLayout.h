@@ -7,12 +7,16 @@
 #include "Framework/Application/SlateApplication.h"
 
 class UEdGraph;
+class UObject;
+class UMaterialExpression;
 
 /**
  * Blueprint-Assist-style node arrangement for any UEdGraph-based editor.
  *
- * One shared entry point (ArrangeGraph) serves both the interactive hotkey
- * and the headless bridge actions. Every chain is traced back to its
+ * One shared placement rule serves both the interactive hotkey and the headless
+ * bridge actions: ArrangeGraph over an editor graph, plus ArrangeMaterialExpressions
+ * over a material's expression list for assets built without an open editor. Every
+ * chain is traced back to its
  * topmost node without incoming wires (usually an event or a dangling
  * head); those roots sit at X = 0 stacked in blank space and everything
  * downstream is laid out from them: each child block starts at its
@@ -46,6 +50,19 @@ public:
 	 * functions, macros, material graphs, sound cues, behavior trees, ...).
 	 */
 	static void ArrangeGraph(UEdGraph* Graph);
+
+	/**
+	 * Same arrangement rule applied straight to a material's expressions, for the
+	 * case where no material editor is open and therefore no UMaterialGraph exists:
+	 * positions are written to each UMaterialExpression::MaterialExpressionEditorX/Y,
+	 * which is exactly what the material editor reads when it builds its graph, so an
+	 * asset assembled by the bridge opens laid out instead of stacked on one spot.
+	 *
+	 * Comment boxes keep their positions (they are not part of the data flow, the same
+	 * rule ArrangeGraph applies to pinless nodes). An editor that is already open keeps
+	 * its own node layout and is tidied by the hotkey, which goes through ArrangeGraph.
+	 */
+	static void ArrangeMaterialExpressions(UObject* Asset, const TArray<UMaterialExpression*>& Expressions);
 
 private:
 	/** Material-graph-specific layout: data-flow tree from right to left. */

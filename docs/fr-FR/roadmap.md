@@ -1,27 +1,27 @@
 ﻿# Feuille de route de développement de ForgeMind
 
-Cette feuille de route présente la progression du développement des capacités de génération d'assets de ForgeMind, regroupée par domaine et par statut, et est mise à jour en continu au fil de l'avancement. Source des données : dernier instantané de collecte d'assets (2026-10-19).
+Cette feuille de route présente la progression du développement des capacités de génération d'assets de ForgeMind, regroupée par domaine et par statut, et est mise à jour en continu au fil de l'avancement. Source des données : instantané d'assets de l'étape 3 (2026-10-26).
 
 ## Vue d'ensemble
 
 | Statut | Nombre |
 | --- | ---: |
-| Terminé | 59 |
+| Terminé | 77 |
 | En cours | 4 |
-| Planifié | 96 |
-| Total | 159 |
+| Planifié | 73 |
+| Total | 154 |
 
 ## Parcourir par domaine
 
 | Domaine | Terminé | En cours | Planifié |
 | --- | ---: | ---: | ---: |
-| Blueprint | 59 | 3 | 21 |
-| Material | 0 | 0 | 57 |
+| Blueprint | 72 | 1 | 0 |
+| Material | 5 | 2 | 55 |
 | Autre | 0 | 1 | 18 |
 
 ## Blueprint
 
-### Terminé (59)
+### Terminé (72)
 
 - Blueprint Cast
 - Blueprint Ease
@@ -82,44 +82,43 @@ Cette feuille de route présente la progression du développement des capacités
 - Blueprint Spline
 - Blueprint Timeline
 - Blueprint Vector
-
-### En cours (3)
-
 - Blueprint Camera
 - Blueprint Physics
 - Blueprint Text
-
-### Planifié (21)
-
-- Blueprint Vecteur
-- Blueprint Entrée améliorée
+- Blueprint AsyncLoad
+- Blueprint Audio
+- Blueprint CharacterMove
+- Blueprint Component
+- Blueprint EnhancedInput
+- Blueprint Operator
+- Blueprint PredictProjectile
+- Blueprint Reference
 - Blueprint Subsystem
-- Blueprint Délai
-- Blueprint Chargement asynchrone
-- Blueprint Référence
-- Blueprint Traçage de forme
-- Blueprint Formatage de texte
-- Blueprint Rotation
-- Blueprint Spline
-- Blueprint Physique
-- Blueprint Caméra
-- Blueprint Composants
-- Blueprint Mouvement de personnage
-- Blueprint Conversion
-- Blueprint Opérateurs
-- Blueprint Composants à l'exécution
-- Blueprint Nœud de sélection
-- Blueprint Détruire
-- Blueprint Son
-- Blueprint Prédiction de trajectoire
+- Blueprint Transform
+
+### En cours (1)
+
+- Blueprint RuntimeComponent
 
 ## Material
 
-### Planifié (57)
+### Terminé (5)
+
+- Material Material Compare
+- Material Material Constant
+- Material Material If
+- Material Material ScalarParam
+- Material Material Transform
+
+### En cours (2)
+
+- Material Material Attributes
+- Material Material Function
+
+### Planifié (55)
 
 - Material Caméra AR / Vecteur de lumière atmosphérique
 - Material Decal
-- Material Branche conditionnelle if
 - Material Position mondiale et caméra
 - Material Volume / Nuages
 - Material Vecteur de lumière / Modèle d'ombrage
@@ -138,7 +137,6 @@ Cette feuille de route présente la progression du développement des capacités
 - Material Cheveux (Hair)
 - Material Polices / Outils de texture
 - Material Couches / Paramètres de canal
-- Material Constante
 - Material Interrupteur / Switch
 - Material Interpolation / Lerp
 - Material Fonctions mathématiques

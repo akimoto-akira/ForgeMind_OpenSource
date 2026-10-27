@@ -124,7 +124,25 @@ static bool BuildAll(string repoRoot, ILogger logger, out string output)
 
     // Host first: plugins reference it, so a fresh host assembly must exist before they build.
     // The host lives under OpenSource\ (it is no longer at the repository root).
-    ok &= BuildProject(Path.Combine(repoRoot, "OpenSource", "ForgeMindServer", "ForgeMindServer.csproj"), configuration, log);
+    string hostProject = Path.Combine(repoRoot, "OpenSource", "ForgeMindServer", "ForgeMindServer.csproj");
+    ok &= BuildProject(hostProject, configuration, log);
+
+    // One staging entry, several destinations. Each destination is a host **process** directory: the host
+    // resolves its plugin root from AppContext.BaseDirectory, and every process that loads plugins resolves
+    // it independently — so each gets its own copy from this single routine:
+    //   ① this test process; ② a server started straight from its own build output.
+    // Any second copy routine elsewhere (an MSBuild target, a hand-run script) would drift from these rules.
+    var stageTargets = new List<StageTarget> { new(AppContext.BaseDirectory, true) };
+    string? serverBaseDirectory = ResolveHostBaseDirectory(hostProject, configuration, logger, log);
+    if (serverBaseDirectory is not null &&
+        !string.Equals(serverBaseDirectory, AppContext.BaseDirectory, StringComparison.OrdinalIgnoreCase))
+    {
+        // Best effort: a running server holds its own copies open, and that must not fail a test run.
+        stageTargets.Add(new StageTarget(serverBaseDirectory, false));
+    }
+
+    logger.Info(null, "[ForgeMindServerTest] plugin staging targets: {0}",
+        string.Join(", ", stageTargets.Select(t => t.PluginsDirectory)));
 
     // Plugins are discovered, not hard-coded: any directory that ships a file ending in
     // ".manifest.json" is a plugin, wherever it sits and whatever that file is called.
@@ -140,7 +158,7 @@ static bool BuildAll(string repoRoot, ILogger logger, out string output)
             continue;
         }
 
-        if (!StagePluginArtifacts(pluginProject, name, configuration, logger, log))
+        if (!StagePluginArtifacts(pluginProject, name, configuration, stageTargets, logger, log))
         {
             ok = false;
             logger.Error(null, "[ForgeMindServerTest] plugin staging failed: {0}", name);
@@ -162,82 +180,165 @@ static bool BuildAll(string repoRoot, ILogger logger, out string output)
 }
 
 /// <summary>
-/// Deploys plugin artifacts to the directory the host scans: <c>&lt;entry dir&gt;\plugins\&lt;PluginName\&gt;\</c>.
-/// <para>Standard (finalized this round): ① Target anchors to the **entry process directory** — the host resolves
-/// the plugins directory from <c>AppContext.BaseDirectory</c>; test process and host process each resolve independently,
-/// deployment must match the runtime resolution scope; ② Content is the plugin main DLL + same-named manifest;
-/// ③ Target directory is cleared before deployment, otherwise stale DLLs from the previous version would be
-/// scanned by <c>PluginLoader</c> and loaded twice; ④ <c>FORGEMIND_PLUGINS_DIR</c> is a runtime override
-/// and is not involved during the build phase.</para>
+/// Deploys one plugin's artifacts into **every** staging target: <c>&lt;host base dir&gt;\plugins\&lt;PluginName&gt;\</c>.
+/// <para>Standard (finalized 2026-10-26): ① each target anchors to the **entry process directory** — the host
+/// resolves the plugins directory from <c>AppContext.BaseDirectory</c>, the test process and a standalone host
+/// process each resolve it independently, so each destination is staged from its own directory; ② content is
+/// the plugin's whole output directory (dependencies, .deps.json, data trees included), not just dll + manifest;
+/// ③ the target directory is cleared before deployment, otherwise stale DLLs from the previous version would be
+/// scanned by <c>PluginLoader</c> and loaded twice; ④ the "host already ships this file" filter is evaluated
+/// per target against **that target's** directory — two hosts do not ship the same set, and judging both against
+/// one directory would either drop a needed dependency or split a shared contract into a second assembly identity;
+/// ⑤ <c>FORGEMIND_PLUGINS_DIR</c> is a runtime override and is not involved during the build phase;
+/// ⑥ a failure on a <c>Required</c> target fails the run, while a best-effort target (the standalone server's
+/// output, whose files a running server may hold open) is reported and does not stop the tests.</para>
 /// </summary>
 static bool StagePluginArtifacts(
-    string pluginProject, string pluginName, string configuration, ILogger logger, System.Text.StringBuilder log)
+    string pluginProject, string pluginName, string configuration,
+    IReadOnlyList<StageTarget> targets, ILogger logger, System.Text.StringBuilder log)
 {
+    string projectDir = Path.GetDirectoryName(pluginProject)!;
+
+    // Exclude ref/refint: those hold reference assemblies with the same file name but no
+    // method bodies — picking one would stage a dll that cannot load at runtime.
+    string? binary = null;
     try
     {
-        string projectDir = Path.GetDirectoryName(pluginProject)!;
-        // Exclude ref/refint: those hold reference assemblies with the same file name but no
-        // method bodies — picking one would stage a dll that cannot load at runtime.
-        string binary = Directory
+        binary = Directory
             .EnumerateFiles(Path.Combine(projectDir, "bin", configuration), pluginName + ".dll", SearchOption.AllDirectories)
             .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}ref{Path.DirectorySeparatorChar}")
                      && !p.Contains($"{Path.DirectorySeparatorChar}refint{Path.DirectorySeparatorChar}"))
             .OrderByDescending(File.GetLastWriteTimeUtc)
             .FirstOrDefault();
-
-        if (binary is null)
-        {
-            log.AppendLine($"Build output not found for {pluginName} under bin/{configuration}.");
-            return false;
-        }
-
-        string stageDir = Path.Combine(AppContext.BaseDirectory, "plugins", pluginName);
-        Directory.CreateDirectory(stageDir);
-        foreach (string stale in Directory.GetFiles(stageDir, "*", SearchOption.AllDirectories))
-            File.Delete(stale);
-
-        // Stage the plugin's whole output directory, not just its dll: a plugin may ship
-        // sibling dependencies (ForgeMind.Speedy.dll), a .deps.json, and runtime data trees
-        // (Knowledge/). Copying only dll + manifest silently breaks those.
-        string outputDir = Path.GetDirectoryName(binary)!;
-        foreach (string file in Directory.EnumerateFiles(outputDir, "*", SearchOption.AllDirectories))
-        {
-            string relative = Path.GetRelativePath(outputDir, file);
-
-            // Never stage a file the host already ships beside itself — the host assembly, and
-            // shared contract libraries such as the scan contract. A copy inside the plugin
-            // folder is loaded into the plugin load context as a SECOND assembly identity, so
-            // cross-boundary types split: the host's ScanDataProvider.Current then no longer
-            // matches the IScanDataProvider the plugin was compiled against and every call
-            // dies with MissingMethodException. Falling back to the host's copy is the whole
-            // point of the plugin contract.
-            if (File.Exists(Path.Combine(AppContext.BaseDirectory, relative)))
-            {
-                continue;
-            }
-
-            string destination = Path.Combine(stageDir, relative);
-            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-            File.Copy(file, destination, overwrite: true);
-        }
-
-        // Any file ending in ".manifest.json" is this plugin's manifest, whatever it is called
-        // on disk. The host resolves it as "<assembly name>.manifest.json" sitting next to the
-        // dll, so it is staged under that normalized name.
-        string? manifest = Directory
-            .EnumerateFiles(projectDir, "*.manifest.json")
-            .OrderBy(p => p, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-        if (manifest is not null)
-            File.Copy(manifest, Path.Combine(stageDir, pluginName + ".manifest.json"), overwrite: true);
-
-        return true;
     }
     catch (Exception ex)
     {
         log.AppendLine($"Staging {pluginName} failed: {ex.Message}");
         return false;
+    }
+
+    if (binary is null)
+    {
+        log.AppendLine($"Build output not found for {pluginName} under bin/{configuration}.");
+        return false;
+    }
+
+    string outputDir = Path.GetDirectoryName(binary)!;
+    bool ok = true;
+
+    foreach (StageTarget target in targets)
+    {
+        try
+        {
+            StageToTarget(outputDir, projectDir, pluginName, target);
+            log.AppendLine($"Staged {pluginName} -> {target.PluginsDirectory}");
+        }
+        catch (Exception ex)
+        {
+            log.AppendLine($"Staging {pluginName} -> {target.PluginsDirectory} failed: {ex.Message}");
+            if (target.Required)
+            {
+                ok = false;
+            }
+            else
+            {
+                // Infrastructure convenience copy: the destination being unavailable (a live server
+                // holding its plugin files open) is not a test failure, but it must stay visible.
+                logger.Warn(null, "[ForgeMindServerTest] {0} copy skipped for plugin {1}: {2}",
+                    target.PluginsDirectory, pluginName, ex.Message);
+            }
+        }
+    }
+
+    return ok;
+}
+
+/// <summary>
+/// The single copy implementation behind <see cref="StagePluginArtifacts"/>: clear this target's plugin
+/// directory, mirror the whole build output into it, skip files the target's own host directory already
+/// ships next to itself, and normalize the manifest to <c>&lt;pluginName&gt;.manifest.json</c> — the name
+/// PluginLoader resolves beside the dll.
+/// </summary>
+static void StageToTarget(string outputDir, string projectDir, string pluginName, StageTarget target)
+{
+    string stageDir = Path.Combine(target.PluginsDirectory, pluginName);
+    Directory.CreateDirectory(stageDir);
+    foreach (string stale in Directory.GetFiles(stageDir, "*", SearchOption.AllDirectories))
+        File.Delete(stale);
+
+    // Stage the plugin's whole output directory, not just its dll: a plugin may ship
+    // sibling dependencies (ForgeMind.Speedy.dll), a .deps.json, and runtime data trees
+    // (Knowledge/). Copying only dll + manifest silently breaks those.
+    foreach (string file in Directory.EnumerateFiles(outputDir, "*", SearchOption.AllDirectories))
+    {
+        string relative = Path.GetRelativePath(outputDir, file);
+
+        // Never stage a file the target host already ships beside itself — the host assembly, and
+        // shared contract libraries such as the scan contract. A copy inside the plugin
+        // folder is loaded into the plugin load context as a SECOND assembly identity, so
+        // cross-boundary types split: the host's ScanDataProvider.Current then no longer
+        // matches the IScanDataProvider the plugin was compiled against and every call
+        // dies with MissingMethodException. Falling back to the host's copy is the whole
+        // point of the plugin contract. Judged per target: each host's own directory holds
+        // a different set of sibling assemblies.
+        if (File.Exists(Path.Combine(target.HostBaseDirectory, relative)))
+        {
+            continue;
+        }
+
+        string destination = Path.Combine(stageDir, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        File.Copy(file, destination, overwrite: true);
+    }
+
+    // Any file ending in ".manifest.json" is this plugin's manifest, whatever it is called
+    // on disk. The host resolves it as "<assembly name>.manifest.json" sitting next to the
+    // dll, so it is staged under that normalized name.
+    string? manifest = Directory
+        .EnumerateFiles(projectDir, "*.manifest.json")
+        .OrderBy(p => p, StringComparer.Ordinal)
+        .FirstOrDefault();
+
+    if (manifest is not null)
+        File.Copy(manifest, Path.Combine(stageDir, pluginName + ".manifest.json"), overwrite: true);
+}
+
+/// <summary>
+/// Locates the host's own build output directory — the <c>AppContext.BaseDirectory</c> a server started
+/// directly from that output sees, hence where that process looks for <c>plugins\</c>. Resolved from the
+/// built host assembly instead of a guessed <c>bin\&lt;configuration&gt;\&lt;framework&gt;</c> path, using the same
+/// rules as the plugin lookup (newest write wins, ref/refint excluded), so extra output layouts are followed
+/// without editing this file.
+/// </summary>
+static string? ResolveHostBaseDirectory(string hostProject, string configuration, ILogger logger,
+    System.Text.StringBuilder log)
+{
+    try
+    {
+        string hostName = Path.GetFileNameWithoutExtension(hostProject);
+        string? hostDll = Directory
+            .EnumerateFiles(Path.Combine(Path.GetDirectoryName(hostProject)!, "bin", configuration),
+                hostName + ".dll", SearchOption.AllDirectories)
+            .Where(p => !p.Contains($"{Path.DirectorySeparatorChar}ref{Path.DirectorySeparatorChar}")
+                     && !p.Contains($"{Path.DirectorySeparatorChar}refint{Path.DirectorySeparatorChar}"))
+            .OrderByDescending(File.GetLastWriteTimeUtc)
+            .FirstOrDefault();
+
+        if (hostDll is null)
+        {
+            log.AppendLine($"Host output {hostName}.dll not found under bin/{configuration}: " +
+                           "plugins are staged to the test process only.");
+            return null;
+        }
+
+        return Path.GetDirectoryName(hostDll);
+    }
+    catch (Exception ex)
+    {
+        // Environment lookup, not a test assertion: a missing host output narrows the staging targets,
+        // it does not invalidate the run.
+        log.AppendLine($"Resolving the host output directory failed: {ex.Message}");
+        return null;
     }
 }
 
@@ -345,4 +446,15 @@ return exitCode;
 /// <summary>Marker type for the entry-point logger category.</summary>
 internal sealed class ForgeMindServerTestEntry
 {
+}
+
+/// <summary>
+/// One staging destination: the base directory of a host process (what its <c>AppContext.BaseDirectory</c>
+/// resolves to), which derives that process's plugin root. <c>Required</c> separates the destination the run
+/// itself depends on from the convenience copy handed to a standalone host.
+/// </summary>
+internal sealed record StageTarget(string HostBaseDirectory, bool Required)
+{
+    /// <summary>The plugins root that host scans: <c>&lt;base dir&gt;\plugins</c>.</summary>
+    public string PluginsDirectory { get; } = Path.Combine(HostBaseDirectory, "plugins");
 }

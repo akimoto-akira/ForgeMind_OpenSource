@@ -182,6 +182,18 @@ public sealed class UnrealScanner : IScanner
                     .ToList();
                 data.FunctionMap[cls.Name] = funcViews;
             }
+
+            // UPROPERTY views grouped by class name. The DSL member-assignment lowering needs the
+            // declared type of an *inherited* component member (e.g. ACharacter::CharacterMovement →
+            // UCharacterMovementComponent) to write one of its properties, so the pack must carry
+            // them — otherwise a blueprint has to re-declare a component it already inherits.
+            if (cls.Properties.Count > 0)
+            {
+                data.PropertyMap[cls.Name] = cls.Properties
+                    .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+                    .Select(p => new ScanPropertyView(p.Name, p.Type))
+                    .ToList();
+            }
         }
     }
 

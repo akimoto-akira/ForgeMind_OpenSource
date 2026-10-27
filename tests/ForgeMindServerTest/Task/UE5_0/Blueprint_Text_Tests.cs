@@ -23,6 +23,16 @@ using Task = System.Threading.Tasks.Task;
 //   Task 1 - Format("HP={0}", hp) -> string
 //   Task 2 - a + b (string concatenation)
 //   Task 3 - n.ToString() (int to string)
+//
+// False-touch comparison (VerifyIrSnapshot): inserted 2026-10-20 per user instruction,
+// after this case was confirmed by visual inspection. One per asset -- A side after
+// CompileAndSave, DSL side after ApplyDsl (6 total: Text_Fmt_A/B, Text_App_A/B,
+// Text_Num_A/B). Same convention as Blueprint_ShapeTrace_Tests / Blueprint_Destroy_Tests /
+// Blueprint_Vector_Tests / Blueprint_Camera_Tests. Baselines are seeded on the first
+// run; from the second run onward they actually diff. Task 2 and Task 3 are exactly the
+// two forms this case guards: `a + b` must stay a single Concat_StrStr (it had silently
+// degraded to Add_DoubleDouble with string->number casts) and `n.ToString()` must wire
+// the value straight to the FString pin (it had emitted class="int").
 // =========================================================================
 
 public sealed class Blueprint_Text : ITestCase
@@ -53,9 +63,13 @@ public sealed class Blueprint_Text : ITestCase
             BlueprintTestHelper.Connect(ctx, a1, f1.entryId, "then", f1.resultId, "execute");
             BlueprintTestHelper.Connect(ctx, a1, fmt.nodeId, "Result", f1.resultId, "ReturnValue");
             BlueprintTestHelper.CompileAndSave(ctx, a1);
+            // False-touch comparison (spec point 9: inserted per user instruction)
+            BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);
         }
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        // False-touch comparison
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Text_Fmt_B");
     }
 
     private static void BuildTask2(TestContext ctx)
@@ -74,9 +88,13 @@ public sealed class Blueprint_Text : ITestCase
             BlueprintTestHelper.Connect(ctx, a2, f2.entryId, "then", f2.resultId, "execute");
             BlueprintTestHelper.Connect(ctx, a2, cat.nodeId, "ReturnValue", f2.resultId, "ReturnValue");
             BlueprintTestHelper.CompileAndSave(ctx, a2);
+            // False-touch comparison
+            BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);
         }
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        // False-touch comparison
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Text_App_B");
     }
 
     private static void BuildTask3(TestContext ctx)
@@ -93,8 +111,12 @@ public sealed class Blueprint_Text : ITestCase
             BlueprintTestHelper.Connect(ctx, a3, f3.entryId, "then", f3.resultId, "execute");
             BlueprintTestHelper.Connect(ctx, a3, conv.nodeId, "ReturnValue", f3.resultId, "ReturnValue");
             BlueprintTestHelper.CompileAndSave(ctx, a3);
+            // False-touch comparison
+            BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);
         }
 
         BlueprintTestHelper.ApplyDsl(ctx, "");
+        // False-touch comparison
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Text_Num_B");
     }
 }

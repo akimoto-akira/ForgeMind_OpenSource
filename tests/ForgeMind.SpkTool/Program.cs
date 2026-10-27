@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Hoshino Kennji
 
 using System.Reflection;
+using ForgeMind.Dsl;
 using ForgeMind.Scan;
 using ForgeMind.Scan.Abstractions;
 
@@ -24,11 +25,17 @@ namespace ForgeMind.SpkTool;
 ///   overloads &lt;Name&gt;                 every declaration site of a function FName (owner/scope/return/params/meta)
 ///   resolve &lt;Name&gt; [--args t1,t2] [--returns T]   TryFindFunctionOwner arbitration result
 ///
+/// Offline DSL translation (drives the production pipeline; never contacts the bridge):
+///   translate --file &lt;dsl.cs&gt; [--engine-version 5.0] [--spk &lt;path&gt;]
+///
 /// Args for resolve: comma-separated positional arg types; an empty slot is a wildcard
 /// (e.g. --args "Vector,Vector,,HitResult"). --returns sets the expected return type.
 /// </summary>
 internal static class Program
 {
+    /// <summary>--meta: print each function's full metadata key set (besides DisplayName).</summary>
+    private static bool s_showMeta;
+
     private static int Main(string[] args)
     {
         var opts = ParseOptions(args, out List<string> positional);
@@ -42,6 +49,7 @@ internal static class Program
         string command = positional[0];
         string spkPath = opts.GetValueOrDefault("spk") ?? LocateDefaultSpk();
         string version = opts.GetValueOrDefault("version") ?? "5.0";
+        s_showMeta = opts.ContainsKey("meta");
 
         if (string.IsNullOrEmpty(spkPath) || !File.Exists(spkPath))
         {
@@ -49,6 +57,11 @@ internal static class Program
             Console.Error.WriteLine("[spktool] pass one with --spk <path>");
             return 2;
         }
+
+        // `translate` registers its own full-bundle provider (like the EngineIndex plugin) and
+        // needs no version-scoped one, so it branches before the scan-query provider opens.
+        if (command == "translate")
+            return Translate(positional, opts, spkPath);
 
         using SpkScanDataProvider provider =
             ScanPackLoader.FromFileVersionScoped(spkPath, version);
@@ -69,6 +82,9 @@ internal static class Program
                 return Overloads(provider, Require(positional, 1, "overloads <Name>"));
             case "resolve":
                 return Resolve(provider, positional, opts);
+            case "translate":
+                Console.Error.WriteLine("[spktool] internal error: translate handled earlier");
+                return 2;
             default:
                 Console.Error.WriteLine($"[spktool] unknown command '{command}'");
                 PrintUsage();
@@ -155,6 +171,67 @@ internal static class Program
 
     // ---- helpers ----
 
+    /// <summary>
+    /// Offline DSL -&gt; IR. Runs the **production** pipeline, not a copy of it:
+    /// <list type="bullet">
+    /// <item>ScanPackLoader.FromFile + ScanDataProviderRegistry.Register — exactly what
+    /// EngineIndexPlugin.OnLoad does, so translators query the same frozen index.</item>
+    /// <item>DslRegistrar.RegisterAll — exactly what DslPlugin.OnLoad does, so asset types
+    /// resolve through the same translator registry.</item>
+    /// <item>BatchIRAssembler.Assemble — the same parse / validate / translate / assemble path
+    /// the `dsl` tool runs.</item>
+    /// </list>
+    /// session / path / logger are all null, so nothing reaches the bridge: the IR is printed
+    /// here and never applied. This adds no dry-run to the `dsl` tool — its "IR only goes to the
+    /// engine" contract is untouched. Purpose is narrow and structural: spot a translator that
+    /// emitted a node whose class is a basic type name (e.g. class="int"), which otherwise only
+    /// surfaces after a full UE round-trip. It is not a substitute for the engine as the source
+    /// of truth on correctness.
+    /// </summary>
+    private static int Translate(List<string> positional, Dictionary<string, string> opts, string spkPath)
+    {
+        string? file = opts.GetValueOrDefault("file") ?? (positional.Count > 1 ? positional[1] : null);
+        if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+        {
+            Console.Error.WriteLine("usage: translate --file <dsl.cs> [--engine-version 5.0]");
+            return 2;
+        }
+
+        string dslCode = File.ReadAllText(file);
+        string engineVersion = opts.GetValueOrDefault("engine-version") ?? "5.0";
+
+        // Same wiring the plugins do at load time — see the method summary.
+        SpkScanDataProvider scanProvider = ScanPackLoader.FromFile(spkPath);
+        ScanDataProviderRegistry.Register(scanProvider);
+        DslRegistrar.RegisterAll();
+
+        Console.WriteLine($"[spktool] translate '{file}'  engine={engineVersion}");
+        Console.WriteLine($"[spktool] scan index registered from {spkPath}");
+        Console.WriteLine();
+
+        BatchIRResult result = BatchIRAssembler.Assemble(
+            dslCode, engineVersion,
+            compile: null, save: null, overwrite: null,
+            session: null, path: null, logger: null);
+
+        Console.WriteLine($"diagnostics ({result.Diagnostics.Entries.Count}):  success={result.Success}");
+        foreach (var d in result.Diagnostics.Entries)
+            Console.WriteLine($"  {d.Severity.ToString().ToUpperInvariant()} {d.Code} @{d.Line}:{d.Column} {d.Message}");
+        if (result.Diagnostics.Entries.Count == 0)
+            Console.WriteLine("  (none)");
+
+        Console.WriteLine();
+        if (result.BatchIRJson is null)
+        {
+            Console.WriteLine("IR: none produced (batch aborted before translation finished).");
+            return 1;
+        }
+
+        Console.WriteLine("Batch IR (NOT sent to the engine):");
+        Console.WriteLine(result.BatchIRJson);
+        return result.Success ? 0 : 1;
+    }
+
     private static string Describe(ScanFunctionView f)
     {
         string kind = f.IsPure ? "Pure" : (f.IsStatic ? "Static" : "Member");
@@ -165,7 +242,12 @@ internal static class Program
         string display = f.Metadata is not null && f.Metadata.TryGetValue("DisplayName", out string? dn) && !string.IsNullOrEmpty(dn)
             ? $"  DisplayName=\"{dn}\""
             : "";
-        return $"{f.Name}{ps} : {f.ReturnType ?? "(unknown?)"}  [{kind}]{display}  @{ShortPath(f.FilePath)}:{f.LineNumber}";
+        // --meta: dump every metadata key so autocast / ScriptMethod / WorldContext flags
+        // are visible offline (these decide whether a DSL form can be resolved by query).
+        string meta = s_showMeta && f.Metadata is { Count: > 0 }
+            ? "  meta{" + string.Join(", ", f.Metadata.Select(kv => kv.Value.Length == 0 ? kv.Key : $"{kv.Key}={kv.Value}")) + "}"
+            : "";
+        return $"{f.Name}{ps} : {f.ReturnType ?? "(unknown?)"}  [{kind}]{display}{meta}  @{ShortPath(f.FilePath)}:{f.LineNumber}";
     }
 
     private static string ShortPath(string path)
@@ -248,6 +330,9 @@ internal static class Program
         Console.WriteLine("  funcs   <Class>                  CollectFunctions (incl. inherited)");
         Console.WriteLine("  overloads <Name>                 every FName declaration site (owner/scope/return/params/meta)");
         Console.WriteLine("  resolve <Name> [--args t1,t2] [--returns T]   TryFindFunctionOwner arbitration");
+        Console.WriteLine("  translate --file <dsl.cs> [--engine-version 5.0]   offline DSL->IR (never sends to bridge)");
+        Console.WriteLine();
+        Console.WriteLine("Flags: --spk <path>  --version <v>  --meta (dump every metadata key on funcs/overloads)");
         Console.WriteLine();
         Console.WriteLine("Default bundle: <repo>/Commercial/ForgeMind.EngineIndex/Resources/engine.spk, default version 5.0.");
         Console.WriteLine();

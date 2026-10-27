@@ -30,6 +30,19 @@ public interface IScanDataProvider
     /// <summary>Collects the functions of a class (by name), including inherited ones.</summary>
     IReadOnlyList<ScanFunctionView> CollectFunctions(string className);
 
+    /// <summary>
+    /// Collects the UPROPERTY members of a class (by name), including inherited ones — same
+    /// aggregation rules as <see cref="CollectFunctions"/>. Used by name→type resolution of a
+    /// member-access receiver (writing a property of an inherited engine component), so the DSL
+    /// does not have to re-declare a component the parent class already owns.
+    /// <para>
+    /// Default is empty: a provider whose data source has no property capture (frozen packs predating
+    /// it, or the bridge reflection report) must report "unknown" instead of inventing entries —
+    /// consumers fall back and never guess (spec §8).
+    /// </para>
+    /// </summary>
+    IReadOnlyList<ScanPropertyView> CollectProperties(string className) => [];
+
     /// <summary>Finds every declaration site of a function name (exact match).</summary>
     IReadOnlyList<ScanFunctionDeclarationView> FindFunctionDeclarations(string functionName);
 
