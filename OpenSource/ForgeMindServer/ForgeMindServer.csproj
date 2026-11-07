@@ -69,7 +69,11 @@
          so we use a "post-build hook + separate process": the Exec-launched dotnet is an independent
          MSBuild instance, exempt from the current instance's circular-detection constraint;
          BuildPluginsOnHostBuild acts as the recursion switch so the host build inside the separate
-         process does not re-trigger this target — we only chain one level deep. -->
+         process does not re-trigger this target — we only chain one level deep.
+         This hook is for a top-level host build only. Every project that ProjectReferences the host
+         passes BuildPluginsOnHostBuild=false through AdditionalProperties: without it, building a
+         plugin chains plugin builds from inside that build, and the nested `dotnet build` collides with
+         the outer one over the host's obj/ files (MSB3073 at the Exec below, exit 268435466). -->
     <BuildPluginsOnHostBuild Condition="'$(BuildPluginsOnHostBuild)' == ''">true</BuildPluginsOnHostBuild>
     <ForgeMindEdition Condition="'$(ForgeMindEdition)' == ''">Open</ForgeMindEdition>
   </PropertyGroup>

@@ -697,6 +697,29 @@ public static class BlueprintTestHelper
         var assetResults = root?["response"]?["assetResults"]?.AsArray();
         if (assetResults != null)
         {
+            // Check bridge warnings for every asset type, not just the blueprint-backed ones
+            // compiled below: a material that could not write a pin or an output answered
+            // "No warnings"-free only by luck, and the two PROPERTY_NOT_FOUND entries a Custom
+            // node's Code raised were swallowed until the material failed at compile time.
+            // BP_NODE_NOT_FOUND / MAT_PIN_NOT_AVAILABLE / PROPERTY_NOT_FOUND all mean something
+            // the IR asked for did not land, so the step is a failure whatever it belongs to.
+            foreach (var asset in assetResults)
+            {
+                var warnings = asset?["warnings"]?.AsArray();
+                if (warnings is { Count: > 0 })
+                {
+                    var msgDetail = new System.Text.StringBuilder();
+                    foreach (var w in warnings)
+                    {
+                        var code = w?["code"]?.GetValue<string>() ?? "";
+                        var message = w?["message"]?.GetValue<string>() ?? "";
+                        msgDetail.AppendLine($"  {code}: {message}");
+                    }
+                    throw new TestFailureException(
+                        $"DSL applied but bridge reported warnings for '{asset?["path"]?.GetValue<string>()}':\n{msgDetail}");
+                }
+            }
+
             foreach (var asset in assetResults)
             {
                 // Blueprint-backed asset types: anything not listed here exists only in memory
@@ -710,24 +733,6 @@ public static class BlueprintTestHelper
                 if (asset?["assetType"]?.GetValue<string>() is not ("blueprint" or "blueprint_function_library"
                     or "level_blueprint" or "blueprint_macro_library"))
                     continue;
-
-                // Check bridge warnings: BP_NODE_NOT_FOUND etc. means node creation failed;
-                // compilation may still pass (blueprint just missing a call), but visual defects appear.
-                // Previously warnings weren't checked, so node creation failures were silently ignored -
-                // MatInst_Make_B user feedback "SetMaterial not created" was this gap.
-                var warnings = asset?["warnings"]?.AsArray();
-                if (warnings != null && warnings.Count > 0)
-                {
-                    var msgDetail = new System.Text.StringBuilder();
-                    foreach (var w in warnings)
-                    {
-                        var code = w?["code"]?.GetValue<string>() ?? "";
-                        var message = w?["message"]?.GetValue<string>() ?? "";
-                        msgDetail.AppendLine($"  {code}: {message}");
-                    }
-                    throw new TestFailureException(
-                        $"DSL applied but bridge reported warnings for '{asset?["path"]?.GetValue<string>()}':\n{msgDetail}");
-                }
 
                 var assetPath = asset["path"]?.GetValue<string>();
                 if (!string.IsNullOrEmpty(assetPath))
@@ -972,6 +977,12 @@ public static class BlueprintTestHelper
         var counters = new Dictionary<string, int>(StringComparer.Ordinal);
         var keyed = new List<(string Key, JsonNode Node)>();
 
+        // Pass 1 inventories the ids only. A reference to a node that sits later in the engine's
+        // list must be rewritten exactly as well as one to a node that sits earlier: rewriting while
+        // the map is still being filled left forward references as engine object names, and the two
+        // channels spell those differently because they create nodes in different orders - that is how
+        // a cross-channel check ended up comparing "MaterialExpressionConstant_0" with
+        // "MaterialExpressionConstant#0" for the same wire.
         foreach (var entry in nodes)
         {
             if (entry is not JsonObject node)
@@ -980,12 +991,18 @@ public static class BlueprintTestHelper
             string type = node["type"]?.GetValue<string>() ?? "";
             int occurrence = counters.TryGetValue(type, out int seen) ? seen : 0;
             counters[type] = occurrence + 1;
-            string key = $"{type}#{occurrence}";
 
             string id = node["id"]?.GetValue<string>() ?? "";
+            string key = $"{type}#{occurrence}";
             if (id.Length > 0)
                 remap[id] = key;
-            node["id"] = key;
+            keyed.Add((key, node));
+        }
+
+        // Pass 2 applies the completed map to the ids and to every reference.
+        foreach ((string key, JsonNode node) in keyed)
+        {
+            ((JsonObject)node)["id"] = key;
 
             if (node["inputs"] is JsonArray inputs)
             {
@@ -998,7 +1015,6 @@ public static class BlueprintTestHelper
                     .Select(i => (JsonNode)i.DeepClone())
                     .ToArray());
             }
-            keyed.Add((key, node));
         }
 
         definition!["nodes"] = new JsonArray(keyed
@@ -1271,6 +1287,103 @@ public static class BlueprintTestHelper
             ctx.AssertTrue(found >= count,
                 $"{assetPath}: expected {count} x {type}, found {found}. Built graph: {DescribeNodes(nodes)}");
         }
+    }
+
+    /// <summary>
+    /// Assert the material's output pin is actually fed: read the graph back and require
+    /// definition.materialOutputs to carry a sourceNodeId for that pin, pointing at an expression of the
+    /// expected class. A pin the graph does not feed is reported by the read side as absent - which is how a
+    /// built-but-unconnected material used to pass every other check in a case file.
+    /// </summary>
+    public static void ExpectOutputLink(TestContext ctx, string assetPath, string pin, string expectedSourceClass)
+    {
+        var response = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
+        ctx.AssertTrue(GetBool(response, "success"), $"get_asset_ir {assetPath}: {GetStr(response, "error")}");
+
+        var outputs = response["response"]?["definition"]?["materialOutputs"];
+        ctx.AssertTrue(outputs is not null,
+            $"{assetPath}: read side carries no definition.materialOutputs: {response.ToJsonString()}");
+
+        var pins = outputs!.AsObject();
+        string wired = string.Join(", ", pins
+            .Where(p => p.Value?["sourceNodeId"]?.GetValue<string>() is { Length: > 0 })
+            .Select(p => p.Key)
+            .OrderBy(k => k, StringComparer.Ordinal));
+        string source = pins.TryGetPropertyValue(pin, out var fed)
+            ? fed?["sourceNodeId"]?.GetValue<string>() ?? ""
+            : "";
+
+        ctx.AssertTrue(source.Length > 0,
+            $"{assetPath}: output pin '{pin}' is not connected - materialOutputs carries no sourceNodeId for it. " +
+            $"Pins fed in this graph: [{wired}]");
+        ctx.AssertTrue(source.StartsWith(expectedSourceClass, StringComparison.Ordinal),
+            $"{assetPath}: output pin '{pin}' is fed by '{source}', expected an expression of type " +
+            $"'{expectedSourceClass}'. Pins fed in this graph: [{wired}]");
+    }
+
+    /// <summary>
+    /// Assert the named input pins of one expression node are actually fed. Node-count assertions only prove
+    /// the node exists, so a blend-shaped node - LandscapeLayerBlend's layers, SetMaterialAttributes' pins,
+    /// Custom's arguments, where the wires live in a dynamic array rather than in fixed members - could report
+    /// the same graph as one whose layer wires were never attached. Read-back shape: definition.nodes[].inputs[]
+    /// = { name, expression, outputIndex, ... }, where expression is the source node's id and is absent for a
+    /// value-only pin.
+    /// </summary>
+    public static void ExpectExpressionInputLinks(TestContext ctx, string assetPath, string expressionClass, params string[] expectedPins)
+    {
+        var response = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
+        ctx.AssertTrue(GetBool(response, "success"), $"get_asset_ir {assetPath}: {GetStr(response, "error")}");
+        var nodes = response["response"]?["definition"]?["nodes"]?.AsArray();
+        ctx.AssertTrue(nodes is not null, $"get_asset_ir {assetPath}: definition carries no nodes: {response.ToJsonString()}");
+
+        var node = nodes!.FirstOrDefault(n => n?["type"]?.GetValue<string>() == expressionClass);
+        ctx.AssertTrue(node is not null,
+            $"{assetPath}: no expression of type '{expressionClass}' in the graph. Built graph: {DescribeNodes(nodes)}");
+
+        var inputs = node!["inputs"]?.AsArray();
+        var fedPins = inputs is null
+            ? new List<string>()
+            : inputs
+                .Where(i => !string.IsNullOrEmpty(i?["expression"]?.GetValue<string>()))
+                .Select(i => i!["name"]?.GetValue<string>() ?? "")
+                .ToList();
+
+        foreach (string pin in expectedPins)
+        {
+            ctx.AssertTrue(fedPins.Contains(pin, StringComparer.OrdinalIgnoreCase),
+                $"{assetPath}: '{expressionClass}' input pin '{pin}' is not wired to any source expression. " +
+                $"Pins fed on this node: [{string.Join(", ", fedPins)}]");
+        }
+    }
+
+    /// <summary>
+    /// Read the finished material's settings back through get_asset_ir (level=graph). The read side reports
+    /// them in definition.materialSettings under the engine property names.
+    /// </summary>
+    public static JsonObject ReadMaterialSettings(TestContext ctx, string assetPath)
+    {
+        var response = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
+        ctx.AssertTrue(GetBool(response, "success"), $"get_asset_ir {assetPath}: {GetStr(response, "error")}");
+        var settings = response["response"]?["definition"]?["materialSettings"]?.AsObject();
+        ctx.AssertTrue(settings is not null, $"get_asset_ir {assetPath}: definition carries no materialSettings");
+        return settings!;
+    }
+
+    /// <summary>
+    /// Assert one named material setting carries the expected value. Checked against the asset rather than
+    /// against what the create command was asked for, so a setting key the channel ignores - or a switch the
+    /// engine never received - fails here instead of becoming a material that was not in the requested mode.
+    /// Enum settings come back as the engine's short name with the enum prefix stripped.
+    /// </summary>
+    public static void ExpectMaterialSetting(TestContext ctx, string assetPath, string key, string expectedValue)
+    {
+        var actual = ReadMaterialSettings(ctx, assetPath)[key];
+        ctx.AssertTrue(actual is not null && actual.GetValueKind() == JsonValueKind.String,
+            $"{assetPath}: materialSettings.{key} is absent or not a string " +
+            $"(read back {actual?.ToJsonString() ?? "(absent)"})");
+        string value = actual!.GetValue<string>();
+        ctx.AssertTrue(value.Equals(expectedValue, StringComparison.OrdinalIgnoreCase),
+            $"{assetPath}: materialSettings.{key} = '{value}', expected '{expectedValue}'");
     }
 
     private static string MaterialExpressionIdValue(JsonNode response)

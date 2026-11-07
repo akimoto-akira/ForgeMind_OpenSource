@@ -400,38 +400,6 @@ public sealed class Material_ScalarParam : ITestCase
                 .Select(n => n?["parameterName"]?.GetValue<string>() ?? "(unnamed)")));
     }
 
-    /// <summary>
-    /// Assert the material's output pin is actually fed: read the graph back and require
-    /// definition.materialOutputs to carry a sourceNodeId for that pin, pointing at an expression of the
-    /// expected class. A pin the graph does not feed is reported by the read side as absent - which is how a
-    /// built-but-unconnected material used to pass every other check in this file.
-    /// </summary>
-    private static void ExpectOutputLink(TestContext ctx, string assetPath, string pin, string expectedSourceClass)
-    {
-        var response = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });
-        ctx.AssertTrue(GetBool(response, "success"), $"get_asset_ir {assetPath}: {GetStr(response, "error")}");
-
-        var outputs = response["response"]?["definition"]?["materialOutputs"];
-        ctx.AssertTrue(outputs is not null,
-            $"{assetPath}: read side carries no definition.materialOutputs: {response.ToJsonString()}");
-
-        var pins = outputs!.AsObject();
-        string wired = string.Join(", ", pins
-            .Where(p => p.Value?["sourceNodeId"]?.GetValue<string>() is { Length: > 0 })
-            .Select(p => p.Key)
-            .OrderBy(k => k, StringComparer.Ordinal));
-        string source = pins.TryGetPropertyValue(pin, out var fed)
-            ? fed?["sourceNodeId"]?.GetValue<string>() ?? ""
-            : "";
-
-        ctx.AssertTrue(source.Length > 0,
-            $"{assetPath}: output pin '{pin}' is not connected - materialOutputs carries no sourceNodeId for it. " +
-            $"Pins fed in this graph: [{wired}]");
-        ctx.AssertTrue(source.StartsWith(expectedSourceClass, StringComparison.Ordinal),
-            $"{assetPath}: output pin '{pin}' is fed by '{source}', expected an expression of type " +
-            $"'{expectedSourceClass}'. Pins fed in this graph: [{wired}]");
-    }
-
     private static JsonArray ReadNodes(TestContext ctx, string assetPath)
     {
         var response = EditorCall(ctx, "get_asset_ir", new { path = assetPath, level = "graph" });

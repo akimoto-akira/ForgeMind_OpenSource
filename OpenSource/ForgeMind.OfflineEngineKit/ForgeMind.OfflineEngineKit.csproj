@@ -12,7 +12,9 @@
     <!-- Host runtime public surface (Compat / Plugins / Bridge / Engine / DocumentEngine):
          Referenced via ProjectReference; Private=false so it is not copied into plugin output,
          provided by the host at runtime -->
-    <ProjectReference Include="..\ForgeMindServer\ForgeMindServer.csproj">
+    <!-- Host hook is for a top-level host build only: see BuildPluginsAfterHostBuild. -->
+    <ProjectReference Include="..\ForgeMindServer\ForgeMindServer.csproj"
+                      AdditionalProperties="BuildPluginsOnHostBuild=false">
       <Private>false</Private>
     </ProjectReference>
   </ItemGroup>

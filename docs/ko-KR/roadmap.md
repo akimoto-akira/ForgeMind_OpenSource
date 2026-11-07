@@ -1,22 +1,22 @@
 ﻿# ForgeMind 개발 로드맵
 
-이 로드맵은 ForgeMind 자산 생성 기능의 개발 진행 상황을 분야 및 상태별로 정리한 것입니다. 개발이 진행됨에 따라 지속적으로 업데이트됩니다. 데이터 출처: Step 3 자산 스냅샷(2026-10-26).
+이 로드맵은 ForgeMind 자산 생성 기능의 개발 진행 상황을 분야 및 상태별로 정리한 것입니다. 개발이 진행됨에 따라 지속적으로 업데이트됩니다. 데이터 출처: Step 3 자산 스냅샷(2026-11-03).
 
 ## 개요
 
 | 상태 | 수량 |
 | --- | ---: |
-| 완료 | 77 |
-| 개발 중 | 4 |
-| 계획 중 | 73 |
-| 합계 | 154 |
+| 완료 | 99 |
+| 개발 중 | 7 |
+| 계획 중 | 47 |
+| 합계 | 153 |
 
 ## 분야별 보기
 
 | 분야 | 완료 | 개발 중 | 계획 중 |
 | --- | ---: | ---: | ---: |
 | 블루프린트 | 72 | 1 | 0 |
-| 머티리얼 | 5 | 2 | 55 |
+| 머티리얼 | 27 | 5 | 29 |
 | 기타 | 0 | 1 | 18 |
 
 ## 블루프린트
@@ -102,58 +102,62 @@
 
 ## 머티리얼
 
-### 완료 (5)
+### 완료 (27)
 
+- 머티리얼 Material ARCamera
+- 머티리얼 Material ArcTrigLog
+- 머티리얼 Material Attributes
+- 머티리얼 Material CollectionPerInstance
 - 머티리얼 Material Compare
 - 머티리얼 Material Constant
-- 머티리얼 Material If
-- 머티리얼 Material ScalarParam
-- 머티리얼 Material Transform
-
-### 개발 중 (2)
-
-- 머티리얼 Material Attributes
+- 머티리얼 Material ControlFlowCustom
+- 머티리얼 Material CustomNormalOutputs
+- 머티리얼 Material Decal
+- 머티리얼 Material DistanceField
 - 머티리얼 Material Function
+- 머티리얼 Material If
+- 머티리얼 Material Interpolation
+- 머티리얼 Material Landscape
+- 머티리얼 Material LayersAndChannelMask
+- 머티리얼 Material LightVector
+- 머티리얼 Material NormalAndDepth
+- 머티리얼 Material ParamsExtra
+- 머티리얼 Material ScalarParam
+- 머티리얼 Material SceneTextures
+- 머티리얼 Material SkyAtmosphere
+- 머티리얼 Material StaticBool
+- 머티리얼 Material Switches
+- 머티리얼 Material Transform
+- 머티리얼 Material VertexAndInterpolator
+- 머티리얼 Material VolumeCloud
+- 머티리얼 Material WorldPosition
 
-### 계획 중 (55)
+### 개발 중 (5)
 
-- 머티리얼 AR 카메라 / 대기광 벡터
-- 머티리얼 Decal
-- 머티리얼 월드 좌표와 카메라
-- 머티리얼 볼륨 / 구름
-- 머티리얼 라이트 벡터 / 셰이딩 모델
-- 머티리얼 함수 호출 / 함수 IO
-- 머티리얼 매개변수 보충
-- 머티리얼 역삼각 / 로그 / 유틸리티 수학
+- 머티리얼 Material ParticleExpressions
+- 머티리얼 Material ParticleExtra
+- 머티리얼 Material PreSkinnedSources
+- 머티리얼 Material SpaceVectorBasics
+- 머티리얼 Material TimeAndScene
+
+### 계획 중 (29)
+
 - 머티리얼 벡터 매개변수
 - 머티리얼 벡터 연산
 - 머티리얼 노이즈
 - 머티리얼 그래프 내 유틸리티 노드
-- 머티리얼 지형 (Landscape)
-- 머티리얼 장면 텍스처 / 후처리 샘플링
 - 머티리얼 좌표 변환
-- 머티리얼 대기 / 하늘 / 구름
 - 머티리얼 헤어 / Strata / 커스텀 출력
 - 머티리얼 헤어 (Hair)
 - 머티리얼 폰트 / 텍스처 도구
-- 머티리얼 레이어 / 채널 매개변수
-- 머티리얼 스위치 / Switch
-- 머티리얼 보간 / Lerp
 - 머티리얼 수학 함수
 - 머티리얼 시간 / 장면 샘플링
 - 머티리얼 교체 / 스위치 보충
 - 머티리얼 교체 / 렌더링 스위치
 - 머티리얼 기타 2
 - 머티리얼 기타 수학 / 유틸리티 표현식
-- 머티리얼 머티리얼 함수
-- 머티리얼 머티리얼 속성 (Material Attributes)
-- 머티리얼 스칼라 매개변수
-- 머티리얼 비교
-- 머티리얼 법선 / 깊이
 - 머티리얼 특수 수학
 - 머티리얼 카메라 / VFX 샘플링
-- 머티리얼 프로그램 제어 / 커스텀
-- 머티리얼 공간 변환
 - 머티리얼 공간 벡터 기초
 - 머티리얼 산술 보충
 - 머티리얼 산술 연산
@@ -162,16 +166,11 @@
 - 머티리얼 텍스처 객체
 - 머티리얼 텍스처 샘플링
 - 머티리얼 커스텀 HLSL
-- 머티리얼 커스텀 법선 출력
 - 머티리얼 스키닝 / 사전 변형
 - 머티리얼 페이드 / 클립 / 로컬
-- 머티리얼 디스턴스 필드 (Distance Field)
 - 머티리얼 런타임 가상 텍스처 RVT
 - 머티리얼 채널 마스크
-- 머티리얼 SpeedTree / 데칼
-- 머티리얼 컬렉션 / 인스턴스 매개변수
-- 머티리얼 정적 부울
-- 머티리얼 버텍스 / 메시 드로잉
+- 머티리얼 SpeedTree
 
 ## 기타
 

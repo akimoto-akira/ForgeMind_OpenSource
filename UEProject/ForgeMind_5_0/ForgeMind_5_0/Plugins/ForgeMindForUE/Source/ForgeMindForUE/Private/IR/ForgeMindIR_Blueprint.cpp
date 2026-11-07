@@ -1550,8 +1550,26 @@ UObject* FBlueprintIRHandler::CreateStructAsset(FIRApplyContext& Ctx)
 				FStructureEditorUtils::OnStructureChanged(Struct, FStructureEditorUtils::EStructureEditorChangeInfo::RemovedVariable);
 				FStructureEditorUtils::CompileStructure(Struct);
 				Struct->MarkPackageDirty();
-				Ctx.Warn(TEXT("DEFAULT_MEMBER_REMOVED"),
-					FString::Printf(TEXT("Removed %d leftover default member(s) from struct '%s'"), DefaultGuids.Num(), *Ctx.Path));
+				// This removal is the routine cleanup for the default boolean member
+				// CreateUserDefinedStruct always inserts, so it describes a finished action,
+				// not a defect - and the DSL channel creates every struct through here, which
+				// turned it into a warning on every single struct asset built from DSL. Report
+				// only when default members are still present afterwards, i.e. the cleanup did
+				// not actually take effect and the struct does carry leftover noise.
+				int32 RemainingDefaults = 0;
+				const TArray<FStructVariableDescription>& RemainingVarDescs = FStructureEditorUtils::GetVarDesc(Struct);
+				for (const FStructVariableDescription& Desc : RemainingVarDescs)
+				{
+					if (Desc.VarName.ToString().StartsWith(TEXT("MemberVar_")))
+					{
+						++RemainingDefaults;
+					}
+				}
+				if (RemainingDefaults > 0)
+				{
+					Ctx.Warn(TEXT("DEFAULT_MEMBER_REMOVED"),
+						FString::Printf(TEXT("struct '%s' still carries %d default member(s) after cleanup"), *Ctx.Path, RemainingDefaults));
+				}
 			}
 		}
 	}

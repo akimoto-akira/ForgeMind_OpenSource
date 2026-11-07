@@ -30,9 +30,11 @@
 #include "Internationalization/Text.h"
 #include "UserDefinedStructure/UserDefinedStructEditorData.h"
 #include "UObject/Package.h"
+#include "UObject/ReferenceChainSearch.h"
 #include "UObject/SavePackage.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/UObjectIterator.h"
+
 // FEnumProperty / FArrayProperty / FScriptArrayHelper - used by create_input_action to
 // write a plugin asset's properties through reflection only.
 #include "UObject/UnrealType.h"
@@ -201,6 +203,133 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleSaveAsset(const TSharedPtr
 		FileOnDisk = FPaths::ProjectContentDir() / (Package->GetName().RightChop(FString(TEXT("/Game")).Len()) + FPackageName::GetAssetPackageExtension());
 	}
 	Result->SetStringField(TEXT("file"), FileOnDisk);
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// reload_asset
+//
+// Payload: { path }
+//
+// Drops one /Game asset's in-memory package and loads it back from disk. This is
+// the verification primitive for "what did save_asset actually persist": a
+// read-back right after a build inspects the in-memory object, which can diverge
+// from the bytes on disk. After this command the next get_asset_ir reads the
+// freshly loaded object - a wire that survived save + load shows up, and one that
+// did not is exposed while the session is still alive.
+//
+// save_asset stamps top-level objects RF_Standalone and the editor may root them;
+// both are cleared on every object in the package before a full purge so the
+// garbage collector can actually reclaim it - otherwise LoadPackage would hand
+// back the old in-memory objects and the reload would silently test nothing.
+// The response reports fromDisk=false when the old package survives the purge,
+// because an external reference holding it means exactly that.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleReloadAsset(const TSharedPtr<FJsonObject>& Payload)
+{
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+
+	FString AssetPath;
+	if (!Payload.IsValid()
+		|| (!Payload->TryGetStringField(TEXT("path"), AssetPath)
+			&& !Payload->TryGetStringField(TEXT("assetPath"), AssetPath)) || AssetPath.IsEmpty())
+	{
+		Result->SetBoolField(TEXT("reloaded"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("Required fields: path (asset path, e.g. /Game/Tests/UE5_0/Mat_Thing)"));
+		return Result;
+	}
+	if (!AssetPath.StartsWith(TEXT("/Game/")))
+	{
+		Result->SetBoolField(TEXT("reloaded"), false);
+		Result->SetStringField(TEXT("reason"), TEXT("Only /Game assets can be reloaded"));
+		return Result;
+	}
+
+	// For /Game assets the asset path is the package name.
+	const FString PackagePath = AssetPath;
+	const UPackage* ExistingAddress = FindObject<UPackage>(nullptr, *PackagePath);
+	if (ExistingAddress != nullptr)
+	{
+		// Unroot everything whose outermost package is this one. Enumerating by Outer was not
+		// enough: a package's metadata object is a root in its own right (run 20261029_1822,
+		// No. 79 reported the shortest chain as "(standalone) MetaData <pkg>.PackageMetaData ->
+		// Outer = Package"), and while it survives, the whole package survives with it, so the
+		// reload would read back the old in-memory objects and prove nothing. Walking every
+		// object once and comparing outermost catches those auxiliary objects too.
+		UPackage* Existing = const_cast<UPackage*>(ExistingAddress);
+		for (TObjectIterator<UObject> It; It; ++It)
+		{
+			UObject* Object = *It;
+			if (Object != nullptr && Object != Existing && Object->GetOutermost() == Existing)
+			{
+				Object->RemoveFromRoot();
+				Object->ClearFlags(RF_Standalone);
+			}
+		}
+		Existing->RemoveFromRoot();
+		Existing->ClearFlags(RF_Standalone);
+		Existing->SetDirtyFlag(false);
+		CollectGarbage(RF_NoFlags, /*bFullPurge*/ true);
+	}
+
+	// Whether the purge actually released the package has to be answered BEFORE loading it
+	// back, and not by comparing pointers afterwards: a freshly created package can land on
+	// the address the collected one vacated, and then the "survivor" chain that gets printed
+	// belongs to the new package's own metadata - which is exactly what made this command
+	// report a false hold on the asset reloaded by No. 79 (run 20261029_1822, and again in
+	// 20261029_1841 after the sweep was widened), even though the unrooting had worked.
+	const bool bReleasedBeforeLoad = ExistingAddress == nullptr
+		|| FindObject<UPackage>(nullptr, *PackagePath) == nullptr;
+
+	UPackage* Loaded = LoadPackage(nullptr, *PackagePath, LOAD_None);
+	if (Loaded == nullptr)
+	{
+		Result->SetBoolField(TEXT("reloaded"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(TEXT("Loading '%s' from disk failed"), *PackagePath));
+		return Result;
+	}
+	// The purge must have reclaimed the old package. One that is still resident means
+	// something referenced it, and reading it back would test the old in-memory objects
+	// instead of the disk - reported instead of pretended.
+	if (!bReleasedBeforeLoad)
+	{
+		// Diagnose the holder instead of guessing: every in-package object that survived
+		// the full purge is reachable by definition, so a shortest reference-chain search
+		// on the survivors names the subsystem that keeps the package alive. The holder
+		// varies with editor state (validation-on-save, shader compilation, thumbnails,
+		// ...), so it cannot be enumerated statically - report what the chain search finds.
+		// The package itself is checked too: a package with no surviving objects still
+		// answers every lookup with the stale in-memory shell.
+		FString Diagnosis;
+		TArray<UObject*> Survivors;
+		Survivors.Add(const_cast<UPackage*>(ExistingAddress));
+		GetObjectsWithOuter(const_cast<UPackage*>(ExistingAddress), Survivors, /*bIncludeNestedOuter*/ true);
+		for (UObject* Survivor : Survivors)
+		{
+			FReferenceChainSearch RefSearch(Survivor, EReferenceChainSearchMode::Shortest);
+			const FString RootPath = RefSearch.GetRootPath();
+			if (!RootPath.IsEmpty())
+			{
+				Diagnosis = FString::Printf(TEXT("%s is still referenced, shortest root chain:\n%s"), *Survivor->GetFullName(), *RootPath);
+				break;
+			}
+		}
+		if (Diagnosis.IsEmpty())
+		{
+			Diagnosis = TEXT("no surviving in-package object produced a reference chain");
+		}
+		UE_LOG(LogForgeMindBridge, Warning, TEXT("reload_asset '%s': package survived the purge. %s"), *PackagePath, *Diagnosis);
+
+		Result->SetBoolField(TEXT("reloaded"), false);
+		Result->SetStringField(TEXT("reason"), FString::Printf(
+			TEXT("The in-memory package survived the purge (an external reference holds it); a reload would read the old objects, not the disk. %s"),
+			*Diagnosis.Left(2048)));
+		return Result;
+	}
+
+	Result->SetBoolField(TEXT("reloaded"), true);
+	Result->SetBoolField(TEXT("fromDisk"), true);
+	Result->SetStringField(TEXT("path"), PackagePath);
 	return Result;
 }
 

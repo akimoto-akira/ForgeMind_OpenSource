@@ -142,7 +142,17 @@ public sealed class BridgeSession : IDisposable
         }
     }
 
-    /// <summary>Sends a request and awaits the matching response.</summary>
+    /// <summary>
+    /// Sends a request and awaits the matching response.
+    /// <para>Every await here drops the calling context (<c>ConfigureAwait(false)</c>) on purpose:
+    /// the tools above are synchronous, so a caller reaches this method through
+    /// <c>GetAwaiter().GetResult()</c> and parks its own thread until the answer comes back. If the
+    /// continuation were posted to that thread — which is what a captured context does, and the demo
+    /// window runs on a UI thread — the companion could answer perfectly and the caller would still
+    /// never wake: the reply completes the task, the resumption waits behind the thread that waits
+    /// for the reply. Only the completion path matters here, so no path may depend on the caller's
+    /// thread being free.</para>
+    /// </summary>
     public async Task<BridgeMessage> CallAsync(string name, JsonElement? payload, TimeSpan timeout)
     {
         if (!IsReady)
@@ -160,14 +170,15 @@ public sealed class BridgeSession : IDisposable
             // The UE bridge validates this token and rejects unknown ones.
             if (_requestTokens.Length > 0)
                 request.RequestToken = _requestTokens[_rng.Next(_requestTokens.Length)];
-            await SendAsync(request, _cts?.Token ?? CancellationToken.None);
+            await SendAsync(request, _cts?.Token ?? CancellationToken.None).ConfigureAwait(false);
 
             using var timeoutCts = new CancellationTokenSource(timeout);
-            Task completed = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token));
+            Task completed = await Task.WhenAny(tcs.Task, Task.Delay(Timeout.Infinite, timeoutCts.Token))
+                .ConfigureAwait(false);
             if (completed != tcs.Task)
                 throw new TimeoutException($"Bridge request '{name}' timed out after {timeout.TotalSeconds:0}s");
 
-            return await tcs.Task;
+            return await tcs.Task.ConfigureAwait(false);
         }
         finally
         {
@@ -178,10 +189,10 @@ public sealed class BridgeSession : IDisposable
     /// <summary>Sends a frame; writes are serialized to keep frames intact.</summary>
     public async Task SendAsync(BridgeMessage message, CancellationToken ct)
     {
-        await _writeLock.WaitAsync(ct);
+        await _writeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await FrameCodec.WriteFrameAsync(_stream, message, ct);
+            await FrameCodec.WriteFrameAsync(_stream, message, ct).ConfigureAwait(false);
         }
         finally
         {

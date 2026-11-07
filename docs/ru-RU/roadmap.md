@@ -1,22 +1,22 @@
 ﻿# Дорожная карта развития ForgeMind
 
-Эта дорожная карта отражает прогресс разработки функций генерации ассетов ForgeMind, сгруппированных по областям и статусам, и непрерывно обновляется по мере развития. Источник данных: снимок ассетов шага 3 (2026-10-26).
+Эта дорожная карта отражает прогресс разработки функций генерации ассетов ForgeMind, сгруппированных по областям и статусам, и непрерывно обновляется по мере развития. Источник данных: снимок ассетов шага 3 (2026-11-03).
 
 ## Обзор
 
 | Статус | Количество |
 | --- | ---: |
-| Завершено | 77 |
-| В разработке | 4 |
-| Запланировано | 73 |
-| Всего | 154 |
+| Завершено | 99 |
+| В разработке | 7 |
+| Запланировано | 47 |
+| Всего | 153 |
 
 ## Обзор по областям
 
 | Область | Завершено | В разработке | Запланировано |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Прочее | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,58 +102,62 @@
 
 ## Material
 
-### Завершено (5)
+### Завершено (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### В разработке (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Запланировано (55)
+### В разработке (5)
 
-- Material AR-камера / Вектор атмосферного света
-- Material Decal
-- Material Мировая позиция и камера
-- Material Объём / Облака
-- Material Вектор света / Модель затенения
-- Material Вызов функции / Ввод-вывод функции
-- Material Дополнение параметров
-- Material Обратная тригонометрия / Логарифм / Утилитарная математика
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Запланировано (29)
+
 - Material Параметр-вектор
 - Material Векторные операции
 - Material Шум
 - Material Утилитарные узлы в графе
-- Material Ландшафт (Landscape)
-- Material Текстура сцены / Выборка постобработки
 - Material Преобразование координат
-- Material Атмосфера / Небо / Облака
 - Material Волосы / Strata / Пользовательский вывод
 - Material Волосы (Hair)
 - Material Шрифты / Инструменты текстур
-- Material Слои / Параметры каналов
-- Material Переключатель / Switch
-- Material Интерполяция / Lerp
 - Material Математические функции
 - Material Время / Выборка сцены
 - Material Замена / Дополнение переключателя
 - Material Замена / Переключатель рендеринга
 - Material Разное 2
 - Material Разная математика / Утилитарные выражения
-- Material Функция material
-- Material Атрибуты material (Material Attributes)
-- Material Скалярный параметр
-- Material Сравнение
-- Material Нормаль / Глубина
 - Material Специальная математика
 - Material Камера / Выборка визуальных эффектов
-- Material Программное управление / Пользовательское
-- Material Пространственное преобразование
 - Material Основы пространственных векторов
 - Material Дополнение арифметики
 - Material Арифметические операции
@@ -162,16 +166,11 @@
 - Material Объект текстуры
 - Material Выборка текстуры
 - Material Пользовательский HLSL
-- Material Пользовательский вывод нормалей
-- Material Скиннинг / Предварительная деформация
+- Material Скиннинг / Преддеформация
 - Material Затухание / Обрезка / Локальное
-- Material Поле расстояния (Distance Field)
 - Material Виртуальная текстура времени выполнения RVT
 - Material Маска канала
-- Material SpeedTree / Decal
-- Material Коллекция / Параметры экземпляра
-- Material Статический bool
-- Material Рисование вершин / меша
+- Material SpeedTree
 
 ## Прочее
 

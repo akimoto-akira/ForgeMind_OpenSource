@@ -64,6 +64,12 @@ public:
 	 */
 	static void ArrangeMaterialExpressions(UObject* Asset, const TArray<UMaterialExpression*>& Expressions);
 
+	/**
+	 * Writes the measured node sizes collected so far to disk. Called at module
+	 * shutdown so the last (still throttled) batch survives the editor exit.
+	 */
+	static void FlushNodeSizeCache();
+
 private:
 	/** Material-graph-specific layout: data-flow tree from right to left. */
 	static void ArrangeMaterialGraph(UEdGraph* Graph, const TArray<UEdGraphNode*>& Nodes);

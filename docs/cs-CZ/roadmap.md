@@ -1,22 +1,22 @@
 ﻿# Plán vývoje ForgeMind
 
-Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, seskupených podle domén a stavů, a je průběžně aktualizován podle postupu vývoje. Zdroj dat: snímek assetů z kroku 3 (2026-10-26).
+Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, seskupených podle domén a stavů, a je průběžně aktualizován podle postupu vývoje. Zdroj dat: snímek assetů z kroku 3 (2026-11-03).
 
 ## Přehled
 
 | Stav | Počet |
 | --- | ---: |
-| Dokončeno | 77 |
-| Ve vývoji | 4 |
-| Plánováno | 73 |
-| Celkem | 154 |
+| Dokončeno | 99 |
+| Ve vývoji | 7 |
+| Plánováno | 47 |
+| Celkem | 153 |
 
 ## Procházet podle domén
 
 | Doména | Dokončeno | Ve vývoji | Plánováno |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Ostatní | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,58 +102,62 @@ Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, s
 
 ## Material
 
-### Dokončeno (5)
+### Dokončeno (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### Ve vývoji (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Plánováno (55)
+### Ve vývoji (5)
 
-- Material AR kamera / Vektor atmosférického světla
-- Material Decal
-- Material Světová pozice a kamera
-- Material Objem / Mraky
-- Material Vektor světla / Model stínování
-- Material Volání funkce / Vstup-výstup funkce
-- Material Doplnění parametrů
-- Material Inverzní trigonometrie / Logaritmus / Užitková matematika
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Plánováno (29)
+
 - Material Vektorový parametr
 - Material Vektorové operace
 - Material Šum
 - Material Užitkové uzly v grafu
-- Material Terén (Landscape)
-- Material Textura scény / Vzorkování postprocessingu
 - Material Transformace souřadnic
-- Material Atmosféra / Obloha / Mraky
 - Material Vlasy / Strata / Vlastní výstup
 - Material Vlasy (Hair)
 - Material Písma / Nástroje textur
-- Material Vrstvy / Parametry kanálů
-- Material Přepínač / Switch
-- Material Interpolace / Lerp
 - Material Matematické funkce
 - Material Čas / Vzorkování scény
 - Material Náhrada / Doplnění přepínače
 - Material Náhrada / Přepínač renderování
 - Material Různé 2
 - Material Různá matematika / Užitkové výrazy
-- Material Funkce material
-- Material Atributy material (Material Attributes)
-- Material Skalární parametr
-- Material Porovnání
-- Material Normála / Hloubka
 - Material Speciální matematika
 - Material Kamera / Vzorkování vizuálních efektů
-- Material Řízení programu / Vlastní
-- Material Prostorová transformace
 - Material Základy prostorových vektorů
 - Material Doplnění aritmetiky
 - Material Aritmetické operace
@@ -162,16 +166,11 @@ Tento plán zobrazuje průběh vývoje funkcí generování assetů ForgeMind, s
 - Material Objekt textury
 - Material Vzorkování textury
 - Material Vlastní HLSL
-- Material Vlastní výstup normál
 - Material Skinning / Předdeformace
 - Material Fade / Ořez / Lokální
-- Material Pole vzdálenosti (Distance Field)
 - Material Runtime virtuální textura RVT
 - Material Maska kanálu
-- Material SpeedTree / Decal
-- Material Kolekce / Parametry instancí
-- Material Statický bool
-- Material Kreslení vrcholů / sítě
+- Material SpeedTree
 
 ## Ostatní
 

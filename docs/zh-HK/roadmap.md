@@ -1,22 +1,22 @@
 ﻿# ForgeMind 開發路線圖
 
-本路線圖展示 ForgeMind 資產生成能力的開發進度，按領域與狀態分組，隨開發進展持續更新。資料來源：Step 3 素材快照（2026-10-26）。
+本路線圖展示 ForgeMind 資產生成能力的開發進度，按領域與狀態分組，隨開發進展持續更新。資料來源：Step 3 素材快照（2026-11-03）。
 
 ## 總覽
 
 | 狀態 | 數量 |
 | --- | ---: |
-| 已完成 | 77 |
-| 開發中 | 4 |
-| 計劃中 | 73 |
-| 合計 | 154 |
+| 已完成 | 99 |
+| 開發中 | 7 |
+| 計劃中 | 47 |
+| 合計 | 153 |
 
 ## 按領域瀏覽
 
 | 領域 | 已完成 | 開發中 | 計劃中 |
 | --- | ---: | ---: | ---: |
 | 藍圖 | 72 | 1 | 0 |
-| 材質 | 5 | 2 | 55 |
+| 材質 | 27 | 5 | 29 |
 | 其他 | 0 | 1 | 18 |
 
 ## 藍圖
@@ -102,58 +102,62 @@
 
 ## 材質
 
-### 已完成（5）
+### 已完成（27）
 
+- 材質 Material ARCamera
+- 材質 Material ArcTrigLog
+- 材質 Material Attributes
+- 材質 Material CollectionPerInstance
 - 材質 Material Compare
 - 材質 Material Constant
-- 材質 Material If
-- 材質 Material ScalarParam
-- 材質 Material Transform
-
-### 開發中（2）
-
-- 材質 Material Attributes
+- 材質 Material ControlFlowCustom
+- 材質 Material CustomNormalOutputs
+- 材質 Material Decal
+- 材質 Material DistanceField
 - 材質 Material Function
+- 材質 Material If
+- 材質 Material Interpolation
+- 材質 Material Landscape
+- 材質 Material LayersAndChannelMask
+- 材質 Material LightVector
+- 材質 Material NormalAndDepth
+- 材質 Material ParamsExtra
+- 材質 Material ScalarParam
+- 材質 Material SceneTextures
+- 材質 Material SkyAtmosphere
+- 材質 Material StaticBool
+- 材質 Material Switches
+- 材質 Material Transform
+- 材質 Material VertexAndInterpolator
+- 材質 Material VolumeCloud
+- 材質 Material WorldPosition
 
-### 計劃中（55）
+### 開發中（5）
 
-- 材質 AR 相機 / 大氣光向量
-- 材質 Decal
-- 材質 世界座標與相機
-- 材質 體積 / 雲
-- 材質 光照向量 / 著色模型
-- 材質 函數調用 / 函數 IO
-- 材質 參數補充
-- 材質 反三角 / 對數 / 工具數學
+- 材質 Material ParticleExpressions
+- 材質 Material ParticleExtra
+- 材質 Material PreSkinnedSources
+- 材質 Material SpaceVectorBasics
+- 材質 Material TimeAndScene
+
+### 計劃中（29）
+
 - 材質 向量參數
 - 材質 向量運算
 - 材質 雜訊
 - 材質 圖內工具節點
-- 材質 地形（Landscape）
-- 材質 場景紋理 / 後處理採樣
 - 材質 座標變換
-- 材質 大氣 / 天空 / 雲
 - 材質 頭髮 / Strata / 自訂輸出
 - 材質 頭髮（Hair）
 - 材質 字體 / 貼圖工具
-- 材質 圖層 / 通道參數
-- 材質 開關 / Switch
-- 材質 插值 / Lerp
 - 材質 數學函數
 - 材質 時間 / 場景採樣
 - 材質 替換 / 開關補充
 - 材質 替換 / 渲染開關
 - 材質 雜項 2
 - 材質 雜項數學 / 工具表達式
-- 材質 材質函數
-- 材質 材質屬性（Material Attributes）
-- 材質 純量參數
-- 材質 比較
-- 材質 法線 / 深度
 - 材質 特殊數學
 - 材質 相機 / 視效採樣
-- 材質 程式控制 / 自訂
-- 材質 空間變換
 - 材質 空間向量基礎
 - 材質 算術補充
 - 材質 算術運算
@@ -162,16 +166,11 @@
 - 材質 紋理物件
 - 材質 紋理採樣
 - 材質 自訂 HLSL
-- 材質 自訂法線輸出
 - 材質 蒙皮 / 預變形
 - 材質 衰減 / 裁剪 / 局部
-- 材質 距離場（Distance Field）
 - 材質 運行期虛擬紋理 RVT
 - 材質 通道遮罩
-- 材質 速度樹 / 貼花
-- 材質 集合 / 實例參數
-- 材質 靜態布爾
-- 材質 頂點 / 網格繪製
+- 材質 速度樹
 
 ## 其他
 

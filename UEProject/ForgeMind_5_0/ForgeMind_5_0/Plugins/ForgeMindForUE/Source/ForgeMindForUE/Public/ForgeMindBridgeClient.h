@@ -153,6 +153,7 @@ public:
 	TSharedPtr<FJsonObject> HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleBreakBlueprintPins(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleSaveAsset(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleReloadAsset(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleDeleteAsset(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCreateFunctionGraph(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleRemoveFunctionGraph(const TSharedPtr<FJsonObject>& Payload);
@@ -184,6 +185,9 @@ public:
 	// Material step commands (requirement docs 'one command per step' A side) - they build
 	// the same expression graph as the Asset IR material handler, see Private/IR.
 	TSharedPtr<FJsonObject> HandleCreateMaterial(const TSharedPtr<FJsonObject>& Payload);
+	TSharedPtr<FJsonObject> HandleCreateMaterialFunction(const TSharedPtr<FJsonObject>& Payload);
+	/** Creates the MaterialParameterCollection asset a CollectionParameter node references. */
+	TSharedPtr<FJsonObject> HandleCreateMaterialParameterCollection(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleAddMaterialExpression(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleConnectMaterialPins(const TSharedPtr<FJsonObject>& Payload);
 	TSharedPtr<FJsonObject> HandleCompileMaterial(const TSharedPtr<FJsonObject>& Payload);

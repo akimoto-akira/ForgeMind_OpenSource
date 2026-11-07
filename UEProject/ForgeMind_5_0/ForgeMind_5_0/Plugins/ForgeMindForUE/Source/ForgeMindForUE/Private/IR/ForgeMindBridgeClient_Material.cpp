@@ -1,8 +1,8 @@
 ﻿// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Hoshino Kennji
 
-// Material step commands: create_material / add_material_expression /
-// connect_material_pins / compile_material.
+// Material step commands: create_material / create_material_function /
+// add_material_expression / connect_material_pins / compile_material.
 //
 // The requirement docs describe a material build as a sequence of single MCP
 // commands (the "step by step" A-side workspace): create the asset, add one expression per
@@ -29,8 +29,10 @@
 #include "Factories/MaterialFactoryNew.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
+#include "Materials/MaterialFunction.h"
 #include "Misc/PackageName.h"
 #include "RHI.h"
+#include "ShaderCompiler.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
 
@@ -64,6 +66,115 @@ namespace
 		return Fallback;
 	}
 
+	/**
+	 * Append parameter entries to a material parameter collection through reflection.
+	 *
+	 * A collection's parameters live in the UPROPERTY arrays ScalarParameters and
+	 * VectorParameters; each element is a struct carrying the base's "ParameterName" (FName)
+	 * plus its own "DefaultValue" (float, or FLinearColor for a vector). Going through the
+	 * properties rather than the engine's typed helpers keeps this file free of any symbol the
+	 * Engine module might not export - the trap that turned Cast on a non-exported class into
+	 * an unresolved external (see ResolveLayerBlendInput in ForgeMindMaterialOps.cpp).
+	 *
+	 * An empty collection is not a usable target for a CollectionParameter node, so a step
+	 * command that creates one can fill it here; a material that references a name the
+	 * collection does not hold is rejected by the engine while compiling shaders, which no
+	 * step reported until both halves of that were fixed.
+	 */
+	bool AddCollectionParameters(UObject* Collection, const TCHAR* ArrayPropertyName, const TArray<TSharedPtr<FJsonValue>>& Entries, FString& OutError)
+	{
+		FArrayProperty* Array = Collection != nullptr ? CastField<FArrayProperty>(Collection->GetClass()->FindPropertyByName(ArrayPropertyName)) : nullptr;
+		FStructProperty* Element = Array != nullptr ? CastField<FStructProperty>(Array->Inner) : nullptr;
+		if (Element == nullptr)
+		{
+			OutError = FString::Printf(TEXT("the collection carries no '%s' parameter array"), ArrayPropertyName);
+			return false;
+		}
+		FNameProperty* NameProperty = FindFProperty<FNameProperty>(Element->Struct, TEXT("ParameterName"));
+		FProperty* DefaultProperty = Element->Struct ? Element->Struct->FindPropertyByName(TEXT("DefaultValue")) : nullptr;
+		if (NameProperty == nullptr || DefaultProperty == nullptr)
+		{
+			OutError = FString::Printf(TEXT("'%s' entries carry no ParameterName/DefaultValue"), ArrayPropertyName);
+			return false;
+		}
+
+		FScriptArrayHelper Helper(Array, Array->ContainerPtrToValuePtr<void>(Collection));
+		for (const TSharedPtr<FJsonValue>& Entry : Entries)
+		{
+			const TSharedPtr<FJsonObject>* Object = nullptr;
+			if (Entry.IsValid() && Entry->TryGetObject(Object) && Object != nullptr)
+			{
+				FString ParameterName;
+				(*Object)->TryGetStringField(TEXT("name"), ParameterName);
+				if (ParameterName.IsEmpty())
+				{
+					OutError = FString::Printf(TEXT("an entry of '%s' has no name"), ArrayPropertyName);
+					return false;
+				}
+
+				// AddValue constructs the struct, so the base's Id gets a real guid exactly as
+				// it would when the details panel adds a row, and the name is simply overwritten
+				// below (the struct's default name would otherwise collide inside one collection).
+				void* ElementData = Helper.GetRawPtr(Helper.AddValue());
+				NameProperty->SetPropertyValue(NameProperty->ContainerPtrToValuePtr<void>(ElementData), FName(*ParameterName));
+
+				if (const TSharedPtr<FJsonValue>* RawDefault = (*Object)->Values.Find(TEXT("defaultValue")); RawDefault != nullptr)
+				{
+					void* DefaultValueData = DefaultProperty->ContainerPtrToValuePtr<void>(ElementData);
+					if (FFloatProperty* ScalarValue = CastField<FFloatProperty>(DefaultProperty))
+					{
+						double Number = 0.0;
+						(*RawDefault)->TryGetNumber(Number);
+						ScalarValue->SetPropertyValue(DefaultValueData, static_cast<float>(Number));
+					}
+					else if (FDoubleProperty* DoubleValue = CastField<FDoubleProperty>(DefaultProperty))
+					{
+						double Number = 0.0;
+						(*RawDefault)->TryGetNumber(Number);
+						DoubleValue->SetPropertyValue(DefaultValueData, Number);
+					}
+					else if (FStructProperty* ColorValue = CastField<FStructProperty>(DefaultProperty))
+					{
+						TArray<double> Numbers;
+						if ((*RawDefault)->Type == EJson::Array)
+						{
+							for (const TSharedPtr<FJsonValue>& Channel : (*RawDefault)->AsArray())
+							{
+								double ChannelValue = 0.0;
+								if (Channel.IsValid() && Channel->TryGetNumber(ChannelValue))
+								{
+									Numbers.Add(ChannelValue);
+								}
+							}
+						}
+						else
+						{
+							FString Text;
+							if ((*RawDefault)->TryGetString(Text))
+							{
+								// The shared component-list parser ("r,g,b,a", "[r,g,b]", "(R=..)"): 5.0.3's
+								// FString has neither the character-separator Split overload nor Trim(), and
+								// reusing this parser keeps the colour text grammar identical to the one the
+								// material properties themselves accept.
+								ForgeMindMaterial::ParseNumericList(Text, Numbers);
+							}
+						}
+						if (Numbers.Num() >= 3 && ForgeMindMaterial::IsLinearColorStruct(ColorValue->Struct))
+						{
+							*static_cast<FLinearColor*>(DefaultValueData) = FLinearColor(
+								static_cast<float>(Numbers[0]), static_cast<float>(Numbers[1]),
+								static_cast<float>(Numbers[2]), static_cast<float>(Numbers.Num() > 3 ? Numbers[3] : 1.0));
+						}
+					}
+				}
+				continue;
+			}
+			OutError = FString::Printf(TEXT("an entry of '%s' is not an object with a name"), ArrayPropertyName);
+			return false;
+		}
+		return true;
+	}
+
 	TSharedPtr<FJsonObject> MaterialStepFailure(const TCHAR* Flag, const FString& Reason)
 	{
 		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -72,8 +183,12 @@ namespace
 		return Result;
 	}
 
-	/** Locate the material the step commands operate on. */
-	UMaterial* ResolveStepMaterial(const TSharedPtr<FJsonObject>& Payload, FString& OutReason)
+	/**
+	 * Locate the asset the step commands operate on: a material or a material function.
+	 * Both carry a material expression graph, so add / connect / compile apply to either;
+	 * the four commands only differ in which one create_* built.
+	 */
+	UObject* ResolveStepAsset(const TSharedPtr<FJsonObject>& Payload, FString& OutReason)
 	{
 		const FString Path = ReadString(Payload, TEXT("path"), TEXT("assetPath"));
 		if (Path.IsEmpty())
@@ -82,13 +197,12 @@ namespace
 			return nullptr;
 		}
 		UObject* Asset = ForgeMindMaterial::ResolveMaterial(Path);
-		UMaterial* Material = Cast<UMaterial>(Asset);
-		if (Material == nullptr)
+		if (Cast<UMaterial>(Asset) == nullptr && Cast<UMaterialFunction>(Asset) == nullptr)
 		{
-			OutReason = FString::Printf(TEXT("no material at '%s' (create it with create_material first)"), *Path);
+			OutReason = FString::Printf(TEXT("no material or material function at '%s' (create it with create_material / create_material_function first)"), *Path);
 			return nullptr;
 		}
-		return Material;
+		return Asset;
 	}
 }
 
@@ -155,6 +269,33 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateMaterial(const TShar
 		Result->SetStringField(TEXT("blendModeError"), Error);
 	}
 
+	// Every payload key beyond the command envelope is a material setting the caller
+	// asked for (e.g. bUseMaterialAttributes). Apply each through the same entry the IR
+	// channel's materialSettings uses, and report the ones that did not land instead of
+	// silently dropping them - a dropped key is exactly how a material that was never
+	// switched into the requested mode still answered created=true.
+	TArray<FString> FailedSettings;
+	if (Payload.IsValid())
+	{
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Payload->Values)
+		{
+			const FString& Key = Pair.Key;
+			if (Key == TEXT("path") || Key == TEXT("assetPath") || Key == TEXT("domain") || Key == TEXT("blendMode"))
+			{
+				continue;
+			}
+			FString SettingError;
+			if (!ForgeMindMaterial::ApplyMaterialSetting(Material, Key, Pair.Value, SettingError))
+			{
+				FailedSettings.Add(FString::Printf(TEXT("%s: %s"), *Key, *SettingError));
+			}
+		}
+	}
+	if (FailedSettings.Num() > 0)
+	{
+		Result->SetStringField(TEXT("propertyErrors"), FString::Join(FailedSettings, TEXT("; ")));
+	}
+
 	FAssetRegistryModule::AssetCreated(Material);
 	Material->MarkPackageDirty();
 
@@ -192,8 +333,8 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateMaterial(const TShar
 TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddMaterialExpression(const TSharedPtr<FJsonObject>& Payload)
 {
 	FString Reason;
-	UMaterial* Material = ResolveStepMaterial(Payload, Reason);
-	if (Material == nullptr)
+	UObject* Asset = ResolveStepAsset(Payload, Reason);
+	if (Asset == nullptr)
 	{
 		return MaterialStepFailure(TEXT("added"), Reason);
 	}
@@ -208,9 +349,17 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddMaterialExpression(cons
 	{
 		return MaterialStepFailure(TEXT("added"), FString::Printf(TEXT("expression class '%s' is not available in this editor"), *ClassRef));
 	}
+	if (Class->HasAnyClassFlags(CLASS_Abstract))
+	{
+		// An abstract class is a real name in the index but not something the graph may hold:
+		// the object gets built anyway and only aborts later from a pure virtual call. Say no
+		// here and name the reason - the shared construction funnel refuses the same way
+		// (ForgeMindMaterial::CreateExpression), this only makes the step's answer readable.
+		return MaterialStepFailure(TEXT("added"), FString::Printf(TEXT("expression class '%s' is abstract - a concrete subclass has to be asked for"), *ClassRef));
+	}
 
 	const FString ParameterName = ReadString(Payload, TEXT("name"), TEXT("parameterName"));
-	UMaterialExpression* Expression = ForgeMindMaterial::CreateExpression(Material, Class, ParameterName);
+	UMaterialExpression* Expression = ForgeMindMaterial::CreateExpression(Asset, Class, ParameterName);
 	if (Expression == nullptr)
 	{
 		return MaterialStepFailure(TEXT("added"), FString::Printf(TEXT("failed to create %s"), *Class->GetName()));
@@ -253,17 +402,25 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddMaterialExpression(cons
 		}
 	}
 
+	// Every property the step asked for has now been written; let the expression run the
+	// fixups the details panel would have triggered. UMaterialExpressionCollectionParameter
+	// derives its ParameterId from ParameterName only inside PostEditChangeProperty
+	// (MaterialExpressions.cpp:15337-15351), and the compiler looks the collection entry up by
+	// that Id - so a node that was merely property-written reports
+	// "CollectionParameter has invalid parameter <name>" (run 20261029_1616, No. 86).
+	Expression->PostEditChange();
+
 	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("added"), true);
 	Result->SetStringField(TEXT("expressionId"), Expression->GetName());
 	Result->SetStringField(TEXT("expressionClass"), ForgeMindMaterial::ExpressionTypeName(Expression));
 	TArray<UMaterialExpression*> All;
-	ForgeMindMaterial::GetExpressions(Material, All);
+	ForgeMindMaterial::GetExpressions(Asset, All);
 	Result->SetNumberField(TEXT("expressionCount"), All.Num());
 	// Same automatic tidy the blueprint graph commands run after mutating the graph:
 	// a freshly created expression has no editor position at all, so without this every
 	// bridge-assembled material opens as a pile of nodes on one spot.
-	ForgeMindMaterial::ArrangeLayout(Material);
+	ForgeMindMaterial::ArrangeLayout(Asset);
 	if (Failed.Num() > 0)
 	{
 		// A field the expression does not carry is reported, not dropped: the step
@@ -305,8 +462,8 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleAddMaterialExpression(cons
 TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectMaterialPins(const TSharedPtr<FJsonObject>& Payload)
 {
 	FString Reason;
-	UMaterial* Material = ResolveStepMaterial(Payload, Reason);
-	if (Material == nullptr)
+	UObject* Asset = ResolveStepAsset(Payload, Reason);
+	if (Asset == nullptr)
 	{
 		return MaterialStepFailure(TEXT("connected"), Reason);
 	}
@@ -332,18 +489,52 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectMaterialPins(const 
 		return MaterialStepFailure(TEXT("connected"), TEXT("Required fields: toExpression and toPin (or, for the constant form, fromExpression, fromPin and constant)"));
 	}
 
+	UMaterialExpression* Source = bConstantForm ? nullptr : ForgeMindMaterial::FindExpression(Asset, FromId);
+	if (ForgeMindMaterial::GetExecutionOutput(Source, FromPin) != nullptr)
+	{
+		// Material execution inputs are named "Input" in the engine graph; they must not go through the numeric input parser.
+		if (TargetPin != TEXT("Input"))
+		{
+			return MaterialStepFailure(TEXT("connected"), TEXT("execution connections require toPin=Input"));
+		}
+		UMaterialExpression* Target = ForgeMindMaterial::FindExpression(Asset, TargetId);
+		FString Error;
+		if (!ForgeMindMaterial::ConnectExecutionOutput(Source, FromPin, Target, Error))
+		{
+			return MaterialStepFailure(TEXT("connected"), Error);
+		}
+		ForgeMindMaterial::ArrangeLayout(Asset);
+		TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+		Result->SetBoolField(TEXT("connected"), true);
+		Result->SetStringField(TEXT("mode"), TEXT("exec"));
+		Result->SetStringField(TEXT("fromExpression"), FromId);
+		Result->SetStringField(TEXT("fromPin"), FromPin);
+		Result->SetStringField(TEXT("toExpression"), TargetId);
+		Result->SetStringField(TEXT("toPin"), TargetPin);
+		return Result;
+	}
+
 	FExpressionInput* Input = nullptr;
 	if (TargetId == TEXT("Material") || TargetId == TEXT("MaterialInterface"))
 	{
-		Input = ForgeMindMaterial::GetMaterialOutputInput(Material, TargetPin);
+		Input = ForgeMindMaterial::GetMaterialOutputInput(Asset, TargetPin);
 		if (Input == nullptr)
 		{
 			return MaterialStepFailure(TEXT("connected"), FString::Printf(TEXT("'%s' is not a material output pin of this material"), *TargetPin));
 		}
+		// A pin the engine will not read is not a connection: post-process materials accept an
+		// Opacity wire and drop it at compile time (UMaterial::IsPropertyActive, Material.cpp:
+		// 5286-5289), and until now every step around it still answered connected=true, so a task
+		// doc question could stay green while asserting nothing.
+		if (!ForgeMindMaterial::IsMaterialOutputActive(Asset, TargetPin))
+		{
+			return MaterialStepFailure(TEXT("connected"), FString::Printf(
+				TEXT("'%s' is not an output this material uses - the engine ignores it for the current domain / blend mode / shader frequency (see UMaterial::IsPropertyActive)"), *TargetPin));
+		}
 	}
 	else
 	{
-		UMaterialExpression* Target = ForgeMindMaterial::FindExpression(Material, TargetId);
+		UMaterialExpression* Target = ForgeMindMaterial::FindExpression(Asset, TargetId);
 		if (Target == nullptr)
 		{
 			return MaterialStepFailure(TEXT("connected"), FString::Printf(TEXT("no expression '%s' in the material (use the expressionId returned by add_material_expression)"), *TargetId));
@@ -359,7 +550,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectMaterialPins(const 
 	if (bConstantForm)
 	{
 		FString Error;
-		if (!ForgeMindMaterial::ConnectConstant(Input, Material, *ConstantField, Error))
+		if (!ForgeMindMaterial::ConnectConstant(Input, Asset, *ConstantField, Error))
 		{
 			return MaterialStepFailure(TEXT("connected"), Error);
 		}
@@ -374,22 +565,31 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectMaterialPins(const 
 		}
 		// A new node - the constant just created - is in the graph, so tidy like the
 		// link form below does.
-		ForgeMindMaterial::ArrangeLayout(Material);
+		ForgeMindMaterial::ArrangeLayout(Asset);
 		return Result;
 	}
 
-	UMaterialExpression* Source = ForgeMindMaterial::FindExpression(Material, FromId);
 	if (Source == nullptr)
 	{
 		return MaterialStepFailure(TEXT("connected"), FString::Printf(TEXT("no expression '%s' in the material (use the expressionId returned by add_material_expression)"), *FromId));
 	}
 	int32 OutputIndex = 0;
-	if (!ForgeMindMaterial::TryResolveOutputIndex(FromPin, OutputIndex))
+	// Resolve against the outputs the source actually declares first: an expression
+	// like TextureSample carries named outputs beyond the generic table (RGBA at
+	// index 5, while index 0 is RGB), and a name that resolves there must land on
+	// the engine's own pin rather than the generic index-0 default - wiring RGBA
+	// to output 0 hands the target a float3 and turns into a shader cast error
+	// after every step has already reported success. A name match also means the
+	// index is a real pin, not a channel, so it is handed to ConnectOutputInput as
+	// a named request (DecalDerivative's DDY lives at index 1, inside the range the
+	// channel swizzles use).
+	const bool bNamedOutput = ForgeMindMaterial::TryResolveNamedOutputIndex(Source, FromPin, OutputIndex);
+	if (!bNamedOutput && !ForgeMindMaterial::TryResolveOutputIndex(FromPin, OutputIndex))
 	{
-		return MaterialStepFailure(TEXT("connected"), FString::Printf(TEXT("'%s' is not an output of a material expression (expected one of Out / RGB / RGBA / R / G / B / A)"), *FromPin));
+		return MaterialStepFailure(TEXT("connected"), FString::Printf(TEXT("'%s' is not an output of a material expression (expected one of Out / RGB / RGBA / R / G / B / A, or one of the output names the source declares)"), *FromPin));
 	}
 	FString ConnectError;
-	if (!ForgeMindMaterial::ConnectOutputInput(Material, Input, Source, OutputIndex, ConnectError))
+	if (!ForgeMindMaterial::ConnectOutputInput(Asset, Input, Source, OutputIndex, ConnectError, bNamedOutput))
 	{
 		return MaterialStepFailure(TEXT("connected"), ConnectError);
 	}
@@ -397,7 +597,7 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectMaterialPins(const 
 	// A new wire - and, for a channel request against a single-output source, the
 	// inserted extraction mask - changes the layout-relevant structure of the
 	// graph, so re-run the tidy exactly like connect_blueprint_pins does.
-	ForgeMindMaterial::ArrangeLayout(Material);
+	ForgeMindMaterial::ArrangeLayout(Asset);
 
 	Result->SetBoolField(TEXT("connected"), true);
 	Result->SetStringField(TEXT("fromExpression"), FromId);
@@ -427,25 +627,236 @@ TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleConnectMaterialPins(const 
 TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCompileMaterial(const TSharedPtr<FJsonObject>& Payload)
 {
 	FString Reason;
-	UMaterial* Material = ResolveStepMaterial(Payload, Reason);
-	if (Material == nullptr)
+	UObject* Asset = ResolveStepAsset(Payload, Reason);
+	if (Asset == nullptr)
 	{
 		return MaterialStepFailure(TEXT("compiled"), Reason);
 	}
 
-	Material->PostEditChange();
-	Material->MarkPackageDirty();
+	Asset->PostEditChange();
+	Asset->MarkPackageDirty();
 	// Final tidy pass, mirroring compile_blueprint's re-layout after a graph edit.
-	ForgeMindMaterial::ArrangeLayout(Material);
+	ForgeMindMaterial::ArrangeLayout(Asset);
+
+	// Report what the engine actually made of the graph. Shader compilation is
+	// asynchronous in the editor, so the queue is drained first (the same way the
+	// editor's own harness does) and the compile state is read back afterwards - until
+	// now this step answered compiled=true whatever the material did, which let a
+	// material the engine rejected pass its case (user note 2026-10-28, biting again in
+	// the run after 20261029_1534). Anything that still cannot be judged here - a
+	// material whose shader map nobody requested yet - is said so out loud in
+	// shaderMapState instead of being reported as success.
+	if (GShaderCompilingManager != nullptr)
+	{
+		GShaderCompilingManager->FinishAllCompilation();
+	}
 
 	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
-	Result->SetBoolField(TEXT("compiled"), true);
-	Result->SetStringField(TEXT("path"), Material->GetPathName());
-	Result->SetStringField(TEXT("materialState"),
-		Material->GetMaterialResource(GMaxRHIFeatureLevel) != nullptr ? TEXT("compiled") : TEXT("pending"));
-	Result->SetBoolField(TEXT("compilingOrHadCompileError"), Material->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel));
+	Result->SetStringField(TEXT("path"), Asset->GetPathName());
+	bool bCompiled = true;
+	TArray<FString> CompileErrors;
+	FString ShaderMapState = TEXT("function");
+	// The compile state below is a UMaterial question: a material function is compiled
+	// into every material that calls it and carries no resource of its own, so for a
+	// function the step reports the graph it left behind instead of a shader state.
+	if (UMaterial* Material = Cast<UMaterial>(Asset))
+	{
+		const FMaterialResource* Resource = Material->GetMaterialResource(GMaxRHIFeatureLevel);
+		if (Resource == nullptr)
+		{
+			ShaderMapState = TEXT("missing resource");
+		}
+		else if (!Resource->IsCompilationFinished())
+		{
+			ShaderMapState = TEXT("pending");
+		}
+		else
+		{
+			ShaderMapState = TEXT("finished");
+			for (const FString& Error : Resource->GetCompileErrors())
+			{
+				CompileErrors.Add(Error);
+			}
+		}
+		if (CompileErrors.Num() == 0 && ShaderMapState == TEXT("finished")
+			&& Material->IsCompilingOrHadCompileError(GMaxRHIFeatureLevel))
+		{
+			// The engine flagged a failure but left no message behind; report the fact
+			// rather than letting it turn into a silent pass.
+			CompileErrors.Add(TEXT("the engine reported a shader compile error without a message"));
+		}
+		bCompiled = CompileErrors.Num() == 0;
+	}
+	Result->SetBoolField(TEXT("compiled"), bCompiled);
+	Result->SetStringField(TEXT("materialState"), Cast<UMaterial>(Asset) != nullptr && !bCompiled ? TEXT("failed") : ShaderMapState);
+	Result->SetStringField(TEXT("shaderMapState"), ShaderMapState);
+	if (CompileErrors.Num() > 0)
+	{
+		Result->SetStringField(TEXT("reason"), FString::Join(CompileErrors, TEXT("; ")));
+		TArray<TSharedPtr<FJsonValue>> ErrorValues;
+		for (const FString& Error : CompileErrors)
+		{
+			ErrorValues.Add(MakeShared<FJsonValueString>(Error));
+		}
+		Result->SetArrayField(TEXT("compileErrors"), ErrorValues);
+	}
 	TArray<UMaterialExpression*> Expressions;
-	ForgeMindMaterial::GetExpressions(Material, Expressions);
+	ForgeMindMaterial::GetExpressions(Asset, Expressions);
 	Result->SetNumberField(TEXT("expressionCount"), Expressions.Num());
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// create_material_function
+//
+// Payload:
+//   path - project asset path, e.g. /Game/Functions/F_MyFunc
+//
+// A material function is the graph a MaterialFunctionCall node calls: it carries
+// expressions like a material, but no output pins of its own - its interface is the
+// FunctionInput / FunctionOutput expressions placed in it. The same step commands
+// (add_material_expression / connect_material_pins / compile_material) build that
+// graph, which is why this command exists next to create_material rather than as a
+// separate family: from here on the two asset kinds follow the same path.
+//
+// The asset is registered with the asset registry and left dirty; the caller
+// persists it with save_asset.
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateMaterialFunction(const TSharedPtr<FJsonObject>& Payload)
+{
+	const FString AssetPath = ReadString(Payload, TEXT("path"), TEXT("assetPath"));
+	if (AssetPath.IsEmpty())
+	{
+		return MaterialStepFailure(TEXT("created"), TEXT("Required field: path (project asset path, e.g. /Game/Functions/F_MyFunc)"));
+	}
+
+	FString PackagePath;
+	FString AssetName;
+	FString Reason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Functions/F_MyFunc"), PackagePath, AssetName, Reason))
+	{
+		return MaterialStepFailure(TEXT("created"), Reason);
+	}
+
+	// The same creation call the Asset IR material handler uses for a material function
+	// (CreateAssetInstance registers the asset and leaves the package dirty), so the
+	// function a step command builds and the one an IR definition builds start out as the
+	// same object.
+	UObject* Asset = ForgeMindIR::CreateAssetInstance(UMaterialFunction::StaticClass(), PackagePath, false);
+	UMaterialFunction* Function = Cast<UMaterialFunction>(Asset);
+	if (Function == nullptr)
+	{
+		return MaterialStepFailure(TEXT("created"), FString::Printf(TEXT("material function creation failed at '%s'"), *PackagePath));
+	}
+
+	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("created"), true);
+	Result->SetBoolField(TEXT("dirty"), Function->GetPackage()->IsDirty());
+	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
+	TArray<UMaterialExpression*> Expressions;
+	ForgeMindMaterial::GetExpressions(Function, Expressions);
+	Result->SetNumberField(TEXT("expressionCount"), Expressions.Num());
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// create_material_parameter_collection
+//
+// Payload:
+//   path    - project asset path, e.g. /Game/Tests/UE5_0/MPC_Demo
+//   scalars - optional array of { name, defaultValue(number) }
+//   vectors - optional array of { name, defaultValue(number[] or "r,g,b,a") }
+//
+// A MaterialParameterCollection is the asset a CollectionParameter node's "Collection"
+// reference points at. Without a way to create it, that reference can only ever fail to
+// resolve - and an unresolvable object reference is reported, never quietly stored as null
+// (the same rule the material texture reference follows). An empty collection resolves but is
+// still nothing to read: the engine rejects the material while compiling it, which the suite
+// did not see either until compile_material started reporting shader errors. Both halves are
+// covered now: the command can fill the parameter list, and a bad compile ends the run.
+//
+// The class is resolved by name through reflection rather than by including its header and
+// naming UMaterialParameterCollection::StaticClass(): a class whose UCLASS carries no export
+// macro links fine here and then fails at link time with an unresolved GetPrivateStaticClass
+// (see ResolveLayerBlendInput in ForgeMindMaterialOps.cpp).
+// ---------------------------------------------------------------------------
+TSharedPtr<FJsonObject> FForgeMindBridgeClient::HandleCreateMaterialParameterCollection(const TSharedPtr<FJsonObject>& Payload)
+{
+	const FString AssetPath = ReadString(Payload, TEXT("path"), TEXT("assetPath"));
+	if (AssetPath.IsEmpty())
+	{
+		return MaterialStepFailure(TEXT("created"), TEXT("Required field: path (project asset path, e.g. /Game/Tests/UE5_0/MPC_Demo)"));
+	}
+
+	FString PackagePath;
+	FString AssetName;
+	FString Reason;
+	if (!PrepareNewAssetLocation(AssetPath, TEXT("/Game/Tests/UE5_0/MPC_Demo"), PackagePath, AssetName, Reason))
+	{
+		return MaterialStepFailure(TEXT("created"), Reason);
+	}
+
+	UClass* CollectionClass = ForgeMindIR::ResolveClass(TEXT("MaterialParameterCollection"));
+	if (CollectionClass == nullptr)
+	{
+		return MaterialStepFailure(TEXT("created"), TEXT("UMaterialParameterCollection is not available in this editor"));
+	}
+	UObject* Collection = ForgeMindIR::CreateAssetInstance(CollectionClass, PackagePath, false);
+	if (Collection == nullptr)
+	{
+		return MaterialStepFailure(TEXT("created"), FString::Printf(TEXT("material parameter collection creation failed at '%s'"), *PackagePath));
+	}
+
+	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("created"), true);
+	Result->SetBoolField(TEXT("dirty"), Collection->GetPackage()->IsDirty());
+	Result->SetStringField(TEXT("path"), FString::Printf(TEXT("%s.%s"), *PackagePath, *AssetName));
+
+	// Fill the parameter list when the payload asks for one. The names have to exist inside
+	// the collection or every node pointing at them is a material the engine will refuse.
+	TArray<FString> ParameterErrors;
+	if (Payload.IsValid())
+	{
+		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Payload->Values)
+		{
+			FString ArrayPropertyName;
+			if (Pair.Key.Equals(TEXT("scalars"), ESearchCase::IgnoreCase))
+			{
+				ArrayPropertyName = TEXT("ScalarParameters");
+			}
+			else if (Pair.Key.Equals(TEXT("vectors"), ESearchCase::IgnoreCase))
+			{
+				ArrayPropertyName = TEXT("VectorParameters");
+			}
+			else
+			{
+				continue;
+			}
+			if (Pair.Value.IsValid() && Pair.Value->Type == EJson::Array)
+			{
+				FString Error;
+				if (!AddCollectionParameters(Collection, *ArrayPropertyName, Pair.Value->AsArray(), Error))
+				{
+					ParameterErrors.Add(Error);
+				}
+			}
+		}
+	}
+	if (ParameterErrors.Num() > 0)
+	{
+		Result->SetBoolField(TEXT("created"), false);
+		Result->SetBoolField(TEXT("compiled"), false);
+		Result->SetStringField(TEXT("reason"), FString::Join(ParameterErrors, TEXT("; ")));
+		return Result;
+	}
+	// Tell the collection its contents changed. It rebuilds the parameter caches and the
+	// uniform buffer layout inside PostEditChangeProperty (and, for an asset that was only
+	// just created in memory, that pass is also what builds the layout PostLoad would have
+	// prepared) - skipping it leaves a material that references the collection asserting
+	// "UniformBufferStruct" inside the shader compile (crash seen running No. 86 after
+	// this command was added).
+	Collection->PostEditChange();
+	Collection->MarkPackageDirty();
+	Result->SetBoolField(TEXT("dirty"), Collection->GetPackage()->IsDirty());
 	return Result;
 }

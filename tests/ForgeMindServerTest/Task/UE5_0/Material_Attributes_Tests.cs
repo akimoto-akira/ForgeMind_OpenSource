@@ -58,11 +58,12 @@ using Task = System.Threading.Tasks.Task;
 // Texture note: none of the three questions samples a texture, so no asset reference has to be
 // substituted here; every value the docs name is a constant or a scalar parameter.
 //
-// No IR snapshot is taken here: per collaboration spec section 9 a transcribed case must not add
-// VerifyIrSnapshot on its own. The doc's "no execution failure, no verification error" is covered by
-// asserting every step command's business flag (including the add step's propertyErrors), asserting
-// the attributes mode landed, and reading each finished material back to check that the expressions
-// the doc names landed in it.
+// Mis-touch comparison (VerifyIrSnapshot): inserted per user instruction (collaboration
+// spec point 9) after the case was visually confirmed. Every asset this case builds
+// (Mat_MA1 / Mat_MA2 / Mat_MA3, A and B side each) stores its own graph-level IR baseline
+// on first run (no failure); later runs diff against it, catching accidental damage to
+// already-tested structures. Each question closes with an A/B cross-check after the B asset
+// is saved, so both channels must agree on the graph they built.
 // =========================================================================
 
 public sealed class Material_Attributes : ITestCase
@@ -152,6 +153,7 @@ public sealed class Material_Attributes : ITestCase
             "compiled", "compile_material Mat_MA1_A");
         StepOk(ctx, EditorCall(ctx, "save_asset", new { path = a1 }),
             "saved", "save_asset Mat_MA1_A");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1);   // per-asset self-comparison
         ExpectMaterialAttributesEnabled(ctx, a1);
         ExpectExpressions(ctx, a1,
             ("MaterialExpressionConstant3Vector", 2),
@@ -161,10 +163,12 @@ public sealed class Material_Attributes : ITestCase
         ApplyDsl(ctx, "");
         StepOk(ctx, EditorCall(ctx, "save_asset", new { path = "/Game/Tests/UE5_0/Mat_MA1_B" }),
             "saved", "save_asset Mat_MA1_B");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Mat_MA1_B");   // per-asset self-comparison
         ExpectMaterialAttributesEnabled(ctx, "/Game/Tests/UE5_0/Mat_MA1_B");
         ExpectExpressions(ctx, "/Game/Tests/UE5_0/Mat_MA1_B",
             ("MaterialExpressionConstant3Vector", 2),
             ("MaterialExpressionMakeMaterialAttributes", 1));
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a1, "/Game/Tests/UE5_0/Mat_MA1_B");   // A/B parity (B saved above)
     }
 
     // =====================================================================
@@ -273,6 +277,7 @@ public sealed class Material_Attributes : ITestCase
             "compiled", "compile_material Mat_MA2_A");
         StepOk(ctx, EditorCall(ctx, "save_asset", new { path = a2 }),
             "saved", "save_asset Mat_MA2_A");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2);   // per-asset self-comparison
         ExpectMaterialAttributesEnabled(ctx, a2);
         ExpectExpressions(ctx, a2,
             ("MaterialExpressionMakeMaterialAttributes", 1),
@@ -283,11 +288,13 @@ public sealed class Material_Attributes : ITestCase
         ApplyDsl(ctx, "");
         StepOk(ctx, EditorCall(ctx, "save_asset", new { path = "/Game/Tests/UE5_0/Mat_MA2_B" }),
             "saved", "save_asset Mat_MA2_B");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Mat_MA2_B");   // per-asset self-comparison
         ExpectMaterialAttributesEnabled(ctx, "/Game/Tests/UE5_0/Mat_MA2_B");
         ExpectExpressions(ctx, "/Game/Tests/UE5_0/Mat_MA2_B",
             ("MaterialExpressionMakeMaterialAttributes", 1),
             ("MaterialExpressionBreakMaterialAttributes", 1),
             ("MaterialExpressionSetMaterialAttributes", 1));
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a2, "/Game/Tests/UE5_0/Mat_MA2_B");   // A/B parity (B saved above)
     }
 
     // =====================================================================
@@ -410,6 +417,7 @@ public sealed class Material_Attributes : ITestCase
             "compiled", "compile_material Mat_MA3_A");
         StepOk(ctx, EditorCall(ctx, "save_asset", new { path = a3 }),
             "saved", "save_asset Mat_MA3_A");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3);   // per-asset self-comparison
         ExpectMaterialAttributesEnabled(ctx, a3);
         ExpectExpressions(ctx, a3,
             ("MaterialExpressionConstant3Vector", 2),
@@ -421,12 +429,14 @@ public sealed class Material_Attributes : ITestCase
         ApplyDsl(ctx, "");
         StepOk(ctx, EditorCall(ctx, "save_asset", new { path = "/Game/Tests/UE5_0/Mat_MA3_B" }),
             "saved", "save_asset Mat_MA3_B");
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, "/Game/Tests/UE5_0/Mat_MA3_B");   // per-asset self-comparison
         ExpectMaterialAttributesEnabled(ctx, "/Game/Tests/UE5_0/Mat_MA3_B");
         ExpectExpressions(ctx, "/Game/Tests/UE5_0/Mat_MA3_B",
             ("MaterialExpressionConstant3Vector", 2),
             ("MaterialExpressionMakeMaterialAttributes", 2),
             ("MaterialExpressionScalarParameter", 1),
             ("MaterialExpressionBlendMaterialAttributes", 1));
+        BlueprintTestHelper.VerifyIrSnapshot(ctx, a3, "/Game/Tests/UE5_0/Mat_MA3_B");   // A/B parity (B saved above)
     }
 
     // =====================================================================

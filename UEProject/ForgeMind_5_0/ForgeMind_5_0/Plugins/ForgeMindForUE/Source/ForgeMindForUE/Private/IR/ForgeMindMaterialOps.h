@@ -30,8 +30,10 @@
 
 class UObject;
 class UClass;
+class UMaterial;
 class UMaterialExpression;
 struct FExpressionInput;
+struct FExpressionExecOutput;
 
 namespace ForgeMindMaterial
 {
@@ -62,8 +64,19 @@ namespace ForgeMindMaterial
 	/** Look an expression up by the object name CreateExpression reports. */
 	UMaterialExpression* FindExpression(UObject* Asset, const FString& Id);
 
-	/** FExpressionInput member of Owner matched case-insensitively by property name. */
+	/**
+	 * FExpressionInput of Owner matched case-insensitively by name: the member of that
+	 * name for a static input, and - on a MaterialExpressionMaterialFunctionCall, whose
+	 * inputs are the per-function entries of FunctionInputs rather than members - the
+	 * entry mirroring a function input of that name.
+	 */
 	FExpressionInput* GetExpressionInput(UObject* Owner, const FString& Name);
+
+	/** Locate execution output by engine-declared property name, handled separately from data inputs. */
+	FExpressionExecOutput* GetExecutionOutput(UMaterialExpression* Owner, const FString& Name);
+
+	/** Shared by both construction channels; maintains execution in-degree and rejects cross-material connections and execution cycles. */
+	bool ConnectExecutionOutput(UMaterialExpression* Source, const FString& Name, UMaterialExpression* Target, FString& OutError);
 
 	/**
 	 * Material output pins (BaseColor / EmissiveColor / ...) resolved through EMaterialProperty,
@@ -71,6 +84,17 @@ namespace ForgeMindMaterial
 	 * versions.
 	 */
 	FExpressionInput* GetMaterialOutputInput(UObject* Asset, const FString& Name);
+
+	/**
+	 * False when the named material output is one the engine will not read for this material's
+	 * current domain / blend mode / shader frequency. UMaterial::IsPropertyActive is the engine's
+	 * own answer (IsPropertyActive_Internal, Material.cpp:5286-5289) and it is what turned a
+	 * post-process material wired to Opacity into a silently dead wire: every node, step flag and
+	 * IR comparison still passed while the shader never looked at that output.
+	 * Materials compiled with the execution flow are exempt: their properties are emitted from
+	 * the exec chain, so the per-property active mask does not describe them.
+	 */
+	bool IsMaterialOutputActive(UObject* Asset, const FString& Name);
 
 	/**
 	 * Every material output pin that currently has something wired, in engine property order
@@ -90,6 +114,21 @@ namespace ForgeMindMaterial
 	bool TryResolveOutputIndex(const FString& PinName, int32& OutIndex);
 
 	/**
+	 * Resolve a pin name against the outputs the source expression actually declares,
+	 * by output name, ignoring case. Single-letter channel names (R/G/B/A) are excluded:
+	 * they are channel-extraction requests and keep going through the swizzle table's
+	 * ComponentMask path. Returns false when the source declares no output with that
+	 * name, leaving the caller to fall back to TryResolveOutputIndex.
+	 *
+	 * This is what makes "RGBA" reach a TextureSample's real fourth-channel output
+	 * (engine output list: RGB=0, R=1, G=2, B=3, A=4, RGBA=5) instead of output 0:
+	 * output 0 is RGB - a float3 - and wiring a float4-requested pin to it is exactly
+	 * how a "Cannot cast from smaller type float3 to larger type float4" compile error
+	 * happens while every connect step still reports success.
+	 */
+	bool TryResolveNamedOutputIndex(UMaterialExpression* Source, const FString& PinName, int32& OutIndex);
+
+	/**
 	 * Write one UPROPERTY from JSON. Numbers, booleans and strings go through the
 	 * editor import path; a color-valued property additionally accepts the numeric
 	 * array form ([r,g,b] / [r,g,b,a]) and the "(R=..,G=..)" text form, enum
@@ -99,8 +138,25 @@ namespace ForgeMindMaterial
 	 */
 	bool SetValue(UObject* Object, const FString& PropertyName, const TSharedPtr<FJsonValue>& Value, FString& OutError);
 
+	/**
+	 * Apply one material-settings key to a material, falling back to the editor-only
+	 * data object (where later engine versions moved some settings) when the material
+	 * itself does not carry the property. Single shared entry for the IR channel's
+	 * ApplyMaterialSettings and the create_material step command's extra payload keys,
+	 * so a key one channel accepts cannot be silently dropped by the other.
+	 */
+	bool ApplyMaterialSetting(UMaterial* Material, const FString& Key, const TSharedPtr<FJsonValue>& Value, FString& OutError);
+
 	/** Read one UPROPERTY back as JSON; colors are emitted as [r,g,b,a] so both channels compare equal. */
 	TSharedPtr<FJsonValue> GetValue(UObject* Object, const FString& PropertyName);
+
+	/**
+	 * True when a struct property is stored as an FLinearColor and has to be written
+	 * component-wise. Identified by the reflected struct name, because UE 5.0.3 gives
+	 * FLinearColor no usable StaticStruct(). Shared so the step commands and the IR channel
+	 * cannot disagree about what counts as a colour.
+	 */
+	bool IsLinearColorStruct(const UScriptStruct* Struct);
 
 	/** Parse "(R=1,G=0,B=0)", "[1,0,0]", "0.7", "1, 0, 0" into the numbers they carry. */
 	bool ParseNumericList(const FString& Text, TArray<double>& OutValues);
@@ -124,8 +180,20 @@ namespace ForgeMindMaterial
 	 * drops any index beyond the source's declared outputs (the pin stays
 	 * unwired), and where an output does exist at that index its name does not
 	 * mean the requested channel. Asset owns the inserted node.
+	 * An index above 4 can only be a named-output request (the channel swizzles
+	 * end at 4) - e.g. a TextureSample's "RGBA" at index 5 - and connects
+	 * directly when the source declares that many outputs, so the wire lands on
+	 * the engine's own named pin instead of a mask reconstruction.
+	 *
+	 * bNamedOutput marks a request that was resolved against the outputs the
+	 * source actually declares (a pin name match, e.g. DecalDerivative's "DDY"
+	 * at index 1). Those indexes are real pins, not channels, so they connect
+	 * directly even inside the 1..4 range and never get a mask reconstruction;
+	 * an index the source does not declare is an error rather than a guess.
+	 * Numeric swizzle requests keep bNamedOutput false, which is what preserves
+	 * the channel-extraction behaviour every existing graph was built with.
 	 */
-	bool ConnectOutputInput(UObject* Asset, FExpressionInput* Input, UMaterialExpression* Source, int32 OutputIndex, FString& OutError);
+	bool ConnectOutputInput(UObject* Asset, FExpressionInput* Input, UMaterialExpression* Source, int32 OutputIndex, FString& OutError, bool bNamedOutput = false);
 
 	/** Load a material-family asset from a project path ("/Game/Tests/M_X"). */
 	UObject* ResolveMaterial(const FString& Path);

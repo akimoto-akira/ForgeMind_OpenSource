@@ -1,22 +1,22 @@
 ﻿# ForgeMind 開発ロードマップ
 
-このロードマップは、ForgeMind の資産生成機能の開発進捗を、分野・ステータス別にまとめたものです。開発の進展に合わせて随時更新されます。データ出典：Step 3 素材スナップショット（2026-10-26）。
+このロードマップは、ForgeMind の資産生成機能の開発進捗を、分野・ステータス別にまとめたものです。開発の進展に合わせて随時更新されます。データ出典：Step 3 素材スナップショット（2026-11-03）。
 
 ## 概要
 
 | ステータス | 件数 |
 | --- | ---: |
-| 完了 | 77 |
-| 開発中 | 4 |
-| 計画中 | 73 |
-| 合計 | 154 |
+| 完了 | 99 |
+| 開発中 | 7 |
+| 計画中 | 47 |
+| 合計 | 153 |
 
 ## 分野別
 
 | 分野 | 完了 | 開発中 | 計画中 |
 | --- | ---: | ---: | ---: |
 | ブループリント | 72 | 1 | 0 |
-| マテリアル | 5 | 2 | 55 |
+| マテリアル | 27 | 5 | 29 |
 | その他 | 0 | 1 | 18 |
 
 ## ブループリント
@@ -102,59 +102,63 @@
 
 ## マテリアル
 
-### 完了（5）
+### 完了（27）
 
+- マテリアル Material ARCamera
+- マテリアル Material ArcTrigLog
+- マテリアル Material Attributes
+- マテリアル Material CollectionPerInstance
 - マテリアル Material Compare
 - マテリアル Material Constant
-- マテリアル Material If
-- マテリアル Material ScalarParam
-- マテリアル Material Transform
-
-### 開発中（2）
-
-- マテリアル Material Attributes
+- マテリアル Material ControlFlowCustom
+- マテリアル Material CustomNormalOutputs
+- マテリアル Material Decal
+- マテリアル Material DistanceField
 - マテリアル Material Function
+- マテリアル Material If
+- マテリアル Material Interpolation
+- マテリアル Material Landscape
+- マテリアル Material LayersAndChannelMask
+- マテリアル Material LightVector
+- マテリアル Material NormalAndDepth
+- マテリアル Material ParamsExtra
+- マテリアル Material ScalarParam
+- マテリアル Material SceneTextures
+- マテリアル Material SkyAtmosphere
+- マテリアル Material StaticBool
+- マテリアル Material Switches
+- マテリアル Material Transform
+- マテリアル Material VertexAndInterpolator
+- マテリアル Material VolumeCloud
+- マテリアル Material WorldPosition
 
-### 計画中（55）
+### 開発中（5）
 
-- マテリアル AR カメラ / 大気光ベクトル
-- マテリアル Decal
-- マテリアル ワールド座標とカメラ
-- マテリアル ボリューム / 雲
-- マテリアル ライトベクトル / シェーディングモデル
-- マテリアル 関数呼び出し / 関数 IO
-- マテリアル パラメータ補足
-- マテリアル 逆三角 / 対数 / ユーティリティ数学
+- マテリアル Material ParticleExpressions
+- マテリアル Material ParticleExtra
+- マテリアル Material PreSkinnedSources
+- マテリアル Material SpaceVectorBasics
+- マテリアル Material TimeAndScene
+
+### 計画中（29）
+
 - マテリアル ベクターパラメータ
 - マテリアル ベクター演算
 - マテリアル ノイズ
 - マテリアル グラフ内ユーティリティノード
-- マテリアル 地形（Landscape）
-- マテリアル シーン / ポストプロセスサンプリング
 - マテリアル 座標変換
-- マテリアル 大気 / 空 / 雲
 - マテリアル ヘア / Strata / カスタム出力
 - マテリアル ヘア（Hair）
 - マテリアル フォント / テクスチャツール
-- マテリアル レイヤー / チャンネルパラメータ
-- マテリアル スイッチ / Switch
-- マテリアル 補間 / Lerp
 - マテリアル 数学関数
 - マテリアル 時間 / シーンサンプリング
 - マテリアル 置換 / スイッチ補足
 - マテリアル 置換 / レンダリングスイッチ
 - マテリアル その他 2
 - マテリアル その他数学 / ユーティリティ式
-- マテリアル マテリアル関数
-- マテリアル マテリアル属性（Material Attributes）
-- マテリアル スカラーパラメータ
-- マテリアル 比較
-- マテリアル 法線 / 深度
 - マテリアル 特殊数学
 - マテリアル カメラ / VFX サンプリング
-- マテリアル プログラム制御 / カスタム
-- マテリアル 空間変換
-- マテリアル 空間ベクトル基礎
+- マテリアル 空間ベクター基礎
 - マテリアル 算術補足
 - マテリアル 算術演算
 - マテリアル パーティクル補足
@@ -162,16 +166,11 @@
 - マテリアル テクスチャオブジェクト
 - マテリアル テクスチャサンプリング
 - マテリアル カスタム HLSL
-- マテリアル カスタム法線出力
-- マテリアル スキニング / 事前変形
+- マテリアル スキニング / プレデフォーム
 - マテリアル フェード / クリップ / ローカル
-- マテリアル 距離場（Distance Field）
 - マテリアル ランタイム仮想テクスチャ RVT
 - マテリアル チャンネルマスク
-- マテリアル SpeedTree / デカール
-- マテリアル コレクション / インスタンスパラメータ
-- マテリアル 静的ブール
-- マテリアル 頂点 / メッシュ描画
+- マテリアル SpeedTree
 
 ## その他
 

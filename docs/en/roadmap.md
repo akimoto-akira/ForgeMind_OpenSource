@@ -1,22 +1,22 @@
 ﻿# ForgeMind Development Roadmap
 
-This roadmap reflects the development progress of ForgeMind asset generation capabilities, grouped by domain and status, and is continuously updated as development proceeds. Data source: Step 3 asset snapshot (2026-10-26).
+This roadmap reflects the development progress of ForgeMind asset generation capabilities, grouped by domain and status, and is continuously updated as development proceeds. Data source: Step 3 asset snapshot (2026-11-03).
 
 ## Overview
 
 | Status | Count |
 | --- | ---: |
-| Completed | 77 |
-| In Progress | 4 |
-| Planned | 73 |
-| Total | 154 |
+| Completed | 99 |
+| In Progress | 7 |
+| Planned | 47 |
+| Total | 153 |
 
 ## Browse by Domain
 
 | Domain | Completed | In Progress | Planned |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Other | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,58 +102,62 @@ This roadmap reflects the development progress of ForgeMind asset generation cap
 
 ## Material
 
-### Completed (5)
+### Completed (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### In Progress (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Planned (55)
+### In Progress (5)
 
-- Material AR Camera / Atmosphere Light Vector
-- Material Decal
-- Material World Position & Camera
-- Material Volume / Cloud
-- Material Light Vector / Shading Model
-- Material Function Call / Function IO
-- Material Parameter Supplement
-- Material Inverse Trig / Log / Utility Math
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Planned (29)
+
 - Material Vector Parameter
 - Material Vector Operations
 - Material Noise
 - Material In-Graph Utility Nodes
-- Material Landscape
-- Material Scene Texture / Post-process Sampling
 - Material Coordinate Transform
-- Material Atmosphere / Sky / Cloud
 - Material Hair / Strata / Custom Output
 - Material Hair
 - Material Font / Texture Tools
-- Material Layer / Channel Parameters
-- Material Switch
-- Material Lerp
 - Material Math Functions
 - Material Time / Scene Sampling
 - Material Replace / Switch Supplement
 - Material Replace / Render Switch
 - Material Misc 2
 - Material Misc Math / Utility Expressions
-- Material Function
-- Material Material Attributes
-- Material Scalar Parameter
-- Material Compare
-- Material Normal / Depth
 - Material Special Math
 - Material Camera / VFX Sampling
-- Material Program Control / Custom
-- Material Space Transform
 - Material Spatial Vector Basics
 - Material Arithmetic Supplement
 - Material Arithmetic Operations
@@ -162,16 +166,11 @@ This roadmap reflects the development progress of ForgeMind asset generation cap
 - Material Texture Object
 - Material Texture Sampling
 - Material Custom HLSL
-- Material Custom Normal Output
-- Material Skinning / Pre-Deform
+- Material Skinning / Pre-deform
 - Material Fade / Clip / Local
-- Material Distance Field
 - Material Runtime Virtual Texture RVT
 - Material Channel Mask
-- Material SpeedTree / Decal
-- Material Collection / Instance Parameters
-- Material Static Bool
-- Material Vertex / Mesh Drawing
+- Material SpeedTree
 
 ## Other
 

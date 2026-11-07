@@ -1,22 +1,22 @@
 ﻿# ForgeMind 开发路线图
 
-本路线图展示 ForgeMind 资产生成能力的开发进度，按领域与状态分组，随开发进展持续更新。数据来源：Step 3 素材快照（2026-10-26）。
+本路线图展示 ForgeMind 资产生成能力的开发进度，按领域与状态分组，随开发进展持续更新。数据来源：Step 3 素材快照（2026-11-03）。
 
 ## 总览
 
 | 状态 | 数量 |
 | --- | ---: |
-| 已完成 | 77 |
-| 开发中 | 4 |
-| 计划中 | 73 |
-| 合计 | 154 |
+| 已完成 | 99 |
+| 开发中 | 7 |
+| 计划中 | 47 |
+| 合计 | 153 |
 
 ## 按领域浏览
 
 | 领域 | 已完成 | 开发中 | 计划中 |
 | --- | ---: | ---: | ---: |
 | 蓝图 | 72 | 1 | 0 |
-| 材质 | 5 | 2 | 55 |
+| 材质 | 27 | 5 | 29 |
 | 其他 | 0 | 1 | 18 |
 
 ## 蓝图
@@ -102,58 +102,62 @@
 
 ## 材质
 
-### 已完成（5）
+### 已完成（27）
 
+- 材质 Material ARCamera
+- 材质 Material ArcTrigLog
+- 材质 Material Attributes
+- 材质 Material CollectionPerInstance
 - 材质 Material Compare
 - 材质 Material Constant
-- 材质 Material If
-- 材质 Material ScalarParam
-- 材质 Material Transform
-
-### 开发中（2）
-
-- 材质 Material Attributes
+- 材质 Material ControlFlowCustom
+- 材质 Material CustomNormalOutputs
+- 材质 Material Decal
+- 材质 Material DistanceField
 - 材质 Material Function
+- 材质 Material If
+- 材质 Material Interpolation
+- 材质 Material Landscape
+- 材质 Material LayersAndChannelMask
+- 材质 Material LightVector
+- 材质 Material NormalAndDepth
+- 材质 Material ParamsExtra
+- 材质 Material ScalarParam
+- 材质 Material SceneTextures
+- 材质 Material SkyAtmosphere
+- 材质 Material StaticBool
+- 材质 Material Switches
+- 材质 Material Transform
+- 材质 Material VertexAndInterpolator
+- 材质 Material VolumeCloud
+- 材质 Material WorldPosition
 
-### 计划中（55）
+### 开发中（5）
 
-- 材质 AR 相机 / 大气光向量
-- 材质 Decal
-- 材质 世界坐标与相机
-- 材质 体积 / 云
-- 材质 光照向量 / 着色模型
-- 材质 函数调用 / 函数 IO
-- 材质 参数补充
-- 材质 反三角 / 对数 / 工具数学
+- 材质 Material ParticleExpressions
+- 材质 Material ParticleExtra
+- 材质 Material PreSkinnedSources
+- 材质 Material SpaceVectorBasics
+- 材质 Material TimeAndScene
+
+### 计划中（29）
+
 - 材质 向量参数
 - 材质 向量运算
 - 材质 噪声
 - 材质 图内工具节点
-- 材质 地形（Landscape）
-- 材质 场景纹理 / 后处理采样
 - 材质 坐标变换
-- 材质 大气 / 天空 / 云
 - 材质 头发 / Strata / 自定义输出
 - 材质 头发（Hair）
 - 材质 字体 / 贴图工具
-- 材质 层 / 通道参数
-- 材质 开关 / Switch
-- 材质 插值 / Lerp
 - 材质 数学函数
 - 材质 时间 / 场景采样
 - 材质 替换 / 开关补充
 - 材质 替换 / 渲染开关
 - 材质 杂项 2
 - 材质 杂项数学 / 工具表达式
-- 材质 材质函数
-- 材质 材质属性（Material Attributes）
-- 材质 标量参数
-- 材质 比较
-- 材质 法线 / 深度
 - 材质 特殊数学
 - 材质 相机 / 视效采样
-- 材质 程序控制 / 自定义
-- 材质 空间变换
 - 材质 空间向量基础
 - 材质 算术补充
 - 材质 算术运算
@@ -162,16 +166,11 @@
 - 材质 纹理对象
 - 材质 纹理采样
 - 材质 自定义 HLSL
-- 材质 自定义法线输出
 - 材质 蒙皮 / 预变形
 - 材质 衰减 / 裁剪 / 局部
-- 材质 距离场（Distance Field）
 - 材质 运行期虚拟纹理 RVT
 - 材质 通道遮罩
-- 材质 速度树 / 贴花
-- 材质 集合 / 实例参数
-- 材质 静态布尔
-- 材质 顶点 / 网格绘制
+- 材质 速度树
 
 ## 其他
 

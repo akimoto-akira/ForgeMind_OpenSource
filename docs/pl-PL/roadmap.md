@@ -1,22 +1,22 @@
 ﻿# Plan rozwoju ForgeMind
 
-Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, pogrupowany według dziedziny i statusu, i jest aktualizowany w sposób ciągły wraz z postępem prac. Źródło danych: zrzut assetów z kroku 3 (2026-10-26).
+Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, pogrupowany według dziedziny i statusu, i jest aktualizowany w sposób ciągły wraz z postępem prac. Źródło danych: zrzut assetów z kroku 3 (2026-11-03).
 
 ## Przegląd
 
 | Status | Liczba |
 | --- | ---: |
-| Ukończone | 77 |
-| W trakcie | 4 |
-| Planowane | 73 |
-| Razem | 154 |
+| Ukończone | 99 |
+| W trakcie | 7 |
+| Planowane | 47 |
+| Razem | 153 |
 
 ## Przeglądaj według dziedziny
 
 | Dziedzina | Ukończone | W trakcie | Planowane |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Inne | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,76 +102,75 @@ Ten plan przedstawia postęp prac nad funkcjami generowania assetów ForgeMind, 
 
 ## Material
 
-### Ukończone (5)
+### Ukończone (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### W trakcie (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Planowane (55)
+### W trakcie (5)
 
-- Material Kamera AR / Wektor światła atmosferycznego
-- Material Decal
-- Material Pozycja świata i kamera
-- Material Objętość / Chmury
-- Material Wektor światła / Model cieniowania
-- Material Wywołanie funkcji / Wejście-wyjście funkcji
-- Material Uzupełnienie parametrów
-- Material Trygonometria odwrotna / Logarytm / Matematyka narzędziowa
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Planowane (29)
+
 - Material Parametr wektorowy
 - Material Operacje wektorowe
 - Material Szum
 - Material Węzły narzędziowe w grafie
-- Material Teren (Landscape)
-- Material Tekstura sceny / Próbkowanie postprocessingu
 - Material Transformacja współrzędnych
-- Material Atmosfera / Niebo / Chmury
 - Material Włosy / Strata / Niestandardowe wyjście
 - Material Włosy (Hair)
 - Material Czcionki / Narzędzia tekstur
-- Material Warstwy / Parametry kanałów
-- Material Przełącznik / Switch
-- Material Interpolacja / Lerp
 - Material Funkcje matematyczne
 - Material Czas / Próbkowanie sceny
 - Material Zastępowanie / Uzupełnienie przełącznika
 - Material Zastępowanie / Przełącznik renderowania
 - Material Różne 2
 - Material Różna matematyka / Wyrażenia narzędziowe
-- Material Funkcja material
-- Material Atrybuty material (Material Attributes)
-- Material Parametr skalarny
-- Material Porównanie
-- Material Normalna / Głębokość
 - Material Matematyka specjalna
 - Material Kamera / Próbkowanie efektów wizualnych
-- Material Sterowanie programem / Niestandardowe
-- Material Transformacja przestrzenna
 - Material Podstawy wektorów przestrzennych
 - Material Uzupełnienie arytmetyczne
 - Material Operacje arytmetyczne
-- Material Uzupełnienie cząsteczek
-- Material Wyrażenia cząsteczek
+- Material Uzupełnienie cząstek
+- Material Wyrażenia cząstek
 - Material Obiekt tekstury
 - Material Próbkowanie tekstury
 - Material Niestandardowy HLSL
-- Material Niestandardowe wyjście normalnych
 - Material Skinning / Wstępna deformacja
 - Material Zanikanie / Przycinanie / Lokalne
-- Material Pole odległości (Distance Field)
 - Material Wirtualna tekstura w czasie wykonywania RVT
 - Material Maska kanału
-- Material SpeedTree / Decal
-- Material Kolekcja / Parametry instancji
-- Material Statyczna wartość logiczna
-- Material Rysowanie wierzchołków / siatki
+- Material SpeedTree
 
 ## Inne
 

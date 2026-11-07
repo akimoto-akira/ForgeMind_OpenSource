@@ -1,22 +1,22 @@
 ﻿# ForgeMind-Fahrplan
 
-Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von ForgeMind, gruppiert nach Bereich und Status, und wird mit dem Fortschritt kontinuierlich aktualisiert. Datenquelle: Asset-Snapshot aus Schritt 3 (2026-10-26).
+Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von ForgeMind, gruppiert nach Bereich und Status, und wird mit dem Fortschritt kontinuierlich aktualisiert. Datenquelle: Asset-Snapshot aus Schritt 3 (2026-11-03).
 
 ## Übersicht
 
 | Status | Anzahl |
 | --- | ---: |
-| Abgeschlossen | 77 |
-| In Entwicklung | 4 |
-| Geplant | 73 |
-| Gesamt | 154 |
+| Abgeschlossen | 99 |
+| In Entwicklung | 7 |
+| Geplant | 47 |
+| Gesamt | 153 |
 
 ## Nach Bereich
 
 | Bereich | Abgeschlossen | In Entwicklung | Geplant |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Sonstiges | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,58 +102,62 @@ Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von
 
 ## Material
 
-### Abgeschlossen (5)
+### Abgeschlossen (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### In Entwicklung (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Geplant (55)
+### In Entwicklung (5)
 
-- Material AR-Kamera / Atmosphären-Lichtvektor
-- Material Decal
-- Material Weltposition & Kamera
-- Material Volumen / Wolken
-- Material Lichtvektor / Shading-Modell
-- Material Funktionsaufruf / Funktion-IO
-- Material Parameter-Ergänzung
-- Material Arkustrigonometrie / Logarithmus / Hilfsmathematik
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Geplant (29)
+
 - Material Vektorparameter
 - Material Vektoroperationen
 - Material Rauschen
 - Material Utility-Knoten im Graphen
-- Material Gelände (Landscape)
-- Material Szenentextur / Nachbearbeitungsabtastung
 - Material Koordinatentransformation
-- Material Atmosphäre / Himmel / Wolken
 - Material Haar / Strata / Benutzerdefinierte Ausgabe
 - Material Haar (Hair)
 - Material Schriften / Texturwerkzeuge
-- Material Ebenen / Kanalparameter
-- Material Schalter / Switch
-- Material Interpolation / Lerp
 - Material Mathematische Funktionen
 - Material Zeit / Szenenabtastung
 - Material Ersetzen / Schalter-Ergänzung
 - Material Ersetzen / Rendering-Schalter
 - Material Sonstiges 2
 - Material Sonstige Mathematik / Utility-Ausdrücke
-- Material Materialfunktion
-- Material Materialattribute (Material Attributes)
-- Material Skalarparameter
-- Material Vergleich
-- Material Normale / Tiefe
 - Material Spezielle Mathematik
 - Material Kamera / VFX-Abtastung
-- Material Programmsteuerung / Benutzerdefiniert
-- Material Raumtransformation
 - Material Grundlagen räumlicher Vektoren
 - Material Arithmetik-Ergänzung
 - Material Arithmetische Operationen
@@ -162,16 +166,11 @@ Dieser Fahrplan zeigt den Entwicklungsstand der Asset-Generierungsfunktionen von
 - Material Texturobjekt
 - Material Texture-Sampling
 - Material Benutzerdefiniertes HLSL
-- Material Benutzerdefinierte Normalenausgabe
 - Material Skinning / Vorverformung
 - Material Fade / Clip / Lokal
-- Material Distanzfeld (Distance Field)
 - Material Laufzeit-Virtual-Texture RVT
 - Material Kanalmaske
-- Material SpeedTree / Decal
-- Material Sammlung / Instanzparameter
-- Material Statischer Bool
-- Material Scheitelpunkt / Mesh-Zeichnung
+- Material SpeedTree
 
 ## Sonstiges
 

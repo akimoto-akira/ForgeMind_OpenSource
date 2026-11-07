@@ -137,6 +137,7 @@ void FForgeMindForUEModule::ShutdownModule()
 	GetForgeMindLogCapture().Stop();
 
 	GraphLayout.Unregister();
+	FForgeMindGraphLayout::FlushNodeSizeCache();
 
 	if (EngineInitHandle.IsValid())
 	{

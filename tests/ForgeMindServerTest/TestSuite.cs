@@ -1,6 +1,10 @@
 ﻿// SPDX-License-Identifier: Apache-2.0
 // Copyright (c) 2026 Hoshino Kennji
 
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
@@ -19,8 +23,9 @@ namespace ForgeMindServer.Test;
 /// CLI filtering (see <see cref="Program"/> --Test parameter):
 /// - No args: all groups, all test cases;
 /// - Group name: execute that group only (entire group);
-/// - Group name + order: cases with matching Order in that group + all
-///   <see cref="MustRunAttribute"/> must-run cases (launch / close editor).
+/// - Group name + order: cases whose Order falls inside the inclusive order range in that group
+///   + all <see cref="MustRunAttribute"/> must-run cases (launch / close editor). A plain integer
+///   order is the degenerate range whose two ends are equal.
 ///
 /// After execution, outputs JSON report and human-readable summary to output directory.
 /// </summary>
@@ -42,13 +47,14 @@ public sealed class TestSuite
     /// Discovers and executes test cases. Returns 0 = all passed, 1 = failures (or invalid filter).
     /// </summary>
     /// <param name="groupFilter">Execute only this group (null = all groups).</param>
-    /// <param name="orderFilter">Execute cases with this Order within the group + all
-    /// <see cref="MustRunAttribute"/> must-run cases (null = entire group).
+    /// <param name="orderFilter">Execute cases whose Order falls inside this inclusive range
+    /// within the group + all <see cref="MustRunAttribute"/> must-run cases (null = entire group).
+    /// A plain integer order is the degenerate range whose two ends are equal.
     /// On failure, remaining must-run cases still execute (ensures close editor runs).</param>
     /// <param name="outputDir">Run directory to write into. When supplied, the caller has already
     /// created it and attached the test.log sink, so the suite neither creates a new directory nor
     /// attaches a second sink — that is what lets the pre-test build log into the same file.</param>
-    public int RunAll(string? groupFilter = null, int? orderFilter = null, string? outputDir = null)
+    public int RunAll(string? groupFilter = null, (int Start, int End)? orderFilter = null, string? outputDir = null)
     {
         // Discover all ITestCase implementations
         List<ITestCase> allCases = DiscoverImplementations<ITestCase>();
@@ -87,18 +93,19 @@ public sealed class TestSuite
 
         if (orderFilter != null)
         {
+            var (startOrder, endOrder) = orderFilter.Value;
             List<ITestCase> groupCases = grouped[groupFilter!];
-            if (!groupCases.Any(c => c.Order == orderFilter.Value))
+            if (!groupCases.Any(c => c.Order >= startOrder && c.Order <= endOrder))
             {
                 string orders = string.Join(", ",
                     groupCases.Select(c => c.Order).OrderBy(o => o).Distinct());
-                _logger.Error(null, "[Test] Order {0} not found in group '{1}'. Available orders: {2}",
-                    orderFilter.Value, groupFilter!, orders);
+                _logger.Error(null, "[Test] No order in range {0}-{1} found in group '{2}'. Available orders: {3}",
+                    startOrder, endOrder, groupFilter!, orders);
                 return 1;
             }
-            // Cases matching the order + all must-run cases (e.g., launch / close editor)
+            // Cases inside the range + all must-run cases (e.g., launch / close editor)
             grouped[groupFilter!] = groupCases
-                .Where(c => IsMustRun(c) || c.Order == orderFilter.Value)
+                .Where(c => IsMustRun(c) || (c.Order >= startOrder && c.Order <= endOrder))
                 .ToList();
         }
 
@@ -130,7 +137,8 @@ public sealed class TestSuite
         if (groupFilter != null || orderFilter != null)
         {
             _logger.Info(null, "[Test] Filter: group={0}, order={1}",
-                groupFilter ?? "(all)", orderFilter?.ToString() ?? "(all)");
+                groupFilter ?? "(all)",
+                orderFilter != null ? FormatOrderFilter(orderFilter.Value) : "(all)");
         }
 
         _logger.Info(null, "[Test] Discovered {0} test case(s) in {1} group(s):",
@@ -283,6 +291,17 @@ public sealed class TestSuite
     private static bool IsMustRun(ITestCase testCase)
     {
         return testCase.GetType().GetCustomAttribute<MustRunAttribute>() != null;
+    }
+
+    /// <summary>
+    /// Renders an order filter the way it was written on the command line: a single number when
+    /// both ends are equal, otherwise "start-end".
+    /// </summary>
+    private static string FormatOrderFilter((int Start, int End) orderFilter)
+    {
+        return orderFilter.Start == orderFilter.End
+            ? orderFilter.Start.ToString()
+            : $"{orderFilter.Start}-{orderFilter.End}";
     }
 
     /// <summary>

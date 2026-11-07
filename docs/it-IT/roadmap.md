@@ -1,22 +1,22 @@
 ﻿# Roadmap di sviluppo di ForgeMind
 
-Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità di generazione asset di ForgeMind, raggruppata per dominio e stato, ed è aggiornata continuamente man mano che lo sviluppo procede. Origine dati: snapshot asset dello Step 3 (2026-10-26).
+Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità di generazione asset di ForgeMind, raggruppata per dominio e stato, ed è aggiornata continuamente man mano che lo sviluppo procede. Origine dati: snapshot asset dello Step 3 (2026-11-03).
 
 ## Panoramica
 
 | Stato | Quantità |
 | --- | ---: |
-| Completato | 77 |
-| In sviluppo | 4 |
-| Pianificato | 73 |
-| Totale | 154 |
+| Completato | 99 |
+| In sviluppo | 7 |
+| Pianificato | 47 |
+| Totale | 153 |
 
 ## Esplora per dominio
 
 | Dominio | Completato | In sviluppo | Pianificato |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Altro | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,76 +102,75 @@ Questa roadmap illustra lo stato di avanzamento dello sviluppo delle capacità d
 
 ## Material
 
-### Completato (5)
+### Completato (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### In sviluppo (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Pianificato (55)
+### In sviluppo (5)
 
-- Material Fotocamera AR / Vettore luce atmosferica
-- Material Decal
-- Material Posizione mondiale e fotocamera
-- Material Volume / Nuvole
-- Material Vettore luce / Modello di ombreggiatura
-- Material Chiamata di funzione / I/O di funzione
-- Material Integrazione parametri
-- Material Trigonometria inversa / Logaritmo / Matematica di utilità
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Pianificato (29)
+
 - Material Parametro vettoriale
 - Material Operazioni vettoriali
 - Material Rumore
 - Material Nodi di utilità nel grafico
-- Material Terreno (Landscape)
-- Material Texture della scena / Campionamento post-elaborazione
 - Material Trasformazione delle coordinate
-- Material Atmosfera / Cielo / Nuvole
 - Material Capelli / Strata / Output personalizzato
 - Material Capelli (Hair)
 - Material Font / Strumenti di texture
-- Material Livelli / Parametri di canale
-- Material Interruttore / Switch
-- Material Interpolazione / Lerp
 - Material Funzioni matematiche
 - Material Tempo / Campionamento della scena
 - Material Sostituzione / Integrazione interruttore
 - Material Sostituzione / Interruttore di rendering
 - Material Varie 2
 - Material Matematica varia / Espressioni di utilità
-- Material Funzione material
-- Material Attributi del material (Material Attributes)
-- Material Parametro scalare
-- Material Confronto
-- Material Normale / Profondità
 - Material Matematica speciale
 - Material Fotocamera / Campionamento effetti visivi
-- Material Controllo di programma / Personalizzato
-- Material Trasformazione spaziale
-- Material Fondamenti di vettori spaziali
+- Material Fondamenti dei vettori spaziali
 - Material Integrazione aritmetica
 - Material Operazioni aritmetiche
 - Material Integrazione particelle
-- Material Espressioni di particelle
+- Material Espressioni delle particelle
 - Material Oggetto texture
 - Material Campionamento della texture
 - Material HLSL personalizzato
-- Material Output normali personalizzato
 - Material Skinning / Pre-deformazione
 - Material Dissolvenza / Ritaglio / Locale
-- Material Campo di distanza (Distance Field)
 - Material Texture virtuale a runtime RVT
 - Material Maschera di canale
-- Material SpeedTree / Decal
-- Material Raccolta / Parametri di istanza
-- Material Booleano statico
-- Material Disegno di vertici / mesh
+- Material SpeedTree
 
 ## Altro
 

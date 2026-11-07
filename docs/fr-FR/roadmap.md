@@ -1,22 +1,22 @@
 ﻿# Feuille de route de développement de ForgeMind
 
-Cette feuille de route présente la progression du développement des capacités de génération d'assets de ForgeMind, regroupée par domaine et par statut, et est mise à jour en continu au fil de l'avancement. Source des données : instantané d'assets de l'étape 3 (2026-10-26).
+Cette feuille de route présente la progression du développement des capacités de génération d'assets de ForgeMind, regroupée par domaine et par statut, et est mise à jour en continu au fil de l'avancement. Source des données : instantané d'assets de l'étape 3 (2026-11-03).
 
 ## Vue d'ensemble
 
 | Statut | Nombre |
 | --- | ---: |
-| Terminé | 77 |
-| En cours | 4 |
-| Planifié | 73 |
-| Total | 154 |
+| Terminé | 99 |
+| En cours | 7 |
+| Planifié | 47 |
+| Total | 153 |
 
 ## Parcourir par domaine
 
 | Domaine | Terminé | En cours | Planifié |
 | --- | ---: | ---: | ---: |
 | Blueprint | 72 | 1 | 0 |
-| Material | 5 | 2 | 55 |
+| Material | 27 | 5 | 29 |
 | Autre | 0 | 1 | 18 |
 
 ## Blueprint
@@ -102,59 +102,63 @@ Cette feuille de route présente la progression du développement des capacités
 
 ## Material
 
-### Terminé (5)
+### Terminé (27)
 
+- Material Material ARCamera
+- Material Material ArcTrigLog
+- Material Material Attributes
+- Material Material CollectionPerInstance
 - Material Material Compare
 - Material Material Constant
-- Material Material If
-- Material Material ScalarParam
-- Material Material Transform
-
-### En cours (2)
-
-- Material Material Attributes
+- Material Material ControlFlowCustom
+- Material Material CustomNormalOutputs
+- Material Material Decal
+- Material Material DistanceField
 - Material Material Function
+- Material Material If
+- Material Material Interpolation
+- Material Material Landscape
+- Material Material LayersAndChannelMask
+- Material Material LightVector
+- Material Material NormalAndDepth
+- Material Material ParamsExtra
+- Material Material ScalarParam
+- Material Material SceneTextures
+- Material Material SkyAtmosphere
+- Material Material StaticBool
+- Material Material Switches
+- Material Material Transform
+- Material Material VertexAndInterpolator
+- Material Material VolumeCloud
+- Material Material WorldPosition
 
-### Planifié (55)
+### En cours (5)
 
-- Material Caméra AR / Vecteur de lumière atmosphérique
-- Material Decal
-- Material Position mondiale et caméra
-- Material Volume / Nuages
-- Material Vecteur de lumière / Modèle d'ombrage
-- Material Appel de fonction / E/S de fonction
-- Material Complément de paramètres
-- Material Trigonométrie inverse / Logarithme / Mathématiques utilitaires
+- Material Material ParticleExpressions
+- Material Material ParticleExtra
+- Material Material PreSkinnedSources
+- Material Material SpaceVectorBasics
+- Material Material TimeAndScene
+
+### Planifié (29)
+
 - Material Paramètre vectoriel
 - Material Opérations vectorielles
 - Material Bruit
 - Material Nœuds utilitaires dans le graphe
-- Material Terrain (Landscape)
-- Material Texture de scène / Échantillonnage de post-traitement
 - Material Transformation de coordonnées
-- Material Atmosphère / Ciel / Nuages
 - Material Cheveux / Strata / Sortie personnalisée
 - Material Cheveux (Hair)
 - Material Polices / Outils de texture
-- Material Couches / Paramètres de canal
-- Material Interrupteur / Switch
-- Material Interpolation / Lerp
 - Material Fonctions mathématiques
 - Material Temps / Échantillonnage de scène
 - Material Remplacement / Complément d'interrupteur
 - Material Remplacement / Interrupteur de rendu
 - Material Divers 2
 - Material Mathématiques diverses / Expressions utilitaires
-- Material Fonction de material
-- Material Attributs de material (Material Attributes)
-- Material Paramètre scalaire
-- Material Comparaison
-- Material Normale / Profondeur
 - Material Mathématiques spéciales
 - Material Caméra / Échantillonnage d'effets visuels
-- Material Contrôle de programme / Personnalisé
-- Material Transformation spatiale
-- Material Bases des vecteurs spatiaux
+- Material Fondamentaux des vecteurs spatiaux
 - Material Complément arithmétique
 - Material Opérations arithmétiques
 - Material Complément de particules
@@ -162,16 +166,11 @@ Cette feuille de route présente la progression du développement des capacités
 - Material Objet de texture
 - Material Échantillonnage de texture
 - Material HLSL personnalisé
-- Material Sortie de normales personnalisée
 - Material Skinning / Pré-déformation
 - Material Fondu / Découpage / Local
-- Material Champ de distance (Distance Field)
 - Material Texture virtuelle à l'exécution RVT
 - Material Masque de canal
-- Material SpeedTree / Decal
-- Material Collection / Paramètres d'instance
-- Material Booléen statique
-- Material Dessin de sommets / maillage
+- Material SpeedTree
 
 ## Autre
 

@@ -5,6 +5,7 @@ using System.Text;
 using ForgeMindServer;
 using ForgeMindServer.Compat;
 using ForgeMindServer.Test;
+using ForgeMindServer.Test.Demo;
 
 // ForgeMindServer test runner.
 // The test mode originally lived in the server binary (ForgeMindServer --Test);
@@ -16,18 +17,32 @@ using ForgeMindServer.Test;
 // communicate with UE.
 //
 // Usage:
+//   ForgeMindServerTest --Demo <script> [zh|en]  (always-on-top recording window; script = IDemoScript.Order)
 //   ForgeMindServerTest --Test [group] [order]   (same shape as original ForgeMindServer --Test)
 //   ForgeMindServerTest [group] [order]          (equivalent form omitting --Test)
 //   no args = full; group only = whole group; group + order = the case matching Order in that group
+//   order accepts a plain integer or an inclusive range "start-end": both ends must be numeric,
+//   the two ends are swapped into ascending order when given reversed (equal ends = one case),
+//   and the run covers every case whose Order falls between the two ends, both included.
 //   (auto-includes must-run cases in the group, such as launch / close editor).
 Console.InputEncoding = Encoding.UTF8;
 Console.OutputEncoding = Encoding.UTF8;
+
+// ── --Demo: the scripted console demonstration ───────────────────────────────
+// It keeps its own rules and shares nothing with --Test: no group/order parsing, no suite,
+// no report, no log file. It does reuse the host and the tools, so what the run prints is
+// the real path rather than a parallel implementation. Must be intercepted before the test
+// CLI parsing below, which would otherwise treat the following arguments as group / order.
+if (args.Length > 0 && string.Equals(args[0], "--Demo", StringComparison.OrdinalIgnoreCase))
+{
+    return DemoRunner.Run(args);
+}
 
 // ── CLI parsing: prefer the explicit --Test form, where args after it that don't
 //    start with -- are consumed as group / order in order;
 //    when --Test is absent, all non-- args are consumed as group / order.
 string? testGroup = null;
-int? testOrder = null;
+(int Start, int End)? testOrder = null;
 int markerIdx = Array.FindIndex(args, a => string.Equals(a, "--Test", StringComparison.OrdinalIgnoreCase));
 int firstParamIdx = markerIdx >= 0 ? markerIdx + 1 : 0;
 while (firstParamIdx < args.Length && args[firstParamIdx].StartsWith("--"))
@@ -40,10 +55,8 @@ if (firstParamIdx < args.Length)
     testGroup = args[firstParamIdx];
     if (firstParamIdx + 1 < args.Length && !args[firstParamIdx + 1].StartsWith("--"))
     {
-        if (!int.TryParse(args[firstParamIdx + 1], out int parsedOrder))
+        if (!TryParseOrderFilter(args[firstParamIdx + 1], out (int Start, int End) parsedOrder))
         {
-            Console.Error.WriteLine(
-                $"[ForgeMindServerTest] Invalid order '{args[firstParamIdx + 1]}': must be an integer");
             return 1;
         }
         testOrder = parsedOrder;
@@ -53,10 +66,57 @@ if (firstParamIdx < args.Length)
 ILogger logger = LogManager.Instance.GetLogger<ForgeMindServerTestEntry>();
 logger.Info(null, "[ForgeMindServerTest] Test mode starting{0}{1}",
     testGroup != null ? $" (group: {testGroup}" : "",
-    testGroup != null ? testOrder != null ? $", order: {testOrder})" : ")" : "");
+    testGroup != null ? testOrder != null ? $", order: {FormatOrder(testOrder.Value)})" : ")" : "");
 
 
 // Host services (bridge, license, scan index preload) — same as the server's MCP mode
+// ── CLI parsing helper functions ──────────────────────────────────────────
+// A plain integer selects one case. A dash form is a range: it must split into exactly two
+// parts around the dash, both numeric; the ends are swapped into ascending order when given
+// reversed, equal ends mean a single case, and the run covers the inclusive range.
+static bool TryParseOrderFilter(string text, out (int Start, int End) range)
+{
+    range = default;
+
+    if (!text.Contains('-'))
+    {
+        if (!int.TryParse(text, out int single))
+        {
+            Console.Error.WriteLine(
+                $"[ForgeMindServerTest] Invalid order '{text}': must be an integer");
+            return false;
+        }
+
+        range = (single, single);
+        return true;
+    }
+
+    string[] parts = text.Split('-');
+    if (parts.Length != 2)
+    {
+        Console.Error.WriteLine(
+            $"[ForgeMindServerTest] Invalid order '{text}': a range must split into exactly two parts");
+        return false;
+    }
+
+    if (!int.TryParse(parts[0], out int start) || !int.TryParse(parts[1], out int end))
+    {
+        Console.Error.WriteLine(
+            $"[ForgeMindServerTest] Invalid order '{text}': both range ends must be integers");
+        return false;
+    }
+
+    range = start <= end ? (start, end) : (end, start);
+    return true;
+}
+
+static string FormatOrder((int Start, int End) order)
+{
+    return order.Start == order.End
+        ? order.Start.ToString()
+        : $"{order.Start}-{order.End}";
+}
+
 // ── Pre-build ────────────────────────────────────────────────────────────
 // Tests call ITool.Execute directly to exercise the real plugin implementation. If plugins were not
 // recompiled alongside the host, the stale assembly is executed: failures manifest as "mysterious behavior"
@@ -384,7 +444,17 @@ static bool BuildProject(string projectPath, string configuration, System.Text.S
         // plugin even though the host assembly it references changed, silently leaving a stale
         // dll that only fails at runtime (MissingMethodException). This pre-build exists to
         // guarantee freshness, so correctness wins over build time.
-        Arguments = $"build \"{projectPath}\" -c {configuration} --no-incremental -v quiet",
+        //
+        // -p:BuildPluginsOnHostBuild=false: this routine already builds the host and then every
+        // plugin in BuildAll's loop, so the host's BuildPluginsAfterHostBuild hook would only
+        // repeat that work. It is worse than repetition: every plugin that ProjectReferences the
+        // host re-triggers the hook from inside an MSBuild instance, and the hook's own nested
+        // `dotnet build` then exits with 268435466, failing the whole pre-build before a single
+        // case is discovered. The property flows through ProjectReferences, so one flag suppresses
+        // the hook for the entire build graph. A plain `dotnet build` of the host does not pass it,
+        // so the hook still catches plugin breakage in an ordinary build.
+        Arguments = $"build \"{projectPath}\" -c {configuration} --no-incremental -v quiet"
+            + " -p:BuildPluginsOnHostBuild=false",
         RedirectStandardOutput = true,
         RedirectStandardError = true,
         UseShellExecute = false,

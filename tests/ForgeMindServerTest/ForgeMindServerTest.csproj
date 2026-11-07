@@ -13,8 +13,15 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\OpenSource\ForgeMindServer\ForgeMindServer.csproj" />
+    <!-- Host hook is for a top-level host build only: see BuildPluginsAfterHostBuild. -->
+    <ProjectReference Include="..\..\OpenSource\ForgeMindServer\ForgeMindServer.csproj"
+                      AdditionalProperties="BuildPluginsOnHostBuild=false" />
   </ItemGroup>
+
+  <!-- The demo plays on the console: the recording surface is the terminal, so no UI toolkit is
+       referenced here at all. The demo window this project used to carry needed Avalonia, a message
+       pump and a layout pass to show the same three lines a turn produces, and every one of them was
+       a way for the run to go wrong. -->
 
 </Project>
 
